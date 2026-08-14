@@ -1,0 +1,9 @@
+# Normalize line endings: repo stores LF, checkout uses platform default.
+* text=auto
+
+# Binary assets — never touch line endings
+*.png binary
+*.bmp binary
+*.bin binary
+*.stl binary
+*.ttf binary

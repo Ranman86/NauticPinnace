@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NauticPinnace – Browser Flasher</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto;
+         padding: 0 16px; line-height: 1.5; }
+  h1 { color: #16B8B8; }
+  .card { border: 1px solid #8884; border-radius: 10px; padding: 18px 22px; margin: 18px 0; }
+  .warn { border-color: #d9822b; background: #d9822b18; }
+  code { background: #8882; padding: 1px 5px; border-radius: 4px; }
+  a { color: #16B8B8; }
+</style>
+</head>
+<body>
+<h1>⛵ NauticPinnace</h1>
+<p>Flash the <a href="https://github.com/Ranman86/NauticPinnace">NauticPinnace</a>
+firmware straight from the browser — no toolchain needed.</p>
+
+<div class="card warn">
+<strong>Requirements:</strong> Chrome or Edge (WebSerial), a
+<strong>Waveshare ESP32-S3-Touch-LCD-4 Rev&nbsp;4</strong> connected via USB-C.
+Flashing erases the on-device configuration. Read the safety notes in the
+<a href="https://github.com/Ranman86/NauticPinnace#readme">README</a> first —
+this is uncertified DIY firmware, use at your own risk.
+</div>
+
+<div class="card">
+  <p>1. Plug in the display via USB-C.<br>
+     2. Click, pick the <code>USB Serial Device</code> port, wait about a minute.</p>
+  <esp-web-install-button manifest="flash/manifest.json"></esp-web-install-button>
+  <p style="font-size:.85em;opacity:.75">If no port shows up: a board in a
+  crashed state may need a manual bootloader entry — hold <code>BOOT</code>,
+  tap <code>RESET</code>, release <code>BOOT</code> (buttons on the left edge).</p>
+</div>
+
+<p>After flashing, the display boots in English, asks for your language and
+shows a demo of all screens. Full setup instructions are in the
+<a href="https://github.com/Ranman86/NauticPinnace#readme">README</a>.</p>
+
+<script type="module"
+  src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">
+</script>
+</body>
+</html>
