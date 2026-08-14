@@ -1,0 +1,2200 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title data-i18n="TITLE">NauticPinnace – Konfiguration</title>
+<!-- Favicon inline as a data URI: the device serves only this one file, so a
+     separate /favicon.ico would just be a 404 on every page load. Brand
+     colours are fixed here (a tab icon has no theme context). -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'%3E%3Crect width='256' height='256' rx='56' fill='%2312324F'/%3E%3Cg transform='translate(38,52) scale(0.9)' fill='none' stroke='%23F4F7FB' stroke-width='16' stroke-linecap='round'%3E%3Cpath d='M40 66 H160'/%3E%3Cpath d='M67 66 V138'/%3E%3Cpath d='M130 66 V125 Q 130 140 147 140'/%3E%3C/g%3E%3Cpath d='M46 196 C 78 174 112 174 144 196 S 196 216 214 196' fill='none' stroke='%2316B8B8' stroke-width='13' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+/* ── CSS Custom Properties ─────────────────────────────────────────────── */
+/* Colour palette adopted from the NauticPi MFD (deep/card/edge/ink/dim/tur):
+   light #e7eef6·#fff·#cdd9e6·#16283a·#5a7088·#0f9a9a
+   dark  #081521·#16304a·#274a6e·#eaf2f8·#8aa8c4·#16b8b8
+   night #0a0202·#2a0f0f·#4a1c1c·#d35c3e·#aa4a2c·#e2643e
+   The status colours (ok/warn/amber) are now tokens as well – previously
+   they sat in the CSS as fixed hex values and stayed wrong in dark mode. */
+:root{
+  --bg:#e7eef6;--surface:#fff;--surface2:#f2f6fb;--surface3:#dfe7f0;
+  --border:#cdd9e6;--text:#16283a;--text-dim:#3d5468;--text-muted:#5a7088;--text-faint:#8098ae;
+  --accent:#0f9a9a;--accent-h:#0c7f7f;--accent-ring:rgba(15,154,154,.16);
+  --input-bg:#fff;
+  --btn-sec-bg:#dfe7f0;--btn-sec-text:#16283a;--btn-sec-bg-h:#cdd9e6;
+  --shadow-hd:0 1px 4px rgba(12,32,53,.08);--shadow-card:0 1px 3px rgba(12,32,53,.06);
+  --pre-bg:#f2f6fb;--code:#0f9a9a;
+  --toggle-bg:#0f9a9a;--toggle-thumb:#fff;
+  --ok:#109a5a;--warn:#c0392b;--amber:#b8791a;--on-status:#fff;
+  color-scheme:light;
+}
+[data-theme="dark"]{
+  --bg:#081521;--surface:#16304a;--surface2:#0c2035;--surface3:#1d3c5c;
+  --border:#274a6e;--text:#eaf2f8;--text-dim:#b8cde0;--text-muted:#8aa8c4;--text-faint:#6d89a4;
+  --accent:#16b8b8;--accent-h:#3fd4d4;--accent-ring:rgba(22,184,184,.20);
+  --input-bg:#0c2035;
+  --btn-sec-bg:#1d3c5c;--btn-sec-text:#eaf2f8;--btn-sec-bg-h:#274a6e;
+  --shadow-hd:0 1px 4px rgba(0,0,0,.45);--shadow-card:0 1px 3px rgba(0,0,0,.35);
+  --pre-bg:#050f18;--code:#16b8b8;
+  --toggle-bg:#16b8b8;--toggle-thumb:#081521;
+  --ok:#2fbf71;--warn:#ff5a52;--amber:#f0a500;--on-status:#081521;
+  color-scheme:dark;
+}
+/* Night mode: red-preserving, so dark adaptation is kept on deck. */
+[data-theme="night"]{
+  --bg:#0a0202;--surface:#2a0f0f;--surface2:#130505;--surface3:#3a1414;
+  --border:#4a1c1c;--text:#d35c3e;--text-dim:#bd5234;--text-muted:#aa4a2c;--text-faint:#8a3c24;
+  --accent:#e2643e;--accent-h:#f07a52;--accent-ring:rgba(226,100,62,.22);
+  --input-bg:#130505;
+  --btn-sec-bg:#3a1414;--btn-sec-text:#d35c3e;--btn-sec-bg-h:#4a1c1c;
+  --shadow-hd:0 1px 4px rgba(0,0,0,.6);--shadow-card:0 1px 3px rgba(0,0,0,.5);
+  --pre-bg:#080202;--code:#e2643e;
+  --toggle-bg:#e2643e;--toggle-thumb:#0a0202;
+  --ok:#b24c2c;--warn:#e2543a;--amber:#c25e2a;--on-status:#0a0202;
+  color-scheme:dark;
+}
+/* ── Reset & Base ──────────────────────────────────────────────────────── */
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     background:var(--bg);color:var(--text);min-height:100vh;transition:background .25s,color .25s}
+/* ── Header ────────────────────────────────────────────────────────────── */
+header{background:var(--surface);border-bottom:1px solid var(--border);padding:12px 20px;
+       display:flex;align-items:center;gap:12px;box-shadow:var(--shadow-hd)}
+header h1{font-size:1.2rem;font-weight:600;color:var(--text)}
+.badge{background:var(--accent);color:#fff;padding:2px 8px;border-radius:12px;font-size:.75rem}
+/* ── Theme toggle ──────────────────────────────────────────────────────── */
+.theme-toggle{display:flex;align-items:center;gap:7px;cursor:pointer;user-select:none;margin-left:auto;
+  background:var(--btn-sec-bg);color:var(--btn-sec-text);border:1px solid var(--border);
+  border-radius:16px;padding:4px 12px;font:inherit;font-size:.8rem}
+.theme-toggle:hover{background:var(--btn-sec-bg-h)}
+.theme-toggle input{display:none}
+.toggle-track{width:42px;height:24px;background:var(--toggle-bg);border-radius:12px;
+              position:relative;transition:background .25s;flex-shrink:0;
+              box-shadow:0 0 0 1.5px rgba(0,0,0,.08)}
+.toggle-thumb{position:absolute;top:3px;left:3px;width:18px;height:18px;
+              background:var(--toggle-thumb);border-radius:50%;
+              transition:transform .25s,background .25s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.theme-toggle input:checked ~ .toggle-track .toggle-thumb{transform:translateX(18px)}
+.toggle-icon{font-size:1rem;line-height:1;transition:opacity .2s}
+/* ── Nav ───────────────────────────────────────────────────────────────── */
+nav{display:flex;gap:0;border-bottom:1px solid var(--border);background:var(--surface);
+    padding:0 20px;overflow-x:auto}
+.tab{padding:10px 18px;cursor:pointer;border-bottom:2px solid transparent;font-size:.9rem;
+     color:var(--text-muted);white-space:nowrap;transition:color .2s,border-color .2s}
+.tab:hover{color:var(--text)}
+.tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+/* ── Layout ────────────────────────────────────────────────────────────── */
+main{max-width:900px;margin:0 auto;padding:20px}
+.panel{display:none}.panel.active{display:block}
+.section{background:var(--surface);border:1px solid var(--border);border-radius:10px;
+         padding:20px;margin-bottom:16px;box-shadow:var(--shadow-card)}
+.section h2{font-size:1rem;font-weight:600;color:var(--text);margin-bottom:16px;
+            display:flex;align-items:center;gap:8px}
+.section h2 .ico{font-size:1.1rem}
+/* ── Form ──────────────────────────────────────────────────────────────── */
+.form-row{display:grid;grid-template-columns:200px 1fr;gap:10px;align-items:center;margin-bottom:12px}
+.form-row label{font-size:.875rem;color:var(--text-dim)}
+input,select{background:var(--input-bg);border:1px solid var(--border);color:var(--text);
+             padding:7px 10px;border-radius:6px;width:100%;font-size:.875rem;
+             transition:border-color .2s,box-shadow .2s}
+input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-ring)}
+input[type=range]{padding:0;accent-color:var(--accent)}
+input[type=checkbox]{width:auto;accent-color:var(--accent)}
+/* ── Buttons ───────────────────────────────────────────────────────────── */
+.btn{padding:8px 16px;border-radius:6px;border:none;cursor:pointer;
+     font-size:.875rem;font-weight:500;transition:background .15s,box-shadow .15s}
+.btn-primary{background:var(--accent);color:#fff;box-shadow:0 1px 3px rgba(26,111,196,.3)}
+.btn-primary:hover{background:var(--accent-h)}
+.btn-danger{background:var(--warn);color:var(--on-status)}.btn-danger:hover{filter:brightness(1.12)}
+.btn-secondary{background:var(--btn-sec-bg);color:var(--btn-sec-text);border:1px solid var(--border)}
+.btn-secondary:hover{background:var(--btn-sec-bg-h)}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px}
+/* ── Live cards ────────────────────────────────────────────────────────── */
+.live-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.live-card{background:var(--surface2);border:1px solid var(--border);border-radius:8px;
+           padding:12px;text-align:center}
+.live-card .label{font-size:.7rem;color:var(--text-muted);text-transform:uppercase;
+                  letter-spacing:.05em;margin-bottom:6px}
+.live-card .value{font-size:1.4rem;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+.live-card .unit{font-size:.7rem;color:var(--text-faint);margin-top:2px}
+/* ── Grid editor ───────────────────────────────────────────────────────── */
+.grid-editor{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.grid-cell{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px}
+.grid-cell h4{font-size:.8rem;color:var(--text-muted);margin-bottom:8px}
+/* ── Toast ─────────────────────────────────────────────────────────────── */
+.toast{position:fixed;bottom:20px;right:20px;background:var(--ok);color:var(--on-status);
+       padding:10px 18px;border-radius:8px;font-size:.875rem;opacity:0;
+       transition:opacity .3s;pointer-events:none;z-index:999;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.toast.show{opacity:1}.toast.error{background:var(--warn)}
+/* ── Misc ──────────────────────────────────────────────────────────────── */
+.status-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:.85rem}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--text-faint);flex-shrink:0}
+.dot.green{background:var(--ok)}.dot.yellow{background:var(--amber)}.dot.red{background:var(--warn)}
+code{color:var(--code)}
+pre{background:var(--pre-bg);border:1px solid var(--border);border-radius:6px;
+    padding:14px;font-size:.8rem;color:var(--code);overflow-x:auto;line-height:1.6}
+textarea{background:var(--input-bg);border:1px solid var(--border);color:var(--code);
+         border-radius:6px;padding:10px;font-family:monospace;font-size:.8rem;resize:vertical}
+@media(max-width:600px){.form-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <!-- NauticPi signet, inline so the page stays a single self-contained file.
+       The pi inherits currentColor (= header text) and the wave takes the theme
+       accent, so the mark follows light/dark/night instead of clashing in the
+       red night palette. Geometry from logo/nauticpi-mark.svg. -->
+  <svg viewBox="0 0 200 176" width="34" height="30" aria-label="NauticPinnace" role="img"
+       style="flex:none;color:var(--text)">
+    <g transform="translate(18,6) scale(0.82)" fill="none" stroke="currentColor"
+       stroke-width="15" stroke-linecap="round">
+      <path d="M40 66 H160"/>
+      <path d="M67 66 V138"/>
+      <path d="M130 66 V125 Q 130 140 147 140"/>
+    </g>
+    <path d="M16 148 C 46 128 78 128 108 148 S 158 168 186 148" fill="none"
+          stroke-width="11" stroke-linecap="round" style="stroke:var(--accent)"/>
+  </svg>
+  <h1>NauticPinnace</h1>
+  <span class="badge" id="ipBadge">192.168.4.1</span>
+  <!-- no data-i18n: the text depends on the connection state, applyI18n()
+       would otherwise reset it to "offline" on every language switch.
+       relabelUi() re-sets it from connOnline instead. -->
+  <span id="connBadge" style="font-size:.75rem;padding:2px 8px;border-radius:12px;background:var(--surface3);color:var(--text-muted)">●  offline</span>
+  <button class="theme-toggle" type="button" onclick="toggleTheme()"
+          data-i18n-title="THEME_TOGGLE_TITLE" title="Design umschalten: Hell → Dunkel → Nacht">
+    <span class="toggle-icon" id="themeIcon">🌙</span>
+    <span id="themeLabel">Hell</span>
+  </button>
+  <select id="langSel" onchange="setLang(this.value)" data-i18n-title="LANG_TITLE"
+          title="Sprache / Language"
+          style="width:auto;padding:4px 10px;border-radius:16px;font-size:.8rem;
+                 background:var(--btn-sec-bg);color:var(--btn-sec-text)">
+    <option value="de">DE</option>
+    <option value="en">EN</option>
+  </select>
+</header>
+<nav>
+  <div class="tab active" onclick="showTab('live')" data-i18n="TAB_LIVE">Live</div>
+  <div class="tab" onclick="showTab('wifi')" data-i18n="TAB_WIFI">WiFi</div>
+  <div class="tab" onclick="showTab('display')" data-i18n="TAB_DISPLAY">Display</div>
+  <div class="tab" onclick="showTab('design')" data-i18n="TAB_DESIGN">Design</div>
+  <div class="tab" onclick="showTab('nmea')" data-i18n="TAB_NMEA">NMEA 2000</div>
+  <div class="tab" onclick="showTab('polar')" data-i18n="TAB_POLAR">Polar</div>
+  <div class="tab" onclick="showTab('logo')" data-i18n="TAB_LOGO">Boot-Logo</div>
+  <div class="tab" onclick="showTab('backup')" data-i18n="TAB_BACKUP">Import / Export</div>
+</nav>
+<main>
+
+<!-- ============ LIVE ============ -->
+<div id="tab-live" class="panel active">
+  <div class="section">
+    <h2><span class="ico">📡</span> <span data-i18n="LIVE_H">Live-Sensordaten</span></h2>
+    <div class="live-grid" id="liveGrid">
+      <div class="live-card"><div class="label" data-i18n="LBL_SOG">SOG</div><div class="value" id="v-sog">--</div><div class="unit">kn</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_COG">COG</div><div class="value" id="v-cog">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_HDG">Heading</div><div class="value" id="v-hdg">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_STW">STW</div><div class="value" id="v-stw">--</div><div class="unit">kn</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_AWA">AWA</div><div class="value" id="v-awa">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_AWS">AWS</div><div class="value" id="v-aws">--</div><div class="unit">kn</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_TWA">TWA</div><div class="value" id="v-twa">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_TWS">TWS</div><div class="value" id="v-tws">--</div><div class="unit">kn</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_TWD">TWD</div><div class="value" id="v-twd">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_DEPTH">Tiefe</div><div class="value" id="v-depth">--</div><div class="unit">m</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_RPM">RPM</div><div class="value" id="v-rpm">--</div><div class="unit"></div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_OIL">Öldr</div><div class="value" id="v-oil">--</div><div class="unit">hPa</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_COOLANT">Kühlwasser</div><div class="value" id="v-cool">--</div><div class="unit">°C</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_RUDDER">Ruder</div><div class="value" id="v-rudder">--</div><div class="unit">°</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_BATTV">Batt V</div><div class="value" id="v-battv">--</div><div class="unit">V</div></div>
+      <div class="live-card"><div class="label" data-i18n="LBL_AIS">AIS Ziele</div><div class="value" id="v-ais">--</div><div class="unit"></div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ WiFi ============ -->
+<div id="tab-wifi" class="panel">
+  <div class="section">
+    <h2><span class="ico">📶</span> <span data-i18n="WIFI_H">WLAN-Einstellungen</span></h2>
+    <div class="form-row">
+      <label data-i18n="F_MODE">Modus</label>
+      <select id="wifi-mode">
+        <option value="true" data-i18n="OPT_AP">Access Point (empfohlen)</option>
+        <option value="false" data-i18n="OPT_CLIENT">Client (verbinde mit Heimnetz)</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label data-i18n="F_SSID">SSID</label>
+      <input id="wifi-ssid" type="text" placeholder="SSID">
+    </div>
+    <div class="form-row">
+      <label data-i18n="F_PASSWORD">Passwort</label>
+      <input id="wifi-pass" type="password" data-i18n-placeholder="PH_PASS_OPEN" placeholder="(leer = offen)">
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="saveWifi()" data-i18n="BTN_SAVE_RESTART">Speichern &amp; Neustart</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DISPLAY ============ -->
+<div id="tab-display" class="panel">
+  <div class="section">
+    <h2><span class="ico">🖥️</span> <span data-i18n="DISP_H">Displayeinstellungen</span></h2>
+    <div class="form-row">
+      <label data-i18n="F_BRIGHT">Helligkeit</label>
+      <input type="range" id="disp-bright" min="30" max="255" step="1"
+             oninput="document.getElementById('bright-val').textContent=this.value">
+      <span id="bright-val" style="color:var(--text-muted);font-size:.8rem;grid-column:2;margin-top:-8px"></span>
+    </div>
+    <div class="form-row">
+      <label data-i18n="F_PERF_OVERLAY">FPS / CPU-Overlay</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="perf-overlay" style="width:18px;height:18px;accent-color:var(--accent)">
+        <span data-i18n="PERF_DESC" style="font-size:.85rem;color:var(--text-muted)">Leistungsanzeige (FPS, CPU%, freier RAM) einblenden</span>
+      </div>
+    </div>
+    <div class="form-row" style="grid-template-columns:1fr;align-items:start">
+      <label data-i18n="SCREENS_LBL" style="margin-bottom:4px">Bildschirme – Reihenfolge, Sichtbarkeit &amp; Einstellungen</label>
+      <div data-i18n="SCREENS_HINT" style="font-size:.8rem;color:var(--text-muted);margin-bottom:8px">
+        Reihenfolge mit&nbsp;▲▼ ändern. Auf einen Eintrag klicken, um seine Einstellungen
+        aufzuklappen. Deaktivierte Bildschirme werden in der Navigation übersprungen.
+      </div>
+      <div id="screenOrderList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-secondary" onclick="gridWizardOpen()" data-i18n="BTN_ADD_GRID">+ Datenraster hinzufügen</button>
+      </div>
+      <div id="gridWizard" style="display:none;margin-top:10px;background:var(--surface2);border:1px solid var(--accent);border-radius:6px;padding:12px">
+        <div data-i18n="WIZ_H" style="font-weight:600;margin-bottom:8px">Neues Datenraster</div>
+        <div class="form-row"><label data-i18n="F_NAME">Name</label><input id="wiz-name" type="text" data-i18n-placeholder="PH_WIZ_NAME" placeholder="z.B. Motor-Übersicht" style="max-width:240px"></div>
+        <div class="form-row"><label data-i18n="F_GRID">Raster</label>
+          <select id="wiz-size">
+            <option value="1x1">1 × 1</option><option value="1x2">1 × 2</option>
+            <option value="2x2">2 × 2</option><option value="2x3">2 × 3</option>
+            <option value="3x3" selected>3 × 3</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="gridWizardCreate()" data-i18n="BTN_CREATE">Anlegen</button>
+          <button class="btn btn-secondary" data-i18n="BTN_CANCEL" onclick="document.getElementById('gridWizard').style.display='none'">Abbrechen</button>
+        </div>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="saveDisplay()" data-i18n="BTN_SAVE">Speichern</button>
+    </div>
+  </div>
+
+  <div class="section" style="border:2px solid var(--warn)">
+    <h2><span class="ico">⚠️</span> <span data-i18n="DEMO_H">Demo-Modus</span></h2>
+    <p data-i18n-html="DEMO_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:16px">
+      Im Demo-Modus werden <strong>alle NMEA-Sensordaten durch animierte Simulationswerte ersetzt</strong>
+      (kein CAN-Bus nötig). Das Display zeigt auf allen Bildschirmen eine blinkende Dauerwarnung.<br>
+      <span style="color:var(--warn);font-weight:600">Nur für Präsentationen und Tests – niemals während der Fahrt aktivieren!</span>
+    </p>
+    <div class="form-row">
+      <label data-i18n="DEMO_EN_LBL">Demo-Modus aktivieren</label>
+      <div style="display:flex;align-items:center;gap:10px">
+        <input type="checkbox" id="demo-mode" style="width:auto;width:18px;height:18px;accent-color:var(--warn)"
+               onchange="demoToggle(this.checked)">
+        <span id="demo-status" data-i18n="DEMO_OFF" style="font-size:.85rem;color:var(--text-muted)">Deaktiviert</span>
+      </div>
+    </div>
+    <div class="actions">
+      <button class="btn btn-danger" onclick="saveDemo()" data-i18n="BTN_SAVE">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DESIGN / THEME ============ -->
+<div id="tab-design" class="panel">
+  <div class="section">
+    <h2><span class="ico">🎨</span> <span data-i18n="DESIGN_H">Design / Theme</span></h2>
+    <p data-i18n-html="DESIGN_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Farben für das <strong>helle</strong> und <strong>dunkle</strong> Theme. Das aktive Theme bestimmt,
+      was am Gerät angezeigt wird. Änderungen werden <strong>live übernommen</strong> (kein Neustart nötig).
+    </p>
+    <div class="form-row">
+      <label data-i18n="F_ACTIVE_THEME">Aktives Theme</label>
+      <select id="theme-active">
+        <option value="dark" data-i18n="THEME_DARK">Dunkel</option>
+        <option value="light" data-i18n="THEME_LIGHT">Hell</option>
+      </select>
+    </div>
+    <div data-i18n="SEC_COLORS" style="font-weight:700;color:var(--accent);margin-top:14px">Farben</div>
+    <div id="themeEditor" style="margin-top:6px"></div>
+    <div data-i18n="SEC_FONTS" style="font-weight:700;color:var(--accent);margin-top:18px">Schriftgrößen</div>
+    <div data-i18n="FONTS_HINT" style="font-size:.8rem;color:var(--text-muted);margin-bottom:6px">Pro Schrift-Rolle eine Montserrat-Größe (px).</div>
+    <div id="fontEditor"></div>
+    <div data-i18n="SEC_SIZES" style="font-weight:700;color:var(--accent);margin-top:18px">Größen</div>
+    <div data-i18n="SIZES_HINT" style="font-size:.8rem;color:var(--text-muted);margin-bottom:6px">Maße, Abstände, Deckkräfte und Zeiten (für beide Themes gleich).</div>
+    <div id="sizeEditor"></div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="saveTheme()" data-i18n="BTN_SAVE_APPLY">Speichern &amp; Übernehmen</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ NMEA 2000 ============ -->
+<div id="tab-nmea" class="panel">
+  <div class="section">
+    <h2><span class="ico">🔌</span> <span data-i18n="NMEA_H">NMEA 2000 / CAN-Bus</span></h2>
+    <p data-i18n-html="NMEA_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Das Board hat einen eingebauten CAN-Transceiver (TJA1051) an der Schraubklemme (CANH/CANL).<br>
+      Verändere diese Pins nur, wenn du eine andere Hardware-Revision nutzt.
+    </p>
+    <div class="form-row">
+      <label data-i18n="F_CAN_TX">CAN TX GPIO</label>
+      <input type="number" id="can-tx" min="0" max="48">
+    </div>
+    <div class="form-row">
+      <label data-i18n="F_CAN_RX">CAN RX GPIO</label>
+      <input type="number" id="can-rx" min="0" max="48">
+    </div>
+    <div class="form-row">
+      <label data-i18n="F_N2K_LISTEN">Nur mith&ouml;ren (sendet nie)</label>
+      <input type="checkbox" id="can-listen">
+    </div>
+    <p data-i18n="P_N2K_LISTEN" style="font-size:.8rem;color:var(--text-muted);margin:-6px 0 12px">
+      Im Nur-mith&ouml;ren-Modus sendet das Display nichts auf den Bus &mdash; kein Address-Claim,
+      kein Heartbeat, keine Fusion-Steuerung. F&uuml;r fremde Boote oder Werkstatttermine.
+    </p>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="saveNmea()" data-i18n="BTN_SAVE_RESTART">Speichern &amp; Neustart</button>
+    </div>
+  </div>
+  <!-- "Transfer settings" removed: the button called POST /api/n2k-send-config
+       — a route that never existed in WebConfig.cpp. It never worked.
+       The C++ stubs (Config::sendViaN2k/receiveViaN2k) still exist, in case the
+       idea of a config transfer via proprietary PGN is ever picked up again. -->
+</div>
+
+<!-- ============ POLAR ============ -->
+<div id="tab-polar" class="panel">
+  <div class="section">
+    <h2><span class="ico">⛵</span> <span data-i18n="POLAR_H">Polardaten</span></h2>
+    <p data-i18n-html="POLAR_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Ziel-Bootsgeschwindigkeit (kn) je <strong>Windwinkel TWA</strong> (Zeilen, °) und
+      <strong>Windgeschwindigkeit TWS</strong> (Spalten, kn). Wird auf dem Speed-&-Polar-Screen
+      (Wert „Polar kn" / „Perf %") und im Wind-Performance-Balken verwendet. Zwischenwerte
+      werden bilinear interpoliert.
+    </p>
+    <div class="form-row">
+      <label data-i18n="F_BOATNAME">Bootname</label>
+      <input id="polar-name" type="text" data-i18n-placeholder="PH_BOATNAME" placeholder="z.B. Oceanis 350" style="max-width:260px">
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:6px 0 12px">
+      <button class="btn btn-secondary" onclick="document.getElementById('polarCsvFile').click()" data-i18n="BTN_CSV_IMPORT">📥 CSV importieren…</button>
+      <input type="file" id="polarCsvFile" accept=".csv,.txt" style="display:none" onchange="importPolarCsvFile(event)">
+      <button class="btn btn-secondary" onclick="togglePolarCsv()" data-i18n="BTN_CSV_PASTE">📋 CSV einfügen…</button>
+      <button class="btn btn-secondary" onclick="exportPolarCsv()" data-i18n="BTN_CSV_EXPORT">📤 CSV exportieren</button>
+    </div>
+
+    <div id="polarCsvBox" style="display:none;margin-bottom:14px">
+      <textarea id="polarCsvText" placeholder="twa,0,4,6,8,10,12,14,16,20,24&#10;40,0,2.49,3.58,4.47,...&#10;..." style="width:100%;height:160px;background:var(--surface2);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:10px;font-family:monospace;font-size:.8rem;resize:vertical"></textarea>
+      <div data-i18n-html="CSV_HINT" style="margin-top:6px;font-size:.75rem;color:var(--text-muted)">Erste Zeile: <code>twa,&lt;TWS-Werte…&gt;</code> — jede weitere Zeile: <code>&lt;TWA&gt;,&lt;Geschwindigkeiten…&gt;</code></div>
+      <button class="btn btn-secondary" style="margin-top:8px" onclick="applyPolarCsv()" data-i18n="BTN_CSV_APPLY">CSV übernehmen</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn btn-secondary" onclick="polarAddRow()" data-i18n="BTN_ADD_TWA">+ TWA-Zeile</button>
+      <button class="btn btn-secondary" onclick="polarDelRow()" data-i18n="BTN_DEL_TWA">− TWA-Zeile</button>
+      <button class="btn btn-secondary" onclick="polarAddCol()" data-i18n="BTN_ADD_TWS">+ TWS-Spalte</button>
+      <button class="btn btn-secondary" onclick="polarDelCol()" data-i18n="BTN_DEL_TWS">− TWS-Spalte</button>
+    </div>
+
+    <div style="overflow:auto;max-height:58vh;border:1px solid var(--border);border-radius:6px">
+      <table id="polarTable" style="border-collapse:collapse;font-size:.78rem;white-space:nowrap"></table>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" onclick="savePolar()" data-i18n="BTN_SAVE">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ BOOT-LOGO ============ -->
+<div id="tab-logo" class="panel">
+  <div class="section">
+    <h2><span class="ico">🖼️</span> <span data-i18n="LOGO_H">Boot-Logo</span></h2>
+    <p data-i18n-html="LOGO_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:16px">
+      Eigenes Logo für den Bootscreen. Das Bild wird im Hintergrund der Spinner-Animation angezeigt.<br>
+      Format: <strong>RGB565 .bin</strong> mit 4-Byte-Header (Breite + Höhe je uint16 LE).<br>
+      Konvertierung: <code style="color:var(--accent)">tools/logo_convert.py</code> oder Online-Tool verwenden.<br>
+      Empfohlene Größe: <strong>160 × 160 px</strong> (max. 200 × 200 px).
+    </p>
+
+    <!-- Current logo status -->
+    <div id="logoStatus" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px;margin-bottom:16px;display:flex;align-items:center;gap:14px">
+      <div id="logoPreview" style="width:80px;height:80px;background:var(--surface3);border:1px dashed var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:.75rem;text-align:center"
+           data-i18n="LOGO_NONE_PREVIEW">Kein Logo</div>
+      <div>
+        <div id="logoInfo" data-i18n="LOGO_NONE_INFO" style="font-size:.85rem;color:var(--text-muted)">Kein Logo gespeichert</div>
+        <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+          <label class="btn btn-primary" style="cursor:pointer;font-size:.875rem">
+            <span data-i18n="BTN_LOGO_UPLOAD">Logo hochladen (.bin)</span>
+            <input type="file" id="logoFile" accept=".bin" onchange="uploadLogo()" style="display:none">
+          </label>
+          <button class="btn btn-danger" onclick="deleteLogo()" data-i18n="BTN_LOGO_DELETE">Logo löschen</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Animation settings -->
+    <h3 data-i18n="ANIM_H" style="font-size:.9rem;color:var(--text);margin-bottom:12px">Animations-Einstellungen</h3>
+    <div class="form-row">
+      <label data-i18n="F_BOOTTITLE">Titel</label>
+      <input type="text" id="boot-title" maxlength="23" placeholder="NauticPinnace" style="max-width:260px">
+    </div>
+    <p data-i18n="BOOTTITLE_HINT" style="font-size:.8rem;color:var(--text-muted);grid-column:2;margin-top:-8px">
+      Große Zeile im Startbildschirm. Leer lassen für „NauticPinnace".
+    </p>
+    <div class="form-row">
+      <label data-i18n="F_BOOTNAME">Bootnamen anzeigen</label>
+      <input type="text" id="boot-name" maxlength="31" data-i18n-placeholder="PH_BOOTNAME" placeholder="z.B. S/V Albatross" style="max-width:260px">
+    </div>
+    <p data-i18n="BOOTNAME_HINT" style="font-size:.8rem;color:var(--text-muted);grid-column:2;margin-top:-8px">
+      Wird unterhalb des Titels eingeblendet. Leer lassen zum Deaktivieren.
+    </p>
+    <div class="actions" style="margin-top:14px">
+      <button class="btn btn-primary" onclick="saveBootName()" data-i18n="BTN_SAVE">Speichern</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2><span class="ico">🐍</span> <span data-i18n="PY_H">Logo konvertieren (Python)</span></h2>
+    <p data-i18n-html="PY_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:10px">
+      Speichere das Skript als <code style="color:var(--accent)">logo_convert.py</code> und führe es aus:
+    </p>
+    <pre style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:14px;font-size:.8rem;color:var(--accent);overflow-x:auto;line-height:1.6"><code>pip install Pillow
+
+python logo_convert.py logo.png logo.bin --size 160</code></pre>
+    <p data-i18n-html="PY_HINT" style="font-size:.8rem;color:var(--text-muted);margin-top:10px">
+      Das Skript liegt unter <code style="color:var(--accent)">tools/logo_convert.py</code> im Projektverzeichnis.
+    </p>
+  </div>
+</div>
+
+<!-- ============ BACKUP ============ -->
+<div id="tab-backup" class="panel">
+  <div class="section">
+    <h2><span class="ico">💾</span> <span data-i18n="BACKUP_H">Import / Export</span></h2>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="exportConfig()" data-i18n="BTN_EXPORT_CFG">Konfiguration exportieren (JSON)</button>
+      <label class="btn btn-secondary" style="cursor:pointer">
+        <span data-i18n="BTN_IMPORT_CFG">Konfiguration importieren (JSON)</span>
+        <input type="file" accept=".json" onchange="importConfig(event)" style="display:none">
+      </label>
+    </div>
+    <div style="margin-top:16px">
+      <h3 data-i18n="RAW_H" style="font-size:.9rem;color:var(--text);margin-bottom:8px">Aktuelle Konfiguration (roh)</h3>
+      <textarea id="rawConfig" style="width:100%;height:300px;background:var(--surface2);border:1px solid var(--border);color:var(--accent);border-radius:6px;padding:10px;font-family:monospace;font-size:.8rem;resize:vertical" readonly></textarea>
+    </div>
+    <div class="actions" style="margin-top:12px">
+      <button class="btn btn-danger" onclick="restartDevice()" data-i18n="BTN_RESTART">Gerät neu starten</button>
+    </div>
+  </div>
+</div>
+
+</main>
+<div class="toast" id="toast"></div>
+
+<script>
+// ---- i18n -------------------------------------------------------------------
+// One dictionary for the entire UI. Fallback chain:
+//   chosen language -> German -> key name  (never "undefined" in the UI).
+// The `key` fields of the data tables are the protocol to the firmware and
+// stay untouched; only the `label`/`g` fields get translated.
+const I18N = {
+de:{
+TITLE:'NauticPinnace – Konfiguration',
+LANG_TITLE:'Sprache / Language',
+CONN_OFFLINE:'●  offline',
+CONN_ONLINE:'●  verbunden',
+THEME_TOGGLE_TITLE:'Design umschalten: Hell → Dunkel → Nacht',
+THEME_LIGHT:'Hell',
+THEME_DARK:'Dunkel',
+THEME_NIGHT:'Nacht',
+TAB_LIVE:'Live',
+TAB_WIFI:'WiFi',
+TAB_DISPLAY:'Display',
+TAB_DESIGN:'Design',
+TAB_NMEA:'NMEA 2000',
+TAB_POLAR:'Polar',
+TAB_LOGO:'Boot-Logo',
+TAB_BACKUP:'Import / Export',
+LIVE_H:'Live-Sensordaten',
+LBL_SOG:'SOG',
+LBL_COG:'COG',
+LBL_HDG:'Heading',
+LBL_STW:'STW',
+LBL_AWA:'AWA',
+LBL_AWS:'AWS',
+LBL_TWA:'TWA',
+LBL_TWS:'TWS',
+LBL_TWD:'TWD',
+LBL_DEPTH:'Tiefe',
+LBL_RPM:'RPM',
+LBL_OIL:'Öldr',
+LBL_COOLANT:'Kühlwasser',
+LBL_RUDDER:'Ruder',
+LBL_BATTV:'Batt V',
+LBL_AIS:'AIS Ziele',
+WIFI_H:'WLAN-Einstellungen',
+F_MODE:'Modus',
+OPT_AP:'Access Point (empfohlen)',
+OPT_CLIENT:'Client (verbinde mit Heimnetz)',
+F_SSID:'SSID',
+F_PASSWORD:'Passwort',
+PH_PASS_OPEN:'(leer = offen)',
+BTN_SAVE_RESTART:'Speichern & Neustart',
+DISP_H:'Displayeinstellungen',
+F_BRIGHT:'Helligkeit',
+F_PERF_OVERLAY:'FPS / CPU-Overlay',
+PERF_DESC:'Leistungsanzeige (FPS, CPU%, freier RAM) einblenden',
+SCREENS_LBL:'Bildschirme – Reihenfolge, Sichtbarkeit & Einstellungen',
+SCREENS_HINT:'Reihenfolge mit ▲▼ ändern. Auf einen Eintrag klicken, um seine Einstellungen aufzuklappen. Deaktivierte Bildschirme werden in der Navigation übersprungen.',
+BTN_ADD_GRID:'+ Datenraster hinzufügen',
+WIZ_H:'Neues Datenraster',
+F_NAME:'Name',
+PH_WIZ_NAME:'z.B. Motor-Übersicht',
+F_GRID:'Raster',
+BTN_CREATE:'Anlegen',
+BTN_CANCEL:'Abbrechen',
+BTN_SAVE:'Speichern',
+DEMO_H:'Demo-Modus',
+DEMO_P:'Im Demo-Modus werden <strong>alle NMEA-Sensordaten durch animierte Simulationswerte ersetzt</strong> (kein CAN-Bus nötig). Das Display zeigt auf allen Bildschirmen eine blinkende Dauerwarnung.<br><span style="color:var(--warn);font-weight:600">Nur für Präsentationen und Tests – niemals während der Fahrt aktivieren!</span>',
+DEMO_EN_LBL:'Demo-Modus aktivieren',
+DEMO_OFF:'Deaktiviert',
+DEMO_ON:'🔴 Aktiv – Simulierte Daten!',
+DESIGN_H:'Design / Theme',
+DESIGN_P:'Farben für das <strong>helle</strong> und <strong>dunkle</strong> Theme. Das aktive Theme bestimmt, was am Gerät angezeigt wird. Änderungen werden <strong>live übernommen</strong> (kein Neustart nötig).',
+F_ACTIVE_THEME:'Aktives Theme',
+SEC_COLORS:'Farben',
+SEC_FONTS:'Schriftgrößen',
+FONTS_HINT:'Pro Schrift-Rolle eine Montserrat-Größe (px).',
+SEC_SIZES:'Größen',
+SIZES_HINT:'Maße, Abstände, Deckkräfte und Zeiten (für beide Themes gleich).',
+BTN_SAVE_APPLY:'Speichern & Übernehmen',
+TH_COLOR:'Farbe',
+NMEA_H:'NMEA 2000 / CAN-Bus',
+NMEA_P:'Das Board hat einen eingebauten CAN-Transceiver (TJA1051) an der Schraubklemme (CANH/CANL).<br>Verändere diese Pins nur, wenn du eine andere Hardware-Revision nutzt.',
+F_CAN_TX:'CAN TX GPIO',
+F_CAN_RX:'CAN RX GPIO', F_N2K_LISTEN:'Nur mithören (sendet nie)', P_N2K_LISTEN:'Im Nur-mithören-Modus sendet das Display nichts auf den Bus — kein Address-Claim, kein Heartbeat, keine Fusion-Steuerung. Für fremde Boote oder Werkstatttermine.',
+POLAR_H:'Polardaten',
+POLAR_P:'Ziel-Bootsgeschwindigkeit (kn) je <strong>Windwinkel TWA</strong> (Zeilen, °) und <strong>Windgeschwindigkeit TWS</strong> (Spalten, kn). Wird auf dem Speed-&-Polar-Screen (Wert „Polar kn“ / „Perf %“) und im Wind-Performance-Balken verwendet. Zwischenwerte werden bilinear interpoliert.',
+F_BOATNAME:'Bootname',
+PH_BOATNAME:'z.B. Oceanis 350',
+BTN_CSV_IMPORT:'📥 CSV importieren…',
+BTN_CSV_PASTE:'📋 CSV einfügen…',
+BTN_CSV_EXPORT:'📤 CSV exportieren',
+CSV_HINT:'Erste Zeile: <code>twa,&lt;TWS-Werte…&gt;</code> — jede weitere Zeile: <code>&lt;TWA&gt;,&lt;Geschwindigkeiten…&gt;</code>',
+BTN_CSV_APPLY:'CSV übernehmen',
+BTN_ADD_TWA:'+ TWA-Zeile',
+BTN_DEL_TWA:'− TWA-Zeile',
+BTN_ADD_TWS:'+ TWS-Spalte',
+BTN_DEL_TWS:'− TWS-Spalte',
+LOGO_H:'Boot-Logo',
+LOGO_P:'Eigenes Logo für den Bootscreen. Das Bild wird im Hintergrund der Spinner-Animation angezeigt.<br>Format: <strong>RGB565 .bin</strong> mit 4-Byte-Header (Breite + Höhe je uint16 LE).<br>Konvertierung: <code style="color:var(--accent)">tools/logo_convert.py</code> oder Online-Tool verwenden.<br>Empfohlene Größe: <strong>160 × 160 px</strong> (max. 200 × 200 px).',
+LOGO_NONE_PREVIEW:'Kein Logo',
+LOGO_NONE_INFO:'Kein Logo gespeichert',
+LOGO_NONE_LONG:'Kein Logo gespeichert — eingebaute Animation wird verwendet.',
+LOGO_NONE_BR:'Kein<br>Logo',
+LOGO_STORED:'✓ Logo gespeichert',
+BTN_LOGO_UPLOAD:'Logo hochladen (.bin)',
+BTN_LOGO_DELETE:'Logo löschen',
+ANIM_H:'Animations-Einstellungen',
+F_BOOTTITLE:'Titel',
+BOOTTITLE_HINT:'Große Zeile im Startbildschirm. Leer lassen für „NauticPinnace“.',
+F_BOOTNAME:'Bootnamen anzeigen',
+PH_BOOTNAME:'z.B. S/V Albatross',
+BOOTNAME_HINT:'Wird unterhalb des Titels eingeblendet. Leer lassen zum Deaktivieren.',
+PY_H:'Logo konvertieren (Python)',
+PY_P:'Speichere das Skript als <code style="color:var(--accent)">logo_convert.py</code> und führe es aus:',
+PY_HINT:'Das Skript liegt unter <code style="color:var(--accent)">tools/logo_convert.py</code> im Projektverzeichnis.',
+BACKUP_H:'Import / Export',
+BTN_EXPORT_CFG:'Konfiguration exportieren (JSON)',
+BTN_IMPORT_CFG:'Konfiguration importieren (JSON)',
+RAW_H:'Aktuelle Konfiguration (roh)',
+BTN_RESTART:'Gerät neu starten',
+FLD_SOG:'SOG',
+FLD_COG:'COG',
+FLD_HDG:'Heading',
+FLD_STW:'STW',
+FLD_AWA:'AWA',
+FLD_AWS:'AWS',
+FLD_TWA:'TWA',
+FLD_TWS:'TWS',
+FLD_TWD:'TWD',
+FLD_DEPTH:'Tiefe',
+FLD_RPM:'RPM',
+FLD_OIL:'Öldruck',
+FLD_COOLANT:'Kühlwasser',
+FLD_HOURS:'Betriebsstd.',
+FLD_FUEL:'Kraftstoff',
+FLD_RUDDER:'Ruder',
+FLD_BATTV:'Batt V',
+FLD_LAT:'Breite',
+FLD_LON:'Länge',
+FLD_APTARGET:'AP Ziel',
+FT_DIESEL:'Diesel',
+FT_FRESH:'Frischwasser',
+FT_GREY:'Grauwasser',
+FT_LIVEWELL:'Livewell',
+FT_OIL:'Oel',
+FT_BLACK:'Schwarzwasser',
+FT_GASOLINE:'Benzin',
+FT_TANK:'Tank',
+LAY_HERO1_2:'Groß oben + 2',
+LAY_HERO1_3:'Groß oben + 3',
+LAY_HERO1_2_2:'Groß oben + 2 + 2',
+GRID:'Datenraster',
+CELL:'Zelle',
+CELL_HERO:'Großes Feld',
+FIELD:'Feld',
+OPT_EMPTY:'– leer –',
+PH_LABEL:'Bezeichnung',
+PH_UNIT:'Einheit',
+PH_DEC:'Dez',
+F_LAYOUT:'Layout (Neustart bei Änderung)',
+ACTIVE:'Aktiv',
+DELETE:'Löschen',
+SAIL_LWL:'Rumpflänge LWL (m)',
+SAIL_NOGO:'No-Go-Winkel (± °)',
+F_HEADSAIL:'Vorsegel',
+SAIL_SPI:'Spinnaker erlauben',
+SAIL_CZ:'Code Zero erlauben',
+SAIL_BUTTERFLY:'Butterfly bei Vorwind (Schmetterling)',
+SAIL_WINDLINES:'Windlinien = scheinbarer Wind (sonst wahr)',
+FS_STORM:'Sturmfock',
+FS_JIB:'Fock',
+FS_WORKING:'Arbeitsfock',
+DEPTH_ALARM:'Tiefenalarm (m, 0=aus)',
+UNIT:'Einheit',
+UNIT_M:'Meter (m)',
+UNIT_FT:'Feet (ft)',
+ENG_IDLE:'Leerlauf (RPM)',
+ENG_CRUISE:'Reisebereich (RPM)',
+ENG_MAXCONT:'Max. Dauerdrehzahl (RPM)',
+ENG_MAX:'Maximaldrehzahl (RPM)',
+ENG_FIELDCOUNT:'Felder unten (Anzahl)',
+AIS_RANGE:'Reichweite (nm)',
+AIS_CPA_ALARM:'CPA-Alarm aktivieren',
+AIS_CPA:'Alarm CPA < (nm)',
+AIS_TCPA:'Alarm TCPA < (min)',
+ANCH_RADIUS:'Ankerdrift-Radius (m)',
+ANCH_ALARM:'Ankerwache-Alarm aktiv',
+ANCH_NORTHUP:'Nord-oben (sonst Voraus-oben)',
+NO_TANKS:'Keine Tanks erkannt (Bus/Demo).',
+TANK_CAP:'Kapazität (L)',
+TANK_CAL:'Kalibrierung L @ 25/50/75 %',
+NO_BATT:'Keine Batterien erkannt (Bus/Demo).',
+BATT_CAP:'Kapazität (Ah)',
+BATT_SYS:'System',
+PLR_EDIT:'Polardaten bearbeiten',
+NO_SETTINGS:'Keine Einstellungen für diesen Bildschirm.',
+TOAST_MAX_GRIDS:'Maximal {n} Datenraster',
+TOAST_GRID_CREATED:'Datenraster angelegt – Zellen zuweisen, dann „Speichern“',
+CONFIRM_DEL_GRID:'Datenraster „{n}“ löschen?',
+TOAST_APPLIED:'Übernommen ✓',
+TOAST_ERROR:'Fehler',
+TOAST_SAVED:'Gespeichert',
+TOAST_SAVED_RESTART:'Gespeichert – Neustart…',
+TOAST_SAVE_ERROR:'Fehler beim Speichern',
+TOAST_DEMO_ON:'⚠ Demo-Modus aktiviert',
+TOAST_DEMO_OFF:'Demo-Modus deaktiviert',
+TOAST_IMPORTED:'Importiert – lade neu…',
+TOAST_IMPORT_ERR:'Fehler beim Import',
+CONFIRM_RESTART:'Gerät wirklich neu starten?',
+TOAST_RESTART_REQ:'Neustart angefordert…',
+TOAST_CSV_BAD:'CSV ungültig – Format prüfen',
+TOAST_CSV_TOOBIG:'Zu groß: max 32 TWA × 16 TWS',
+TOAST_CSV_OK:'CSV übernommen – zum Speichern „Speichern“ klicken',
+TOAST_POLAR_MIN:'Mindestens 2×2 Werte nötig',
+TOAST_POLAR_SAVED:'Polardaten gespeichert ✓',
+UNKNOWN:'unbekannt',
+TOAST_BIN_ONLY:'Nur .bin-Dateien erlaubt',
+TOAST_TOO_BIG:'Datei zu groß (max 200×200 px)',
+TOAST_UPLOADING:'Wird hochgeladen…',
+TOAST_LOGO_UP:'Logo hochgeladen ✓',
+TOAST_UPLOAD_FAIL:'Upload fehlgeschlagen',
+CONFIRM_DEL_LOGO:'Boot-Logo wirklich löschen?',
+TOAST_LOGO_DEL:'Logo gelöscht',
+TOAST_BOOTNAME:'Gespeichert — gilt ab nächstem Neustart',
+FS_GEN100:'100 % Genua',
+FS_GEN120:'120 % Genua',
+FS_GEN140:'140 % Genua',
+GRP_PALETTE:'Palette',
+GRP_OVERLAYS:'Overlays',
+GRP_DEPTH:'Tiefe',
+GRP_AUTOPILOT:'Autopilot',
+GRP_WIND:'Wind', GRP_CLOCK:'Uhr & Karte', C_SEABED:'Meeresgrund', C_MAPSEA:'Karte: Meer', C_MAPLAND:'Karte: Land', C_MAPCOAST:'Karte: Küste', C_MAPGRID:'Karte: Gitter', C_TIDEWATER:'Tide: Wasser', C_ATTSKY:'Horizont: Himmel', C_ATTGROUND:'Horizont: Grund', C_ONACCENT:'Text auf Akzent',
+GRP_CARDS:'Karten',
+GRP_NAV:'Navigation',
+GRP_PERF:'Perf-Overlay',
+GRP_ENGINE:'Motor',
+GRP_SPEED:'Geschwindigkeit',
+GRP_RUDDER:'Ruder',
+GRP_MISC:'Sonstiges',
+C_BG:'Hintergrund',
+C_CARDS:'Karten',
+C_BORDER:'Rahmen',
+C_TEXT:'Text',
+C_TEXT_DIM:'Text (gedimmt)',
+C_ACCENT:'Akzent',
+C_GREEN:'Grün / OK',
+C_YELLOW:'Gelb / Warnung',
+C_RED:'Rot / Alarm',
+C_ORANGE:'Orange',
+C_PORT:'Backbord',
+C_STBD:'Steuerbord',
+C_WIND:'Wind',
+C_GRIDLINES:'Gitterlinien',
+C_NAVBTN:'Navi-Button',
+C_PERFTEXT:'Perf-Text',
+C_PERFBG:'Perf-Hintergrund',
+C_DEMOBANNER:'Demo-Banner',
+C_DEMOTEXT:'Demo-Text',
+C_GRADIENT:'Verlauf',
+C_HEADER:'Kopf',
+C_VALUE:'Wert',
+C_ECHO:'Echo',
+C_GRID:'Gitter',
+C_SCALE:'Skala',
+C_NOWMARK:'Jetzt-Marker',
+C_COMPASSBG:'Kompass-BG',
+C_TICK_MAJ:'Hauptstrich',
+C_TICK_MIN:'Nebenstrich',
+C_AP_TARGET:'Sollkurs',
+C_AP_DEVBAR:'Abw.-Balken',
+C_AP_ACTIVE:'Modus aktiv',
+C_AP_MANUAL:'Modus manuell',
+C_AP_STANDBY:'Modus Standby',
+C_BEZEL:'Einfassung',
+C_INNER:'Innenkreis',
+C_RINGBG:'Ring-BG',
+C_CHARTBG:'Diagramm-BG',
+C_Z_NOGO:'Zone No-Go',
+C_Z_CLOSE:'Zone Am Wind',
+C_Z_CLOSER:'Zone Halb-Am-Wind',
+C_Z_BEAM:'Zone Halbwind',
+C_Z_BROAD:'Zone Raumwind',
+C_Z_RUN:'Zone Vorwind',
+C_TWA_PTR:'TWA-Zeiger',
+C_AWA_PTR:'AWA-Zeiger',
+C_VMG:'VMG',
+C_HULL:'Rumpf',
+C_SAIL:'Segel',
+C_MAST:'Mast',
+C_WINDFLOW:'Windlinien',
+C_RIGGING:'Rigg/Details',
+S_RADIUS:'Radius',
+S_PAD:'Polster',
+S_BORDER_W:'Rahmenbreite',
+S_BTN_OPA:'Button-Deckkraft',
+S_BTN_OPA_PRESS:'Deckkraft gedrückt',
+S_ARROW_OPA:'Pfeil-Deckkraft',
+S_SWIPE:'Wisch-Schwelle (px)',
+S_FADE_DELAY:'Pfeile aus nach (ms)',
+S_FADE_OUT:'Ausblenden (ms)',
+S_FADE_IN:'Einblenden (ms)',
+S_BG_OPA:'Hintergrund-Deckkraft',
+S_GAUGE_SIZE:'Gauge-Größe (px)',
+S_GAUGE_W:'Gauge-Dicke (px)',
+S_CARD_W:'Karten-Breite',
+S_CARD_H:'Karten-Höhe',
+S_CARD_GAP:'Karten-Abstand',
+S_BAR_H:'Balken-Höhe',
+S_BAR_RADIUS:'Balken-Radius',
+S_ARC_W:'Bogen-Dicke',
+S_NEEDLE_W:'Nadel-Breite',
+S_PORT_OPA:'BB-Deckkraft',
+S_STBD_OPA:'StB-Deckkraft',
+S_MODE_W:'Modus-Breite',
+S_MODE_H:'Modus-Höhe',
+S_MODE_RADIUS:'Modus-Radius',
+S_DEVBAR_H:'Abw.-Balken-Höhe',
+S_DEMOBANNER_H:'Demo-Banner-Höhe',
+FZ_TINY:'Sehr klein (Ticks, Legenden)',
+FZ_SMALL:'Klein (Feld-Labels, Einheiten)',
+FZ_MED:'Mittel (Buttons)',
+FZ_LARGE:'Groß (Werte, Status)',
+FZ_XL:'XL',
+FZ_XXL:'XXL (z.B. Ruderwinkel)',
+FZ_HUGE:'Riesig (RPM, Hero)',
+FZ_DEPTH:'Tiefen-Anzeige (Sonderschrift 96px)',
+FZ_GRIDHERO:'Raster-Großfeld (Sonderschrift 192px)',
+},
+en:{
+TITLE:'NauticPinnace – Configuration',
+LANG_TITLE:'Sprache / Language',
+CONN_OFFLINE:'●  offline',
+CONN_ONLINE:'●  connected',
+THEME_TOGGLE_TITLE:'Switch theme: Light → Dark → Night',
+THEME_LIGHT:'Light',
+THEME_DARK:'Dark',
+THEME_NIGHT:'Night',
+TAB_LIVE:'Live',
+TAB_WIFI:'WiFi',
+TAB_DISPLAY:'Display',
+TAB_DESIGN:'Appearance',
+TAB_NMEA:'NMEA 2000',
+TAB_POLAR:'Polar',
+TAB_LOGO:'Boot logo',
+TAB_BACKUP:'Import / Export',
+LIVE_H:'Live sensor data',
+LBL_SOG:'SOG',
+LBL_COG:'COG',
+LBL_HDG:'Heading',
+LBL_STW:'STW',
+LBL_AWA:'AWA',
+LBL_AWS:'AWS',
+LBL_TWA:'TWA',
+LBL_TWS:'TWS',
+LBL_TWD:'TWD',
+LBL_DEPTH:'Depth',
+LBL_RPM:'RPM',
+LBL_OIL:'Oil pr',
+LBL_COOLANT:'Coolant',
+LBL_RUDDER:'Rudder',
+LBL_BATTV:'Batt V',
+LBL_AIS:'AIS targets',
+WIFI_H:'WiFi settings',
+F_MODE:'Mode',
+OPT_AP:'Access point (recommended)',
+OPT_CLIENT:'Client (join an existing network)',
+F_SSID:'SSID',
+F_PASSWORD:'Password',
+PH_PASS_OPEN:'(empty = open)',
+BTN_SAVE_RESTART:'Save & restart',
+DISP_H:'Display settings',
+F_BRIGHT:'Brightness',
+F_PERF_OVERLAY:'FPS / CPU overlay',
+PERF_DESC:'Show performance overlay (FPS, CPU%, free RAM)',
+SCREENS_LBL:'Screens – order, visibility & settings',
+SCREENS_HINT:'Change the order with ▲▼. Click an entry to expand its settings. Disabled screens are skipped when paging through the display.',
+BTN_ADD_GRID:'+ Add data grid',
+WIZ_H:'New data grid',
+F_NAME:'Name',
+PH_WIZ_NAME:'e.g. Engine overview',
+F_GRID:'Grid',
+BTN_CREATE:'Create',
+BTN_CANCEL:'Cancel',
+BTN_SAVE:'Save',
+DEMO_H:'Demo mode',
+DEMO_P:'In demo mode <strong>all NMEA sensor data is replaced by animated simulation values</strong> (no CAN bus required). The display shows a flashing permanent warning on every screen.<br><span style="color:var(--warn);font-weight:600">For demos and testing only – never enable while under way!</span>',
+DEMO_EN_LBL:'Enable demo mode',
+DEMO_OFF:'Disabled',
+DEMO_ON:'🔴 Active – simulated data!',
+DESIGN_H:'Appearance / Theme',
+DESIGN_P:'Colours for the <strong>light</strong> and <strong>dark</strong> theme. The active theme decides what the device shows. Changes are <strong>applied live</strong> (no restart needed).',
+F_ACTIVE_THEME:'Active theme',
+SEC_COLORS:'Colours',
+SEC_FONTS:'Font sizes',
+FONTS_HINT:'One Montserrat size (px) per font role.',
+SEC_SIZES:'Sizes',
+SIZES_HINT:'Dimensions, spacing, opacities and timings (same for both themes).',
+BTN_SAVE_APPLY:'Save & apply',
+TH_COLOR:'Colour',
+NMEA_H:'NMEA 2000 / CAN bus',
+NMEA_P:'The board has an onboard CAN transceiver (TJA1051) wired to the screw terminal (CANH/CANL).<br>Only change these pins if you run a different hardware revision.',
+F_CAN_TX:'CAN TX GPIO',
+F_CAN_RX:'CAN RX GPIO', F_N2K_LISTEN:'Listen-only (never transmits)', P_N2K_LISTEN:'In listen-only mode the display sends nothing on the bus — no address claim, no heartbeat, no Fusion control. For other boats or service visits.',
+POLAR_H:'Polar data',
+POLAR_P:'Target boat speed (kn) per <strong>true wind angle TWA</strong> (rows, °) and <strong>true wind speed TWS</strong> (columns, kn). Used on the Speed &amp; Polar screen (values “Polar kn” / “Perf %”) and in the wind performance bar. Intermediate values are interpolated bilinearly.',
+F_BOATNAME:'Boat name',
+PH_BOATNAME:'e.g. Oceanis 350',
+BTN_CSV_IMPORT:'📥 Import CSV…',
+BTN_CSV_PASTE:'📋 Paste CSV…',
+BTN_CSV_EXPORT:'📤 Export CSV',
+CSV_HINT:'First line: <code>twa,&lt;TWS values…&gt;</code> — every further line: <code>&lt;TWA&gt;,&lt;speeds…&gt;</code>',
+BTN_CSV_APPLY:'Apply CSV',
+BTN_ADD_TWA:'+ TWA row',
+BTN_DEL_TWA:'− TWA row',
+BTN_ADD_TWS:'+ TWS column',
+BTN_DEL_TWS:'− TWS column',
+LOGO_H:'Boot logo',
+LOGO_P:'Custom logo for the boot screen. The image is drawn behind the spinner animation.<br>Format: <strong>RGB565 .bin</strong> with a 4-byte header (width + height, each uint16 LE).<br>Conversion: <code style="color:var(--accent)">tools/logo_convert.py</code> or an online tool.<br>Recommended size: <strong>160 × 160 px</strong> (max. 200 × 200 px).',
+LOGO_NONE_PREVIEW:'No logo',
+LOGO_NONE_INFO:'No logo stored',
+LOGO_NONE_LONG:'No logo stored — the built-in animation is used.',
+LOGO_NONE_BR:'No<br>logo',
+LOGO_STORED:'✓ Logo stored',
+BTN_LOGO_UPLOAD:'Upload logo (.bin)',
+BTN_LOGO_DELETE:'Delete logo',
+ANIM_H:'Animation settings',
+F_BOOTTITLE:'Title',
+BOOTTITLE_HINT:'Large line on the boot screen. Leave empty for “NauticPinnace”.',
+F_BOOTNAME:'Show boat name',
+PH_BOOTNAME:'e.g. S/V Albatross',
+BOOTNAME_HINT:'Shown underneath the title. Leave empty to disable.',
+PY_H:'Convert logo (Python)',
+PY_P:'Save the script as <code style="color:var(--accent)">logo_convert.py</code> and run it:',
+PY_HINT:'The script lives at <code style="color:var(--accent)">tools/logo_convert.py</code> in the project directory.',
+BACKUP_H:'Import / Export',
+BTN_EXPORT_CFG:'Export configuration (JSON)',
+BTN_IMPORT_CFG:'Import configuration (JSON)',
+RAW_H:'Current configuration (raw)',
+BTN_RESTART:'Restart device',
+FLD_SOG:'SOG',
+FLD_COG:'COG',
+FLD_HDG:'Heading',
+FLD_STW:'STW',
+FLD_AWA:'AWA',
+FLD_AWS:'AWS',
+FLD_TWA:'TWA',
+FLD_TWS:'TWS',
+FLD_TWD:'TWD',
+FLD_DEPTH:'Depth',
+FLD_RPM:'RPM',
+FLD_OIL:'Oil pressure',
+FLD_COOLANT:'Coolant',
+FLD_HOURS:'Engine hrs',
+FLD_FUEL:'Fuel',
+FLD_RUDDER:'Rudder',
+FLD_BATTV:'Batt V',
+FLD_LAT:'Latitude',
+FLD_LON:'Longitude',
+FLD_APTARGET:'AP target',
+FT_DIESEL:'Diesel',
+FT_FRESH:'Fresh water',
+FT_GREY:'Grey water',
+FT_LIVEWELL:'Livewell',
+FT_OIL:'Oil',
+FT_BLACK:'Black water',
+FT_GASOLINE:'Gasoline',
+FT_TANK:'Tank',
+LAY_HERO1_2:'Large top + 2',
+LAY_HERO1_3:'Large top + 3',
+LAY_HERO1_2_2:'Large top + 2 + 2',
+GRID:'Data grid',
+CELL:'Cell',
+CELL_HERO:'Large field',
+FIELD:'Field',
+OPT_EMPTY:'– empty –',
+PH_LABEL:'Label',
+PH_UNIT:'Unit',
+PH_DEC:'Dec',
+F_LAYOUT:'Layout (restart on change)',
+ACTIVE:'Active',
+DELETE:'Delete',
+SAIL_LWL:'Hull length LWL (m)',
+SAIL_NOGO:'No-go angle (± °)',
+F_HEADSAIL:'Headsail',
+SAIL_SPI:'Allow spinnaker',
+SAIL_CZ:'Allow Code Zero',
+SAIL_BUTTERFLY:'Goosewing when running (butterfly)',
+SAIL_WINDLINES:'Wind lines = apparent wind (otherwise true)',
+FS_STORM:'Storm jib',
+FS_JIB:'Jib',
+FS_WORKING:'Working jib',
+DEPTH_ALARM:'Depth alarm (m, 0=off)',
+UNIT:'Unit',
+UNIT_M:'Metres (m)',
+UNIT_FT:'Feet (ft)',
+ENG_IDLE:'Idle (RPM)',
+ENG_CRUISE:'Cruise (RPM)',
+ENG_MAXCONT:'Max. continuous (RPM)',
+ENG_MAX:'Maximum (RPM)',
+ENG_FIELDCOUNT:'Bottom fields (count)',
+AIS_RANGE:'Range (nm)',
+AIS_CPA_ALARM:'Enable CPA alarm',
+AIS_CPA:'Alarm CPA < (nm)',
+AIS_TCPA:'Alarm TCPA < (min)',
+ANCH_RADIUS:'Anchor drift radius (m)',
+ANCH_ALARM:'Anchor watch alarm active',
+ANCH_NORTHUP:'North up (otherwise head up)',
+NO_TANKS:'No tanks detected (bus/demo).',
+TANK_CAP:'Capacity (L)',
+TANK_CAL:'Calibration L @ 25/50/75 %',
+NO_BATT:'No batteries detected (bus/demo).',
+BATT_CAP:'Capacity (Ah)',
+BATT_SYS:'System',
+PLR_EDIT:'Edit polar data',
+NO_SETTINGS:'No settings for this screen.',
+TOAST_MAX_GRIDS:'Maximum of {n} data grids',
+TOAST_GRID_CREATED:'Data grid created – assign cells, then press “Save”',
+CONFIRM_DEL_GRID:'Delete data grid “{n}”?',
+TOAST_APPLIED:'Applied ✓',
+TOAST_ERROR:'Error',
+TOAST_SAVED:'Saved',
+TOAST_SAVED_RESTART:'Saved – restarting…',
+TOAST_SAVE_ERROR:'Error while saving',
+TOAST_DEMO_ON:'⚠ Demo mode enabled',
+TOAST_DEMO_OFF:'Demo mode disabled',
+TOAST_IMPORTED:'Imported – reloading…',
+TOAST_IMPORT_ERR:'Import failed',
+CONFIRM_RESTART:'Really restart the device?',
+TOAST_RESTART_REQ:'Restart requested…',
+TOAST_CSV_BAD:'Invalid CSV – check the format',
+TOAST_CSV_TOOBIG:'Too large: max 32 TWA × 16 TWS',
+TOAST_CSV_OK:'CSV applied – press “Save” to store it',
+TOAST_POLAR_MIN:'At least 2×2 values required',
+TOAST_POLAR_SAVED:'Polar data saved ✓',
+UNKNOWN:'unknown',
+TOAST_BIN_ONLY:'Only .bin files are allowed',
+TOAST_TOO_BIG:'File too large (max 200×200 px)',
+TOAST_UPLOADING:'Uploading…',
+TOAST_LOGO_UP:'Logo uploaded ✓',
+TOAST_UPLOAD_FAIL:'Upload failed',
+CONFIRM_DEL_LOGO:'Really delete the boot logo?',
+TOAST_LOGO_DEL:'Logo deleted',
+TOAST_BOOTNAME:'Saved — takes effect after the next restart',
+FS_GEN100:'100 % genoa',
+FS_GEN120:'120 % genoa',
+FS_GEN140:'140 % genoa',
+GRP_PALETTE:'Palette',
+GRP_OVERLAYS:'Overlays',
+GRP_DEPTH:'Depth',
+GRP_AUTOPILOT:'Autopilot',
+GRP_WIND:'Wind', GRP_CLOCK:'Clock & map', C_SEABED:'Seabed', C_MAPSEA:'Map: sea', C_MAPLAND:'Map: land', C_MAPCOAST:'Map: coast', C_MAPGRID:'Map: grid', C_TIDEWATER:'Tide: water', C_ATTSKY:'Horizon: sky', C_ATTGROUND:'Horizon: ground', C_ONACCENT:'Text on accent',
+GRP_CARDS:'Cards',
+GRP_NAV:'Navigation',
+GRP_PERF:'Perf overlay',
+GRP_ENGINE:'Engine',
+GRP_SPEED:'Speed',
+GRP_RUDDER:'Rudder',
+GRP_MISC:'Other',
+C_BG:'Background',
+C_CARDS:'Cards',
+C_BORDER:'Border',
+C_TEXT:'Text',
+C_TEXT_DIM:'Text (dimmed)',
+C_ACCENT:'Accent',
+C_GREEN:'Green / OK',
+C_YELLOW:'Yellow / Warning',
+C_RED:'Red / Alarm',
+C_ORANGE:'Orange',
+C_PORT:'Port',
+C_STBD:'Starboard',
+C_WIND:'Wind',
+C_GRIDLINES:'Grid lines',
+C_NAVBTN:'Nav button',
+C_PERFTEXT:'Perf text',
+C_PERFBG:'Perf background',
+C_DEMOBANNER:'Demo banner',
+C_DEMOTEXT:'Demo text',
+C_GRADIENT:'Gradient',
+C_HEADER:'Header',
+C_VALUE:'Value',
+C_ECHO:'Echo',
+C_GRID:'Grid',
+C_SCALE:'Scale',
+C_NOWMARK:'Now marker',
+C_COMPASSBG:'Compass bg',
+C_TICK_MAJ:'Major tick',
+C_TICK_MIN:'Minor tick',
+C_AP_TARGET:'Target heading',
+C_AP_DEVBAR:'Deviation bar',
+C_AP_ACTIVE:'Mode active',
+C_AP_MANUAL:'Mode manual',
+C_AP_STANDBY:'Mode standby',
+C_BEZEL:'Bezel',
+C_INNER:'Inner circle',
+C_RINGBG:'Ring bg',
+C_CHARTBG:'Chart bg',
+C_Z_NOGO:'No-go zone',
+C_Z_CLOSE:'Close-hauled zone',
+C_Z_CLOSER:'Close reach zone',
+C_Z_BEAM:'Beam reach zone',
+C_Z_BROAD:'Broad reach zone',
+C_Z_RUN:'Running zone',
+C_TWA_PTR:'TWA pointer',
+C_AWA_PTR:'AWA pointer',
+C_VMG:'VMG',
+C_HULL:'Hull',
+C_SAIL:'Sail',
+C_MAST:'Mast',
+C_WINDFLOW:'Wind lines',
+C_RIGGING:'Rigging / details',
+S_RADIUS:'Radius',
+S_PAD:'Padding',
+S_BORDER_W:'Border width',
+S_BTN_OPA:'Button opacity',
+S_BTN_OPA_PRESS:'Opacity when pressed',
+S_ARROW_OPA:'Arrow opacity',
+S_SWIPE:'Swipe threshold (px)',
+S_FADE_DELAY:'Hide arrows after (ms)',
+S_FADE_OUT:'Fade out (ms)',
+S_FADE_IN:'Fade in (ms)',
+S_BG_OPA:'Background opacity',
+S_GAUGE_SIZE:'Gauge size (px)',
+S_GAUGE_W:'Gauge thickness (px)',
+S_CARD_W:'Card width',
+S_CARD_H:'Card height',
+S_CARD_GAP:'Card gap',
+S_BAR_H:'Bar height',
+S_BAR_RADIUS:'Bar radius',
+S_ARC_W:'Arc thickness',
+S_NEEDLE_W:'Needle width',
+S_PORT_OPA:'Port opacity',
+S_STBD_OPA:'Starboard opacity',
+S_MODE_W:'Mode width',
+S_MODE_H:'Mode height',
+S_MODE_RADIUS:'Mode radius',
+S_DEVBAR_H:'Deviation bar height',
+S_DEMOBANNER_H:'Demo banner height',
+FZ_TINY:'Very small (ticks, legends)',
+FZ_SMALL:'Small (field labels, units)',
+FZ_MED:'Medium (buttons)',
+FZ_LARGE:'Large (values, status)',
+FZ_XL:'XL',
+FZ_XXL:'XXL (e.g. rudder angle)',
+FZ_HUGE:'Huge (RPM, hero)',
+FZ_DEPTH:'Depth readout (special font 96px)',
+FZ_GRIDHERO:'Grid hero field (special font 192px)',
+}
+};
+let LANG = 'de';
+const t = k => (I18N[LANG] && I18N[LANG][k]) || I18N.de[k] || k;
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.getAttribute('data-i18n'));
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    el.innerHTML = t(el.getAttribute('data-i18n-html'));
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.getAttribute('data-i18n-title'));
+  });
+  document.documentElement.lang = LANG;
+  document.title = t('TITLE');
+  const sel = document.getElementById('langSel');
+  if (sel) sel.value = LANG;
+}
+
+// Rebuild static texts + all JS-generated panels.
+let connOnline = false;   // connection state for the badge (see above)
+
+function setConnBadge(online) {
+  connOnline = online;
+  const b = document.getElementById('connBadge');
+  if (!b) return;
+  b.textContent = t(online ? 'CONN_ONLINE' : 'CONN_OFFLINE');
+  b.style.color = online ? 'var(--ok)' : 'var(--warn)';
+}
+
+function relabelUi() {
+  applyI18n();
+  setConnBadge(connOnline);
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  const lbl = document.getElementById('themeLabel');
+  if (lbl) lbl.textContent = t(THEME_NAME[cur] || 'THEME_LIGHT');
+  const dm = document.getElementById('demo-mode');
+  if (dm) demoToggle(dm.checked);
+  if (document.getElementById('screenOrderList')) renderScreenList();
+  renderThemeEditor();
+  renderFontEditor();
+  renderSizeEditor();
+  checkLogoStatus();
+}
+
+async function setLang(l) {
+  LANG = (l === 'en') ? 'en' : 'de';
+  document.documentElement.lang = LANG;
+  try { localStorage.setItem('lang', LANG); } catch(e) {}
+  relabelUi();
+  await saveLang();
+  // The screen names come TRANSLATED from the firmware (/api/screens ->
+  // DisplayManager::screenName -> T(...)). The catalogue is only fetched once
+  // at load time, so after a language switch it stayed in the old language.
+  // Re-fetch it after saving and redraw the list.
+  try {
+    const fresh = await api('GET', '/api/screens');
+    if (fresh) {
+      screenCatalog = fresh;
+      GRID_BASE = gridBaseFromCatalog(screenCatalog);
+      // Only refresh the NAMES in the already-built list. A
+      // buildScreenList() would throw away the order, expanded rows and open
+      // edits. Grid names are user data -> untouched.
+      const byId = {};
+      fresh.forEach(s => { byId[s.id] = s; });
+      if (typeof screenList !== 'undefined' && Array.isArray(screenList)) {
+        screenList.forEach(s => {
+          if (s.type !== 'grid' && byId[s.id] && byId[s.id].name) s.name = byId[s.id].name;
+        });
+      }
+      if (document.getElementById('screenOrderList')) renderScreenList();
+    }
+  } catch(e) { /* offline: the catalogue stays as it is */ }
+}
+
+// ui.lang rides along in a perfectly normal config patch so the panel follows.
+async function saveLang() {
+  if (!cfg || !Object.keys(cfg).length) return;   // offline: remember locally only
+  cfg.ui = { ...(cfg.ui || {}), lang: LANG };
+  await api('POST', '/api/config', { ui: { lang: LANG } });
+}
+
+// Set the language before the first paint (the device corrects it on load if needed).
+(function(){
+  try { if (localStorage.getItem('lang') === 'en') LANG = 'en'; } catch(e) {}
+  document.documentElement.lang = LANG;
+})();
+
+// ---- Theme ------------------------------------------------------------------
+// Three variants as in the NauticPi MFD: light → dark → night → light …
+const THEMES = ['light', 'dark', 'night'];
+const THEME_ICON = { light: '🌙', dark: '🌗', night: '☀️' };   // icon = next choice
+const THEME_NAME = { light: 'THEME_LIGHT', dark: 'THEME_DARK', night: 'THEME_NIGHT' };
+
+function applyTheme(name) {
+  if (THEMES.indexOf(name) < 0) name = 'light';
+  document.documentElement.setAttribute('data-theme', name);
+  const ico = document.getElementById('themeIcon');
+  if (ico) ico.textContent = THEME_ICON[name];
+  const lbl = document.getElementById('themeLabel');
+  if (lbl) lbl.textContent = t(THEME_NAME[name]);
+  localStorage.setItem('theme', name);
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') || 'light';
+  applyTheme(THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length]);
+}
+// Apply saved theme immediately (before first paint)
+(function(){
+  const saved = localStorage.getItem('theme');
+  const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(saved || (prefersDark ? 'dark' : 'light'));
+})();
+
+// ---- State -------------------------------------------------------------------
+let cfg = {};
+let screenCatalog = [];   // [{id,name}] – all known device screens (from /api/screens)
+let screenList = [];      // working list: [{id,name,enabled}] in display order
+// Values = i18n keys, object keys = protocol IDs (do not change!).
+const FIELDS = {
+  sog:'FLD_SOG', cog:'FLD_COG', hdg:'FLD_HDG', stw:'FLD_STW',
+  awa:'FLD_AWA', aws:'FLD_AWS', twa:'FLD_TWA', tws:'FLD_TWS', twd:'FLD_TWD',
+  depth:'FLD_DEPTH', rpm:'FLD_RPM', oil:'FLD_OIL', coolant:'FLD_COOLANT',
+  hours:'FLD_HOURS', fuel:'FLD_FUEL', rudder:'FLD_RUDDER',
+  battv:'FLD_BATTV', lat:'FLD_LAT', lon:'FLD_LON', aptarget:'FLD_APTARGET'
+};
+
+// ---- Tabs --------------------------------------------------------------------
+function showTab(id) {
+  document.querySelectorAll('.tab').forEach(el=>el.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.getElementById('tab-'+id).classList.add('active');
+  event.target.classList.add('active');
+  if (id==='backup') refreshRawConfig();
+  if (id==='logo')   checkLogoStatus();
+}
+
+// ---- Toast -------------------------------------------------------------------
+function toast(msg, err=false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = 'toast show' + (err?' error':'');
+  setTimeout(()=>el.classList.remove('show'), 3000);
+}
+
+// ---- API helpers ------------------------------------------------------------
+async function api(method, path, body) {
+  const opts = { method, headers:{'Content-Type':'application/json'} };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(path, opts);
+  return r.json().catch(()=>null);
+}
+
+// ---- Load config ------------------------------------------------------------
+async function loadConfig() {
+  try {
+    cfg = await api('GET', '/api/config');
+    const devLang = cfg?.ui?.lang;                 // ui.lang from config.json
+    if (devLang === 'de' || devLang === 'en') {
+      LANG = devLang;
+      try { localStorage.setItem('lang', LANG); } catch(e) {}
+    }
+    applyI18n();
+    // The theme label was set in the preliminary language at page start
+    // (applyTheme() runs before this fetch). Now the device language is
+    // settled, so catch up - otherwise "Hell" remains in an English UI.
+    {
+      const lbl = document.getElementById('themeLabel');
+      const cur = document.documentElement.getAttribute('data-theme') || 'light';
+      if (lbl) lbl.textContent = t(THEME_NAME[cur] || 'THEME_LIGHT');
+      document.documentElement.lang = LANG;
+    }
+    try { screenCatalog = (await api('GET', '/api/screens')) || []; } catch(e) { screenCatalog = []; }
+    GRID_BASE = gridBaseFromCatalog(screenCatalog);
+    try { detectedDevices = (await api('GET', '/api/devices')) || {tanks:[],batteries:[]}; } catch(e) { detectedDevices = {tanks:[],batteries:[]}; }
+    populateForm();
+    loadPolar();
+    setConnBadge(true);
+  } catch(e) {
+    setConnBadge(false);
+  }
+}
+
+function populateForm() {
+  if (!cfg) return;
+  setVal('wifi-mode',    cfg.wifi?.ap_mode??true);
+  setVal('wifi-ssid',    cfg.wifi?.ssid??'');
+  setVal('wifi-pass',    cfg.wifi?.password??'');
+  setVal('disp-bright',  cfg.display?.brightness??200);
+  document.getElementById('bright-val').textContent = cfg.display?.brightness??200;
+  document.getElementById('perf-overlay').checked = cfg.show_perf_overlay??false;
+  setVal('can-tx',       cfg.nmea2000?.can_tx??17);
+  setVal('can-rx',       cfg.nmea2000?.can_rx??18);
+  document.getElementById('can-listen').checked = cfg.nmea2000?.listen_only??false;
+  setVal('boot-title',   cfg.boot?.title??'');
+  setVal('boot-name',    cfg.boot?.name??'');
+  // Engine/AIS/Depth/Sail settings now live inline in the screen list (built below).
+  // Demo mode
+  const demoOn = cfg.demo_mode ?? false;
+  document.getElementById('demo-mode').checked = demoOn;
+  document.getElementById('demo-status').textContent = demoOn ? t('DEMO_ON') : t('DEMO_OFF');
+  document.getElementById('demo-status').style.color  = demoOn ? 'var(--warn)' : 'var(--text-muted)';
+  buildScreenList();
+  renderThemeEditor();
+  renderFontEditor();
+  renderSizeEditor();
+}
+
+// ---- Screen order / visibility / inline config ------------------------------
+// First screen id of the data-grid slots (= number of fixed screens in the
+// firmware, N_FIXED_SCREENS). NOT a constant: it was hard-coded to 8 while the
+// firmware grew to 17 fixed screens, so every grid resolved to the wrong slot
+// and its inline editor silently rendered empty. Derived from the catalogue in
+// gridBaseFromCatalog() instead, which cannot drift again.
+let GRID_BASE = 17;
+const MAX_GRIDS = 6;
+
+// The catalogue from /api/screens lists ALL fixed screens plus the active
+// grids, so the count of non-grid entries is exactly the grid base.
+function gridBaseFromCatalog(cat) {
+  if (!Array.isArray(cat) || !cat.length) return GRID_BASE;
+  const gridIds = cat.filter(s => s.type === 'grid').map(s => s.id);
+  return gridIds.length ? Math.min(...gridIds)
+                        : cat.filter(s => s.type !== 'grid').length;
+}
+let gridState = {};          // slot -> {name,rows,cols,cells[]}  (active grids)
+let cfgEdits = {};           // live edit state for fixed-screen inline config
+let detectedDevices = {tanks:[],batteries:[]};   // live tanks/batteries from /api/devices
+let expandedScreens = {};    // id -> bool (which rows are expanded)
+let structuralChange = false;// grid add/remove/resize -> needs reboot on save
+
+const _cfgRow = 'display:flex;align-items:center;justify-content:space-between;gap:10px;margin:5px 0;font-size:.85rem';
+const _cfgIn  = 'background:var(--surface3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 6px;max-width:150px';
+function esc(s){ return (s||'').toString().replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;'); }
+function rowNum(label,val,handler,min,max,step){ return `<div style="${_cfgRow}"><span>${label}</span><input type="number" value="${val}" min="${min}" max="${max}" step="${step}" onchange="${handler}" style="${_cfgIn}"></div>`; }
+function rowChk(label,checked,handler){ return `<div style="${_cfgRow}"><span>${label}</span><input type="checkbox" ${checked?'checked':''} onchange="${handler}" style="width:16px;height:16px;accent-color:var(--accent)"></div>`; }
+function rowTxt(label,val,handler){ return `<div style="${_cfgRow}"><span>${label}</span><input type="text" value="${esc(val)}" oninput="${handler}" style="${_cfgIn}"></div>`; }
+function setEdit(g,k,val){ if(cfgEdits[g]) cfgEdits[g][k]=val; }
+function setRow(g,i,k,val){ if(cfgEdits[g] && cfgEdits[g][i]) cfgEdits[g][i][k]=val; }
+const FT_NAMES = {0:'FT_DIESEL',1:'FT_FRESH',2:'FT_GREY',3:'FT_LIVEWELL',4:'FT_OIL',5:'FT_BLACK',6:'FT_GASOLINE'};
+
+function buildScreenList() {
+  const byId = {};
+  screenCatalog.forEach(s => { byId[s.id] = s; });   // {id,name,type}
+  // grids from config (only active slots are present)
+  gridState = {};
+  (cfg?.grids || []).forEach(g => {
+    if (g.slot == null) return;
+    // Keep an empty name EMPTY: the firmware then shows the translated default
+    // ("Datenraster"/"Data Grid"). Substituting a name here would bake the
+    // current language into the config on the next save.
+    gridState[g.slot] = { name: g.name || '', rows: g.rows||3, cols: g.cols||3, layout: g.layout||'',
+                          cells: (g.cells||[]).map(c => ({label:c.label||'',pgn:c.pgn||'',unit:c.unit||'',decimals:c.decimals??1})) };
+  });
+  // fixed-screen inline edit state
+  cfgEdits = {
+    sail:   { lwl_m: cfg.sail?.lwl_m ?? 9, spinnaker: cfg.sail?.spinnaker ?? true, code_zero: cfg.sail?.code_zero ?? false, foresail_pct: cfg.sail?.foresail_pct ?? 100, butterfly: cfg.sail?.butterfly ?? false, nogo_deg: cfg.sail?.nogo_deg ?? 30, windlines_app: cfg.sail?.windlines_app ?? false },
+    depth:  { alarm: cfg.depth?.alarm ?? 3, unit: cfg.depth?.unit ?? 'm' },
+    engine: { rpm_idle: cfg.engine?.rpm_idle ?? 700, rpm_cruise: cfg.engine?.rpm_cruise ?? 2200, rpm_max_cont: cfg.engine?.rpm_max_cont ?? 3000, rpm_max: cfg.engine?.rpm_max ?? 3600 },
+    ais:    { range: cfg.ais?.range ?? 5, alarm: cfg.ais?.alarm ?? true, cpa: cfg.ais?.cpa ?? 0.5, tcpa: cfg.ais?.tcpa ?? 10 },
+    anchor: { radius: cfg.anchor?.radius ?? 40, alarm_on: cfg.anchor?.alarm ?? false, north_up: cfg.anchor?.north_up ?? true },
+  };
+  // engine bottom fields (count + data points)
+  cfgEdits.engCount  = cfg.engine?.field_count ?? 4;
+  cfgEdits.engFields = (cfg.engine?.fields || []).map(f => ({label:f.label||'',pgn:f.pgn||'',unit:f.unit||'',decimals:f.decimals??1}));
+  while (cfgEdits.engFields.length < 6) cfgEdits.engFields.push({label:'',pgn:'',unit:'',decimals:1});
+  // tank/battery config rows: one per DETECTED device, pre-filled from saved cfg.
+  const savedTanks = cfg.tankcfg || [];
+  cfgEdits.tankrows = (detectedDevices.tanks || []).map(tk => {
+    const sv = savedTanks.find(s => s.inst===tk.inst && s.ft===tk.ft) || {};
+    const cl = sv.call || []; let l25='',l50='',l75='';
+    if ((sv.caln||0)>=5 && cl.length>=5){ l25=cl[1]; l50=cl[2]; l75=cl[3]; }
+    return { inst:tk.inst, ft:tk.ft, ftName:FT_NAMES[tk.ft]||'FT_TANK', level:tk.level??0,
+             name: sv.name||'', cap: (sv.cap ?? tk.cap ?? ''), l25, l50, l75 };
+  });
+  const savedBatt = cfg.battcfg || [];
+  cfgEdits.battrows = (detectedDevices.batteries || []).map(b => {
+    const sv = savedBatt.find(s => s.inst===b.inst) || {};
+    return { inst:b.inst, v:b.v, name: sv.name||'', ah: (sv.ah ?? ''), nv: (sv.nv ?? 12) };
+  });
+  // build ordered screen list from saved order + catalog
+  const enById = {}, orderIds = [];
+  (cfg?.display?.screens || []).forEach(s => {
+    if (byId[s.id] && !orderIds.includes(s.id)) { orderIds.push(s.id); enById[s.id] = (s.en !== false); }
+  });
+  screenCatalog.forEach(s => { if (!orderIds.includes(s.id)) { orderIds.push(s.id); enById[s.id] = true; } });
+  screenList = orderIds.map(id => ({ id, name: byId[id].name, type: byId[id].type, enabled: enById[id] !== false }));
+  structuralChange = false;
+  renderScreenList();
+}
+
+function gridFieldOptions(sel){ return Object.entries(FIELDS).map(([k,l]) => `<option value="${k}"${sel===k?' selected':''}>${t(l)} (${k})</option>`).join(''); }
+
+// Grid layouts. Uniform "RxC" plus "hero" layouts (one wide large-font field on
+// top). cells = number of editable cells; cols = columns for the editor preview;
+// hero = first cell spans the full top row.
+const LAYOUTS = {
+  '1x1':       { label:'1 × 1',                 cells:1, cols:1, rows:1 },
+  '1x2':       { label:'1 × 2',                 cells:2, cols:2, rows:1 },
+  '2x2':       { label:'2 × 2',                 cells:4, cols:2, rows:2 },
+  '2x3':       { label:'2 × 3',                 cells:6, cols:3, rows:2 },
+  '3x3':       { label:'3 × 3',                 cells:9, cols:3, rows:3 },
+  'hero1_2':   { label:'LAY_HERO1_2',           cells:3, cols:2, rows:2, hero:true },
+  'hero1_3':   { label:'LAY_HERO1_3',           cells:4, cols:3, rows:2, hero:true },
+  'hero1_2_2': { label:'LAY_HERO1_2_2',         cells:5, cols:2, rows:3, hero:true },
+};
+function layoutKeyOf(g){
+  if (g.layout && LAYOUTS[g.layout]) return g.layout;
+  const k = `${g.rows}x${g.cols}`;
+  return LAYOUTS[k] ? k : '3x3';
+}
+
+function gridCellEditorHtml(slot, i, c, span){
+  c = c || {};
+  return `<div style="${span}background:var(--surface3);border:1px solid var(--border);border-radius:5px;padding:6px">
+    <div style="font-size:.7rem;color:var(--text-muted)">${span?t('CELL_HERO'):t('CELL')+' '+(i+1)}</div>
+    <select onchange="gridSetCell(${slot},${i},'pgn',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0"><option value="">${t('OPT_EMPTY')}</option>${gridFieldOptions(c.pgn)}</select>
+    <input type="text" placeholder="${t('PH_LABEL')}" value="${esc(c.label||'')}" onchange="gridSetCell(${slot},${i},'label',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0">
+    <div style="display:flex;gap:4px">
+      <input type="text" placeholder="${t('PH_UNIT')}" value="${esc(c.unit||'')}" onchange="gridSetCell(${slot},${i},'unit',this.value)" style="${_cfgIn};width:60%">
+      <input type="number" placeholder="${t('PH_DEC')}" value="${c.decimals??1}" min="0" max="3" onchange="gridSetCell(${slot},${i},'decimals',+this.value)" style="${_cfgIn};width:40%">
+    </div></div>`;
+}
+
+// ---- Engine bottom-fields editor -------------------------------------------
+function engFieldsHtml(){
+  let h = '<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px">';
+  for (let i=0;i<cfgEdits.engCount;i++){
+    const c = cfgEdits.engFields[i] || {};
+    h += `<div style="background:var(--surface3);border:1px solid var(--border);border-radius:5px;padding:6px">
+      <div style="font-size:.7rem;color:var(--text-muted)">${t('FIELD')} ${i+1}</div>
+      <select onchange="engSetField(${i},'pgn',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0"><option value="">${t('OPT_EMPTY')}</option>${gridFieldOptions(c.pgn)}</select>
+      <input type="text" placeholder="${t('PH_LABEL')}" value="${esc(c.label||'')}" onchange="engSetField(${i},'label',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0">
+      <div style="display:flex;gap:4px">
+        <input type="text" placeholder="${t('PH_UNIT')}" value="${esc(c.unit||'')}" onchange="engSetField(${i},'unit',this.value)" style="${_cfgIn};width:60%">
+        <input type="number" placeholder="${t('PH_DEC')}" value="${c.decimals??1}" min="0" max="3" onchange="engSetField(${i},'decimals',+this.value)" style="${_cfgIn};width:40%">
+      </div></div>`;
+  }
+  return h + '</div>';
+}
+function engSetCount(n){ cfgEdits.engCount = Math.max(1, Math.min(6, n)); renderScreenList(); }
+function engSetField(i,key,val){ if(!cfgEdits.engFields[i]) cfgEdits.engFields[i]={label:'',pgn:'',unit:'',decimals:1}; cfgEdits.engFields[i][key]=val; }
+
+function gridConfigHtml(slot){
+  const g = gridState[slot]; if (!g) return '';
+  const cur = layoutKeyOf(g);
+  const info = LAYOUTS[cur];
+  const sizeOpts = Object.entries(LAYOUTS).map(([k,v]) => `<option value="${k}"${k===cur?' selected':''}>${t(v.label)}</option>`).join('');
+  // Empty name -> placeholder shows what the display will call it (translated
+  // on the device), so leaving it blank stays a valid, language-neutral choice.
+  const autoName = t('GRID') + ' ' + (slot + 1);
+  let h = `<div style="${_cfgRow}"><span>${t('F_NAME')}</span><input type="text" value="${esc(g.name)}" placeholder="${esc(autoName)}" onchange="gridSetName(${slot},this.value)" style="${_cfgIn};max-width:200px"></div>`;
+  h += `<div style="${_cfgRow}"><span>${t('F_LAYOUT')}</span><select onchange="gridSetSize(${slot},this.value)" style="${_cfgIn}">${sizeOpts}</select></div>`;
+  h += `<div style="display:grid;grid-template-columns:repeat(${info.cols},1fr);gap:6px;margin-top:8px">`;
+  for (let i=0;i<info.cells;i++){
+    const span = (info.hero && i===0) ? 'grid-column:1/-1;' : '';
+    h += gridCellEditorHtml(slot, i, g.cells[i], span);
+  }
+  return h + `</div>`;
+}
+
+function foresailName(p){ p=+p; return t(p<=40?'FS_STORM':p<=80?'FS_JIB':p<100?'FS_WORKING':p<=100?'FS_GEN100':p<=120?'FS_GEN120':'FS_GEN140'); }
+function onForesail(v){ v=+v; setEdit('sail','foresail_pct',v);
+  const n=document.getElementById('fs-name'); if(n)n.textContent=foresailName(v);
+  const x=document.getElementById('fs-val'); if(x)x.textContent=v+' %'; }
+function screenConfigHtml(s){
+  const ty = s.type;   // not `t` – that is the translation function
+  if (ty==='wind'){ const e=cfgEdits.sail; const fp=e.foresail_pct??100;
+    return rowNum(t('SAIL_LWL'), e.lwl_m, "setEdit('sail','lwl_m',+this.value)", '4','30','0.1')
+      + rowNum(t('SAIL_NOGO'), e.nogo_deg, "setEdit('sail','nogo_deg',+this.value)", '10','44','1')
+      + `<div style="${_cfgRow}"><span>${t('F_HEADSAIL')}&nbsp;<b id="fs-name">${foresailName(fp)}</b></span>
+          <input type="range" min="30" max="140" step="5" value="${fp}" oninput="onForesail(this.value)" style="flex:1;margin:0 8px;min-width:90px">
+          <span id="fs-val" style="width:54px;text-align:right">${fp} %</span></div>`
+      + rowChk(t('SAIL_SPI'), e.spinnaker, "setEdit('sail','spinnaker',this.checked)")
+      + rowChk(t('SAIL_CZ'), e.code_zero, "setEdit('sail','code_zero',this.checked)")
+      + rowChk(t('SAIL_BUTTERFLY'), e.butterfly, "setEdit('sail','butterfly',this.checked)")
+      + rowChk(t('SAIL_WINDLINES'), e.windlines_app, "setEdit('sail','windlines_app',this.checked)"); }
+  if (ty==='depth'){ const e=cfgEdits.depth;
+    return rowNum(t('DEPTH_ALARM'), e.alarm, "setEdit('depth','alarm',+this.value)", '0','100','0.5')
+      + `<div style="${_cfgRow}"><span>${t('UNIT')}</span><select onchange="setEdit('depth','unit',this.value)" style="${_cfgIn}"><option value="m"${e.unit==='m'?' selected':''}>${t('UNIT_M')}</option><option value="ft"${e.unit==='ft'?' selected':''}>${t('UNIT_FT')}</option></select></div>`; }
+  if (ty==='engine'){ const e=cfgEdits.engine;
+    const cntOpts=[1,2,3,4,5,6].map(n=>`<option${cfgEdits.engCount==n?' selected':''}>${n}</option>`).join('');
+    return rowNum(t('ENG_IDLE'), e.rpm_idle, "setEdit('engine','rpm_idle',+this.value)",'0','9999','10')
+      + rowNum(t('ENG_CRUISE'), e.rpm_cruise, "setEdit('engine','rpm_cruise',+this.value)",'0','9999','10')
+      + rowNum(t('ENG_MAXCONT'), e.rpm_max_cont, "setEdit('engine','rpm_max_cont',+this.value)",'0','9999','10')
+      + rowNum(t('ENG_MAX'), e.rpm_max, "setEdit('engine','rpm_max',+this.value)",'0','9999','10')
+      + `<div style="${_cfgRow};margin-top:8px"><span>${t('ENG_FIELDCOUNT')}</span><select onchange="engSetCount(+this.value)" style="${_cfgIn}">${cntOpts}</select></div>`
+      + engFieldsHtml(); }
+  if (ty==='ais'){ const e=cfgEdits.ais;
+    const opts=[1,2,3,5,10,15,20].map(n=>`<option${e.range==n?' selected':''}>${n}</option>`).join('');
+    return `<div style="${_cfgRow}"><span>${t('AIS_RANGE')}</span><select onchange="setEdit('ais','range',+this.value)" style="${_cfgIn}">${opts}</select></div>`
+      + rowChk(t('AIS_CPA_ALARM'), e.alarm, "setEdit('ais','alarm',this.checked)")
+      + rowNum(t('AIS_CPA'), e.cpa, "setEdit('ais','cpa',+this.value)",'0.1','5','0.1')
+      + rowNum(t('AIS_TCPA'), e.tcpa, "setEdit('ais','tcpa',+this.value)",'1','60','1'); }
+  if (ty==='anchor'){ const e=cfgEdits.anchor;
+    return rowNum(t('ANCH_RADIUS'), e.radius, "setEdit('anchor','radius',+this.value)",'10','200','5')
+      + rowChk(t('ANCH_ALARM'), e.alarm_on, "setEdit('anchor','alarm_on',this.checked)")
+      + rowChk(t('ANCH_NORTHUP'), e.north_up, "setEdit('anchor','north_up',this.checked)"); }
+  if (ty==='tank'){
+    if (!cfgEdits.tankrows.length) return `<span style="font-size:.8rem;color:var(--text-muted)">${t('NO_TANKS')}</span>`;
+    return cfgEdits.tankrows.map((r,i)=>
+      `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px"><div style="font-weight:600">${t(r.ftName)} <span style="color:var(--text-muted);font-weight:400">Inst ${r.inst} · ${Math.round(r.level)} %</span></div>`
+      + rowTxt(t('F_NAME'), r.name, `setRow('tankrows',${i},'name',this.value)`)
+      + rowNum(t('TANK_CAP'), r.cap, `setRow('tankrows',${i},'cap',this.value)`,'0','100000','1')
+      + `<div style="${_cfgRow}"><span>${t('TANK_CAL')}</span><span style="display:flex;gap:4px">`
+      +   `<input type="number" value="${r.l25}" placeholder="25%" oninput="setRow('tankrows',${i},'l25',this.value)" style="${_cfgIn};max-width:62px">`
+      +   `<input type="number" value="${r.l50}" placeholder="50%" oninput="setRow('tankrows',${i},'l50',this.value)" style="${_cfgIn};max-width:62px">`
+      +   `<input type="number" value="${r.l75}" placeholder="75%" oninput="setRow('tankrows',${i},'l75',this.value)" style="${_cfgIn};max-width:62px">`
+      + `</span></div></div>`
+    ).join(''); }
+  if (ty==='battery'){
+    if (!cfgEdits.battrows.length) return `<span style="font-size:.8rem;color:var(--text-muted)">${t('NO_BATT')}</span>`;
+    return cfgEdits.battrows.map((r,i)=>
+      `<div style="border-top:1px solid var(--border);padding-top:6px;margin-top:6px"><div style="font-weight:600">Inst ${r.inst} <span style="color:var(--text-muted);font-weight:400">${r.v!=null?(+r.v).toFixed(2)+' V':''}</span></div>`
+      + rowTxt(t('F_NAME'), r.name, `setRow('battrows',${i},'name',this.value)`)
+      + rowNum(t('BATT_CAP'), r.ah, `setRow('battrows',${i},'ah',this.value)`,'0','100000','1')
+      + `<div style="${_cfgRow}"><span>${t('BATT_SYS')}</span><select onchange="setRow('battrows',${i},'nv',+this.value)" style="${_cfgIn}"><option value="12"${r.nv==12?' selected':''}>12 V</option><option value="24"${r.nv==24?' selected':''}>24 V</option></select></div></div>`
+    ).join(''); }
+  if (ty==='grid') return gridConfigHtml(s.id - GRID_BASE);
+  if (ty==='speed') return `<button class="btn btn-secondary" onclick="showTab('polar')">${t('PLR_EDIT')}</button>`;
+  return `<span style="font-size:.8rem;color:var(--text-muted)">${t('NO_SETTINGS')}</span>`;
+}
+
+function renderScreenList() {
+  const el = document.getElementById('screenOrderList');
+  if (!el) return;
+  el.innerHTML = '';
+  const btnStyle = 'width:30px;height:26px;border:1px solid var(--border);border-radius:5px;background:var(--surface3);color:var(--text);cursor:pointer;font-size:.8rem;line-height:1';
+  const trash = 'width:30px;height:26px;border:1px solid var(--border);border-radius:5px;background:var(--surface3);color:var(--warn);cursor:pointer;font-size:.9rem;line-height:1';
+  screenList.forEach((s, i) => {
+    const isGrid = s.type === 'grid';
+    const open = !!expandedScreens[s.id];
+    const row = document.createElement('div');
+    row.style.cssText = 'background:var(--surface2);border:1px solid var(--border);border-radius:6px';
+    row.innerHTML = `
+      <div style="display:flex;align-items:center;gap:10px;padding:6px 10px">
+        <div style="display:flex;flex-direction:column;gap:3px">
+          <button style="${btnStyle}" ${i===0?'disabled':''} onclick="moveScreen(${i},-1)">▲</button>
+          <button style="${btnStyle}" ${i===screenList.length-1?'disabled':''} onclick="moveScreen(${i},1)">▼</button>
+        </div>
+        <span style="flex:1;font-size:.95rem;cursor:pointer;user-select:none;${s.enabled?'':'opacity:.45;text-decoration:line-through'}" onclick="toggleExpand(${s.id})">${open?'▾':'▸'} ${esc(s.name)}</span>
+        ${isGrid?`<button title="${t('DELETE')}" style="${trash}" onclick="deleteGrid(${s.id-GRID_BASE})">🗑</button>`:''}
+        <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--text-muted);cursor:pointer">
+          <input type="checkbox" ${s.enabled?'checked':''} style="width:16px;height:16px;accent-color:var(--accent)" onchange="toggleScreen(${i},this.checked)"> ${t('ACTIVE')}
+        </label>
+      </div>
+      <div style="display:${open?'block':'none'};padding:2px 12px 12px 12px;border-top:1px solid var(--border)">${screenConfigHtml(s)}</div>`;
+    el.appendChild(row);
+  });
+}
+
+function toggleExpand(id){ expandedScreens[id] = !expandedScreens[id]; renderScreenList(); }
+function moveScreen(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= screenList.length) return;
+  [screenList[i], screenList[j]] = [screenList[j], screenList[i]];
+  renderScreenList();
+}
+function toggleScreen(i, on) {
+  if (screenList[i]) screenList[i].enabled = on;
+  renderScreenList();
+}
+
+// ---- grid inline state mutators ---------------------------------------------
+function gridSetName(slot,val){ if(gridState[slot]){ gridState[slot].name=val; const s=screenList.find(x=>x.id===GRID_BASE+slot); if(s) s.name=val; } }
+function gridSetCell(slot,i,key,val){ const g=gridState[slot]; if(!g)return; if(!g.cells[i]) g.cells[i]={label:'',pgn:'',unit:'',decimals:1}; g.cells[i][key]=val; }
+function gridSetSize(slot,key){ const info=LAYOUTS[key]; const g=gridState[slot]; if(!g||!info)return; g.layout=key; g.rows=info.rows; g.cols=info.cols; structuralChange=true; renderScreenList(); }
+
+// ---- grid wizard / delete ---------------------------------------------------
+function gridFreeSlot(){ for(let k=0;k<MAX_GRIDS;k++){ if(!gridState[k]) return k; } return -1; }
+function gridWizardOpen(){
+  const free=gridFreeSlot();
+  if(free<0){ toast(t('TOAST_MAX_GRIDS').replace('{n}',MAX_GRIDS),true); return; }
+  document.getElementById('wiz-name').value=t('GRID')+' '+(free+1);
+  const sel=document.getElementById('wiz-size');
+  sel.innerHTML=Object.entries(LAYOUTS).map(([k,v])=>`<option value="${k}"${k==='3x3'?' selected':''}>${t(v.label)}</option>`).join('');
+  document.getElementById('gridWizard').style.display='block';
+}
+function gridWizardCreate(){
+  const free=gridFreeSlot();
+  if(free<0){ toast(t('TOAST_MAX_GRIDS').replace('{n}',MAX_GRIDS),true); return; }
+  const name=document.getElementById('wiz-name').value || (t('GRID')+' '+(free+1));
+  const key=document.getElementById('wiz-size').value;
+  const info=LAYOUTS[key]||LAYOUTS['3x3'];
+  gridState[free]={ name, layout:key, rows:info.rows, cols:info.cols, cells:[] };
+  screenList.push({ id:GRID_BASE+free, name, type:'grid', enabled:true });
+  expandedScreens[GRID_BASE+free]=true;
+  structuralChange=true;
+  document.getElementById('gridWizard').style.display='none';
+  renderScreenList();
+  toast(t('TOAST_GRID_CREATED'));
+}
+function deleteGrid(slot){
+  if(!gridState[slot]) return;
+  if(!confirm(t('CONFIRM_DEL_GRID').replace('{n}', gridState[slot].name))) return;
+  delete gridState[slot];
+  screenList = screenList.filter(s => s.id !== GRID_BASE+slot);
+  delete expandedScreens[GRID_BASE+slot];
+  structuralChange=true;
+  renderScreenList();
+}
+
+// ---- Theme / Design ---------------------------------------------------------
+const THEME_COLORS = [
+  {g:'GRP_PALETTE', key:'bg', label:'C_BG'},
+  {g:'GRP_PALETTE', key:'surface', label:'C_CARDS'},
+  {g:'GRP_PALETTE', key:'border', label:'C_BORDER'},
+  {g:'GRP_PALETTE', key:'text', label:'C_TEXT'},
+  {g:'GRP_PALETTE', key:'textDim', label:'C_TEXT_DIM'},
+  {g:'GRP_PALETTE', key:'accent', label:'C_ACCENT'},
+  {g:'GRP_PALETTE', key:'green', label:'C_GREEN'},
+  {g:'GRP_PALETTE', key:'yellow', label:'C_YELLOW'},
+  {g:'GRP_PALETTE', key:'red', label:'C_RED'},
+  {g:'GRP_PALETTE', key:'orange', label:'C_ORANGE'},
+  {g:'GRP_PALETTE', key:'port', label:'C_PORT'},
+  {g:'GRP_PALETTE', key:'starboard', label:'C_STBD'},
+  {g:'GRP_PALETTE', key:'wind', label:'C_WIND'},
+  {g:'GRP_PALETTE', key:'gridLine', label:'C_GRIDLINES'},
+  {g:'GRP_OVERLAYS', key:'navBtnBg', label:'C_NAVBTN'},
+  {g:'GRP_OVERLAYS', key:'perfText', label:'C_PERFTEXT'},
+  {g:'GRP_OVERLAYS', key:'perfBg', label:'C_PERFBG'},
+  {g:'GRP_OVERLAYS', key:'demoBanner', label:'C_DEMOBANNER'},
+  {g:'GRP_OVERLAYS', key:'demoText', label:'C_DEMOTEXT'},
+  {g:'GRP_DEPTH', key:'depthBg', label:'C_BG'},
+  {g:'GRP_DEPTH', key:'depthGrad', label:'C_GRADIENT'},
+  {g:'GRP_DEPTH', key:'depthHdr', label:'C_HEADER'},
+  {g:'GRP_DEPTH', key:'depthVal', label:'C_VALUE'},
+  {g:'GRP_DEPTH', key:'depthEcho', label:'C_ECHO'},
+  {g:'GRP_DEPTH', key:'depthGrid', label:'C_GRID'},
+  {g:'GRP_DEPTH', key:'depthScale', label:'C_SCALE'},
+  {g:'GRP_DEPTH', key:'depthNow', label:'C_NOWMARK'},
+  {g:'GRP_AUTOPILOT', key:'apCompassBg', label:'C_COMPASSBG'},
+  {g:'GRP_AUTOPILOT', key:'apCompassMaj', label:'C_TICK_MAJ'},
+  {g:'GRP_AUTOPILOT', key:'apCompassMin', label:'C_TICK_MIN'},
+  {g:'GRP_AUTOPILOT', key:'apTarget', label:'C_AP_TARGET'},
+  {g:'GRP_AUTOPILOT', key:'apDevBar', label:'C_AP_DEVBAR'},
+  {g:'GRP_AUTOPILOT', key:'apModeActive', label:'C_AP_ACTIVE'},
+  {g:'GRP_AUTOPILOT', key:'apModeManual', label:'C_AP_MANUAL'},
+  {g:'GRP_AUTOPILOT', key:'apModeStandby', label:'C_AP_STANDBY'},
+  {g:'GRP_WIND', key:'windBezel', label:'C_BEZEL'},
+  {g:'GRP_WIND', key:'windInner', label:'C_INNER'},
+  {g:'GRP_WIND', key:'windRingBg', label:'C_RINGBG'},
+  {g:'GRP_WIND', key:'windDepthBg', label:'C_CHARTBG'},
+  {g:'GRP_WIND', key:'windZoneNogo', label:'C_Z_NOGO'},
+  {g:'GRP_WIND', key:'windZoneClose', label:'C_Z_CLOSE'},
+  {g:'GRP_WIND', key:'windZoneCloser', label:'C_Z_CLOSER'},
+  {g:'GRP_WIND', key:'windZoneBeam', label:'C_Z_BEAM'},
+  {g:'GRP_WIND', key:'windZoneBroad', label:'C_Z_BROAD'},
+  {g:'GRP_WIND', key:'windZoneRun', label:'C_Z_RUN'},
+  {g:'GRP_WIND', key:'windTickMaj', label:'C_TICK_MAJ'},
+  {g:'GRP_WIND', key:'windTickMin', label:'C_TICK_MIN'},
+  {g:'GRP_WIND', key:'windTwa', label:'C_TWA_PTR'},
+  {g:'GRP_WIND', key:'windAwa', label:'C_AWA_PTR'},
+  {g:'GRP_WIND', key:'windVmg', label:'C_VMG'},
+  {g:'GRP_WIND', key:'windHull', label:'C_HULL'},
+  {g:'GRP_WIND', key:'windSail', label:'C_SAIL'},
+  {g:'GRP_WIND', key:'windMast', label:'C_MAST'},
+  {g:'GRP_WIND', key:'windFlow', label:'C_WINDFLOW'},
+  {g:'GRP_WIND', key:'windRigging', label:'C_RIGGING'},
+  {g:'GRP_DEPTH', key:'depthBed', label:'C_SEABED'},
+  {g:'GRP_CLOCK', key:'mapSea', label:'C_MAPSEA'},
+  {g:'GRP_CLOCK', key:'mapLand', label:'C_MAPLAND'},
+  {g:'GRP_CLOCK', key:'mapCoast', label:'C_MAPCOAST'},
+  {g:'GRP_CLOCK', key:'mapGrid', label:'C_MAPGRID'},
+  {g:'GRP_CLOCK', key:'tideWater', label:'C_TIDEWATER'},
+  {g:'GRP_WIND', key:'attSky', label:'C_ATTSKY'},
+  {g:'GRP_WIND', key:'attGround', label:'C_ATTGROUND'},
+  {g:'GRP_PALETTE', key:'onAccent', label:'C_ONACCENT'},
+];
+function hexToCss(n){ return '#' + ((n>>>0)&0xFFFFFF).toString(16).padStart(6,'0'); }
+function cssToHex(s){ return parseInt(s.replace('#',''),16) || 0; }
+
+function renderThemeEditor(){
+  const el = document.getElementById('themeEditor');
+  if (!el) return;
+  document.getElementById('theme-active').value = cfg?.theme?.active || 'dark';
+  const dark  = cfg?.theme?.dark  || {};
+  const light = cfg?.theme?.light || {};
+  let h = `<div style="display:grid;grid-template-columns:1fr 90px 90px;gap:6px;align-items:center;font-size:.85rem">
+    <div style="font-weight:600;color:var(--text-muted)">${t('TH_COLOR')}</div>
+    <div style="font-weight:600;color:var(--text-muted);text-align:center">${t('THEME_DARK')}</div>
+    <div style="font-weight:600;color:var(--text-muted);text-align:center">${t('THEME_LIGHT')}</div>`;
+  let lastG = '';
+  THEME_COLORS.forEach(c => {
+    if (c.g !== lastG) {
+      lastG = c.g;
+      h += `<div style="grid-column:1/-1;margin-top:10px;font-weight:700;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:2px">${t(c.g)}</div>`;
+    }
+    h += `<div>${t(c.label)}</div>
+      <input type="color" id="thd-${c.key}" value="${hexToCss(dark[c.key]??0)}" style="width:100%;height:30px;background:none;border:1px solid var(--border);border-radius:4px">
+      <input type="color" id="thl-${c.key}" value="${hexToCss(light[c.key]??0xFFFFFF)}" style="width:100%;height:30px;background:none;border:1px solid var(--border);border-radius:4px">`;
+  });
+  el.innerHTML = h + '</div>';
+}
+
+const FONT_SIZES_AVAIL = [10,12,14,16,18,20,22,24,28,32,36,40,44,48];
+const BIG_FONT_SIZES   = [32,40,48,96,192];   // 96/192 = special font, <=48 = Montserrat
+const THEME_FONTS = [
+  {key:'tiny',  label:'FZ_TINY'},
+  {key:'small', label:'FZ_SMALL'},
+  {key:'med',   label:'FZ_MED'},
+  {key:'large', label:'FZ_LARGE'},
+  {key:'xl',    label:'FZ_XL'},
+  {key:'xxl',   label:'FZ_XXL'},
+  {key:'huge',  label:'FZ_HUGE'},
+  {key:'depth',    label:'FZ_DEPTH',  def:96,  sizes:BIG_FONT_SIZES},
+  {key:'gridHero', label:'FZ_GRIDHERO', def:192, sizes:BIG_FONT_SIZES},
+];
+function renderFontEditor(){
+  const el = document.getElementById('fontEditor');
+  if (!el) return;
+  const f = cfg?.theme?.fonts || {};
+  let h = '';
+  THEME_FONTS.forEach(r => {
+    const cur = f[r.key] ?? r.def ?? 16;
+    const opts = (r.sizes || FONT_SIZES_AVAIL).map(s => `<option${cur==s?' selected':''}>${s}</option>`).join('');
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0;font-size:.85rem">
+      <span>${t(r.label)}</span>
+      <select id="thf-${r.key}" style="background:var(--surface3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 6px;width:90px">${opts}</select>
+    </div>`;
+  });
+  el.innerHTML = h;
+}
+
+const THEME_SIZES = [
+  {g:'GRP_CARDS', key:'cardRadius', label:'S_RADIUS', min:0, max:24},
+  {g:'GRP_CARDS', key:'cardPad', label:'S_PAD', min:0, max:24},
+  {g:'GRP_CARDS', key:'cardBorderW', label:'S_BORDER_W', min:0, max:6},
+  {g:'GRP_NAV', key:'navBtnBgOpa', label:'S_BTN_OPA', min:0, max:255},
+  {g:'GRP_NAV', key:'navBtnBgOpaPress', label:'S_BTN_OPA_PRESS', min:0, max:255},
+  {g:'GRP_NAV', key:'navBtnArrowOpa', label:'S_ARROW_OPA', min:0, max:255},
+  {g:'GRP_NAV', key:'swipeThreshold', label:'S_SWIPE', min:20, max:200},
+  {g:'GRP_NAV', key:'navFadeDelayMs', label:'S_FADE_DELAY', min:500, max:20000},
+  {g:'GRP_NAV', key:'navFadeOutMs', label:'S_FADE_OUT', min:0, max:3000},
+  {g:'GRP_NAV', key:'navFadeInMs', label:'S_FADE_IN', min:0, max:3000},
+  {g:'GRP_PERF', key:'perfPad', label:'S_PAD', min:0, max:10},
+  {g:'GRP_PERF', key:'perfBgOpa', label:'S_BG_OPA', min:0, max:255},
+  {g:'GRP_ENGINE', key:'engineArcSize', label:'S_GAUGE_SIZE', min:200, max:460},
+  {g:'GRP_ENGINE', key:'engineArcW', label:'S_GAUGE_W', min:8, max:60},
+  {g:'GRP_ENGINE', key:'engineCardH', label:'S_CARD_H', min:40, max:120},
+  {g:'GRP_ENGINE', key:'engineCardGap', label:'S_CARD_GAP', min:0, max:20},
+  {g:'GRP_SPEED', key:'speedCardH', label:'S_CARD_H', min:60, max:160},
+  {g:'GRP_SPEED', key:'speedCardGap', label:'S_CARD_GAP', min:0, max:20},
+  {g:'GRP_SPEED', key:'speedBarH', label:'S_BAR_H', min:8, max:50},
+  {g:'GRP_SPEED', key:'speedBarRadius', label:'S_BAR_RADIUS', min:0, max:25},
+  {g:'GRP_RUDDER', key:'rudderTrackW', label:'S_ARC_W', min:10, max:80},
+  {g:'GRP_RUDDER', key:'rudderNeedleW', label:'S_NEEDLE_W', min:1, max:10},
+  {g:'GRP_RUDDER', key:'rudderPortOpa', label:'S_PORT_OPA', min:0, max:255},
+  {g:'GRP_RUDDER', key:'rudderStbOpa', label:'S_STBD_OPA', min:0, max:255},
+  {g:'GRP_AUTOPILOT', key:'apCardW', label:'S_CARD_W', min:80, max:220},
+  {g:'GRP_AUTOPILOT', key:'apCardH', label:'S_CARD_H', min:50, max:140},
+  {g:'GRP_AUTOPILOT', key:'apCardGap', label:'S_CARD_GAP', min:0, max:20},
+  {g:'GRP_AUTOPILOT', key:'apModeW', label:'S_MODE_W', min:80, max:220},
+  {g:'GRP_AUTOPILOT', key:'apModeH', label:'S_MODE_H', min:30, max:90},
+  {g:'GRP_AUTOPILOT', key:'apModeRadius', label:'S_MODE_RADIUS', min:0, max:24},
+  {g:'GRP_AUTOPILOT', key:'apDevBarH', label:'S_DEVBAR_H', min:6, max:40},
+  {g:'GRP_MISC', key:'demoBannerH', label:'S_DEMOBANNER_H', min:10, max:40},
+];
+
+function renderSizeEditor(){
+  const el = document.getElementById('sizeEditor');
+  if (!el) return;
+  const sz = cfg?.theme?.sizes || {};
+  let h = '', lastG = '';
+  THEME_SIZES.forEach(s => {
+    if (s.g !== lastG) { lastG = s.g; h += `<div style="margin-top:10px;font-weight:600;color:var(--text-muted);border-bottom:1px solid var(--border)">${t(s.g)}</div>`; }
+    h += `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0;font-size:.85rem">
+      <span>${t(s.label)}</span>
+      <input type="number" id="ths-${s.key}" value="${sz[s.key]??''}" min="${s.min}" max="${s.max}" style="background:var(--surface3);border:1px solid var(--border);color:var(--text);border-radius:4px;padding:4px 6px;width:90px">
+    </div>`;
+  });
+  el.innerHTML = h;
+}
+
+async function saveTheme(){
+  const dark={}, light={};
+  THEME_COLORS.forEach(c => {
+    dark[c.key]  = cssToHex(document.getElementById('thd-'+c.key).value);
+    light[c.key] = cssToHex(document.getElementById('thl-'+c.key).value);
+  });
+  const sizes={};
+  THEME_SIZES.forEach(s => { const el=document.getElementById('ths-'+s.key); if(el && el.value!=='') sizes[s.key]=+el.value; });
+  const fonts={};
+  THEME_FONTS.forEach(r => { const el=document.getElementById('thf-'+r.key); if(el) fonts[r.key]=+el.value; });
+  const patch = { theme: { active: v('theme-active'), dark, light, sizes, fonts } };
+  const r = await postPatch(patch);
+  if (r?.ok) { await api('POST','/api/theme-apply'); toast(t('TOAST_APPLIED')); }
+  else toast(t('TOAST_ERROR'),true);
+}
+
+// ---- Polar data -------------------------------------------------------------
+let polarData = { name:'Boat', tws:[], twa:[], speed:[] };
+const _pTh = 'position:sticky;top:0;z-index:1;background:var(--surface3);border:1px solid var(--border);padding:2px;color:var(--text)';
+const _pTd = 'border:1px solid var(--border);padding:1px';
+const _pIn = 'background:var(--surface2);border:none;color:var(--text);text-align:center;padding:4px;border-radius:3px';
+
+async function loadPolar() {
+  try {
+    const p = await api('GET', '/api/polar');
+    if (p && Array.isArray(p.tws) && Array.isArray(p.twa) && Array.isArray(p.speed)) {
+      polarData = {
+        name: p.name || 'Boat',
+        tws:  p.tws.map(Number),
+        twa:  p.twa.map(Number),
+        speed: p.speed.map(r => r.map(Number))
+      };
+    }
+  } catch(e) {}
+  const nm = document.getElementById('polar-name');
+  if (nm) nm.value = polarData.name || '';
+  renderPolarTable();
+}
+
+function renderPolarTable() {
+  const tbl = document.getElementById('polarTable');
+  if (!tbl) return;
+  const nc = polarData.tws.length, nr = polarData.twa.length;
+  let h = '<thead><tr>';
+  h += `<th style="${_pTh}">TWA \\ TWS</th>`;
+  for (let c=0;c<nc;c++)
+    h += `<th style="${_pTh}"><input value="${polarData.tws[c]}" onchange="polarSetTws(${c},this.value)" style="${_pIn};width:46px;font-weight:600"></th>`;
+  h += '</tr></thead><tbody>';
+  for (let r=0;r<nr;r++) {
+    h += '<tr>';
+    h += `<td style="${_pTd}"><input value="${polarData.twa[r]}" onchange="polarSetTwa(${r},this.value)" style="${_pIn};width:54px;font-weight:600;background:var(--surface3)"></td>`;
+    for (let c=0;c<nc;c++) {
+      const v = (polarData.speed[r] && polarData.speed[r][c]!=null) ? polarData.speed[r][c] : 0;
+      h += `<td style="${_pTd}"><input value="${v}" onchange="polarSetSpd(${r},${c},this.value)" style="${_pIn};width:46px"></td>`;
+    }
+    h += '</tr>';
+  }
+  tbl.innerHTML = h + '</tbody>';
+}
+
+function polarSetTws(c,v){ polarData.tws[c]=parseFloat(v)||0; }
+function polarSetTwa(r,v){ polarData.twa[r]=parseFloat(v)||0; }
+function polarSetSpd(r,c,v){ if(!polarData.speed[r])polarData.speed[r]=[]; polarData.speed[r][c]=parseFloat(v)||0; }
+
+function polarAddRow(){
+  const nr=polarData.twa.length, nc=polarData.tws.length;
+  const last = nr ? polarData.twa[nr-1] : 0;
+  polarData.twa.push(Math.round((last+10)*10)/10);
+  polarData.speed.push(new Array(nc).fill(0));
+  renderPolarTable();
+}
+function polarDelRow(){ if(polarData.twa.length>2){ polarData.twa.pop(); polarData.speed.pop(); renderPolarTable(); } }
+function polarAddCol(){
+  const nc=polarData.tws.length;
+  const last = nc ? polarData.tws[nc-1] : 0;
+  polarData.tws.push(Math.round((last+2)*10)/10);
+  polarData.speed.forEach(r => r.push(0));
+  renderPolarTable();
+}
+function polarDelCol(){ if(polarData.tws.length>2){ polarData.tws.pop(); polarData.speed.forEach(r=>r.pop()); renderPolarTable(); } }
+
+function parsePolarCsv(text){
+  const lines = text.split(/\r?\n/).map(l=>l.trim()).filter(l=>l.length);
+  if (lines.length<2) return null;
+  const tws = lines[0].split(',').slice(1).map(s=>Number(s.trim()));
+  if (tws.length<2 || tws.some(isNaN)) return null;
+  const twa=[], speed=[];
+  for (let i=1;i<lines.length;i++){
+    const cols = lines[i].split(',').map(s=>s.trim());
+    if (cols.length<2) continue;
+    const a = Number(cols[0]); if (isNaN(a)) continue;
+    const row = cols.slice(1).map(Number);
+    while (row.length<tws.length) row.push(0);
+    row.length = tws.length;
+    if (row.some(isNaN)) return null;
+    twa.push(a); speed.push(row);
+  }
+  if (twa.length<2) return null;
+  return { tws, twa, speed };
+}
+
+function applyPolarCsv(){
+  const parsed = parsePolarCsv(document.getElementById('polarCsvText').value);
+  if (!parsed){ toast(t('TOAST_CSV_BAD'),true); return; }
+  if (parsed.tws.length>16 || parsed.twa.length>32){ toast(t('TOAST_CSV_TOOBIG'),true); return; }
+  polarData.tws=parsed.tws; polarData.twa=parsed.twa; polarData.speed=parsed.speed;
+  renderPolarTable();
+  toast(t('TOAST_CSV_OK'));
+}
+
+function importPolarCsvFile(ev){
+  const f = ev.target.files[0]; if(!f) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    document.getElementById('polarCsvText').value = reader.result;
+    document.getElementById('polarCsvBox').style.display = 'block';
+    applyPolarCsv();
+  };
+  reader.readAsText(f);
+  ev.target.value = '';
+}
+
+function togglePolarCsv(){
+  const box = document.getElementById('polarCsvBox');
+  if (box.style.display === 'none'){ document.getElementById('polarCsvText').value = polarToCsv(); box.style.display='block'; }
+  else box.style.display='none';
+}
+
+function polarToCsv(){
+  let out = 'twa,' + polarData.tws.join(',') + '\n';
+  for (let r=0;r<polarData.twa.length;r++) out += polarData.twa[r] + ',' + (polarData.speed[r]||[]).join(',') + '\n';
+  return out;
+}
+
+function exportPolarCsv(){
+  const blob = new Blob([polarToCsv()], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (polarData.name||'polar').replace(/\s+/g,'_') + '.csv';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+async function savePolar(){
+  polarData.name = document.getElementById('polar-name').value || 'Boat';
+  if (polarData.tws.length<2 || polarData.twa.length<2){ toast(t('TOAST_POLAR_MIN'),true); return; }
+  const r = await api('POST','/api/polar', polarData);
+  r?.ok ? toast(t('TOAST_POLAR_SAVED')) : toast(t('TOAST_ERROR')+': '+(r?.error||t('UNKNOWN')),true);
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.value = val;
+}
+
+// ---- Save functions ---------------------------------------------------------
+// All saves POST a PARTIAL config ("patch"): Config::fromJson only touches
+// sections that are present. The old {...cfg,...patch} full-config POST sent
+// ~12 KB, and parsing + re-serialising that on the device needed 60-80 KB of
+// heap at its peak — with WiFi up there are only ~67 KB free, so lwIP lost its
+// buffers and the connection collapsed mid-save. Patches keep the peak tiny.
+// On success the local cfg mirror is merged so the UI stays consistent.
+function mergePatch(dst, src) {
+  for (const k of Object.keys(src)) {
+    const v = src[k];
+    dst[k] = (v && typeof v === 'object' && !Array.isArray(v))
+      ? mergePatch(dst[k] && typeof dst[k] === 'object' ? dst[k] : {}, v)
+      : v;
+  }
+  return dst;
+}
+async function postPatch(patch) {
+  const r = await api('POST', '/api/config', patch);
+  if (r?.ok) mergePatch(cfg, patch);
+  return r;
+}
+async function saveWifi() {
+  // enabled:true explicitly — this patch REPLACES the whole wifi object, and
+  // saving credentials here is a request to have the radio on.
+  const patch = { wifi:{ ssid:v('wifi-ssid'), password:v('wifi-pass'),
+                         ap_mode: v('wifi-mode')==='true', enabled:true }};
+  const r = await postPatch(patch);
+  if (r?.ok) { toast(t('TOAST_SAVED_RESTART')); setTimeout(()=>api('POST','/api/restart'),1500); }
+  else toast(t('TOAST_ERROR'),true);
+}
+async function saveDisplay() {
+  const e = cfgEdits;
+  const grids = Object.keys(gridState).map(slot => {
+    const g = gridState[slot];
+    const cells = [];
+    for (let i=0;i<9;i++){ const c=g.cells[i]||{}; cells.push({ label:c.label||'', pgn:c.pgn||'', unit:c.unit||'', decimals:(c.decimals??1) }); }
+    return { slot:+slot, name:g.name, rows:g.rows, cols:g.cols, layout:g.layout||'', cells };
+  });
+  const tankcfg = (e.tankrows||[]).filter(r => (r.name&&r.name.trim()) || (r.cap!==''&&r.cap!=null) || r.l25||r.l50||r.l75).map(r => {
+    const o = { inst:r.inst, ft:r.ft, name:(r.name||'').trim() };
+    if (r.cap!=='' && r.cap!=null) o.cap = +r.cap;
+    const l25=+r.l25||0, l50=+r.l50||0, l75=+r.l75||0;
+    if (l25>0||l50>0||l75>0){ const cap=(o.cap!=null?o.cap:(l75*1.33||0)); o.caln=5; o.calp=[0,25,50,75,100]; o.call=[0,l25,l50,l75,cap]; }
+    return o;
+  });
+  const battcfg = (e.battrows||[]).filter(r => (r.name&&r.name.trim()) || (r.ah!==''&&r.ah!=null)).map(r => {
+    const o = { inst:r.inst, name:(r.name||'').trim(), nv:(+r.nv||12) };
+    if (r.ah!=='' && r.ah!=null) o.ah = +r.ah;
+    return o;
+  });
+  const patch = {
+    display:{
+      brightness:+v('disp-bright'),
+      screens: screenList.map(s => ({ id:s.id, en:s.enabled }))
+    },
+    show_perf_overlay: document.getElementById('perf-overlay').checked,
+    engine: { rpm_idle:+e.engine.rpm_idle, rpm_cruise:+e.engine.rpm_cruise, rpm_max_cont:+e.engine.rpm_max_cont, rpm_max:+e.engine.rpm_max,
+              field_count: cfgEdits.engCount,
+              fields: cfgEdits.engFields.slice(0, cfgEdits.engCount).map(f => ({label:f.label||'', pgn:f.pgn||'', unit:f.unit||'', decimals:(f.decimals??1)})) },
+    ais:    { range:+e.ais.range, alarm:!!e.ais.alarm, cpa:+e.ais.cpa, tcpa:+e.ais.tcpa },
+    anchor: { radius:+e.anchor.radius, alarm:!!e.anchor.alarm_on, north_up:!!e.anchor.north_up },
+    tankcfg, battcfg,
+    depth:  { alarm:+e.depth.alarm, unit:e.depth.unit },
+    sail:   { lwl_m:+e.sail.lwl_m, spinnaker:!!e.sail.spinnaker, code_zero:!!e.sail.code_zero, foresail_pct:+e.sail.foresail_pct, butterfly:!!e.sail.butterfly, nogo_deg:+e.sail.nogo_deg, windlines_app:!!e.sail.windlines_app },
+    grids
+  };
+  const r = await postPatch(patch);
+  if (r?.ok) {
+    if (structuralChange) { toast(t('TOAST_SAVED_RESTART')); structuralChange=false; setTimeout(()=>api('POST','/api/restart'),1500); }
+    else toast(t('TOAST_SAVED'));
+  } else toast(t('TOAST_ERROR'),true);
+}
+async function saveNmea() {
+  const patch = { nmea2000:{ can_tx:+v('can-tx'), can_rx:+v('can-rx'), listen_only:document.getElementById('can-listen').checked }};
+  const r = await postPatch(patch);
+  if (r?.ok) { toast(t('TOAST_SAVED_RESTART')); setTimeout(()=>api('POST','/api/restart'),1500); }
+  else toast(t('TOAST_ERROR'),true);
+}
+async function saveDemo() {
+  const isDemo = document.getElementById('demo-mode').checked;
+  const patch  = { demo_mode: isDemo };
+  const r = await postPatch(patch);
+  if (r?.ok) {
+    document.getElementById('demo-status').textContent = isDemo ? t('DEMO_ON') : t('DEMO_OFF');
+    document.getElementById('demo-status').style.color  = isDemo ? 'var(--warn)' : 'var(--text-muted)';
+    toast(isDemo ? t('TOAST_DEMO_ON') : t('TOAST_DEMO_OFF'));
+  } else {
+    toast(t('TOAST_SAVE_ERROR'), true);
+  }
+}
+function v(id) { const el=document.getElementById(id); return el?el.value:''; }
+function demoToggle(on) {
+  const el = document.getElementById('demo-status');
+  if (!el) return;
+  el.textContent   = on ? t('DEMO_ON') : t('DEMO_OFF');
+  el.style.color   = on ? 'var(--warn)' : 'var(--text-muted)';
+}
+
+// ---- Import / Export -------------------------------------------------------
+async function exportConfig() {
+  const r = await fetch('/api/export');
+  const text = await r.text();
+  const a=document.createElement('a');
+  a.href='data:application/json,'+encodeURIComponent(text);
+  a.download='nauticpinnace-config.json';
+  a.click();
+}
+function importConfig(evt) {
+  const file=evt.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=async e=>{
+    const r=await fetch('/api/import',{method:'POST',headers:{'Content-Type':'application/json'},body:e.target.result});
+    const j=await r.json().catch(()=>null);
+    j?.ok ? toast(t('TOAST_IMPORTED')) && setTimeout(loadConfig,800) : toast(t('TOAST_IMPORT_ERR'),true);
+  };
+  reader.readAsText(file);
+}
+async function refreshRawConfig() {
+  const r=await fetch('/api/export'); const txt=await r.text();
+  document.getElementById('rawConfig').value=txt;
+}
+async function restartDevice() {
+  if(!confirm(t('CONFIRM_RESTART'))) return;
+  await api('POST','/api/restart');
+  toast(t('TOAST_RESTART_REQ'));
+}
+// ---- Live data --------------------------------------------------------------
+async function pollLive() {
+  try {
+    const d = await api('GET','/api/data');
+    if (!d) return;
+    const map = {
+      sog:'v-sog', cog:'v-cog', hdg:'v-hdg', stw:'v-stw',
+      awa:'v-awa', aws:'v-aws', twa:'v-twa', tws:'v-tws', twd:'v-twd',
+      depth:'v-depth', rpm:'v-rpm', oilPressure:'v-oil', coolantTemp:'v-cool',
+      rudder:'v-rudder', battV:'v-battv', aisCount:'v-ais'
+    };
+    for (const [k,id] of Object.entries(map)) {
+      const el=document.getElementById(id);
+      if (!el) continue;
+      const val=d[k];
+      el.textContent = val===null||val===undefined ? '--' : typeof val==='number'?val.toFixed(val>=100?0:1):val;
+    }
+  } catch(e){}
+}
+
+// ---- Boot-Logo --------------------------------------------------------------
+async function checkLogoStatus() {
+  try {
+    const r = await api('GET', '/api/logo-info');
+    const info = document.getElementById('logoInfo');
+    const prev = document.getElementById('logoPreview');
+    if (r?.exists) {
+      const kb = (r.size / 1024).toFixed(1);
+      info.innerHTML = `<span style="color:var(--ok)">${t('LOGO_STORED')}</span> — ${kb} KB`;
+      prev.innerHTML = `<span style="font-size:2rem">🖼️</span><div style="font-size:.7rem;margin-top:4px">${kb} KB</div>`;
+      prev.style.borderColor = 'var(--ok)';
+    } else {
+      info.textContent = t('LOGO_NONE_LONG');
+      prev.innerHTML = '<span style="font-size:.7rem;text-align:center;color:var(--text-muted)">' + t('LOGO_NONE_BR') + '</span>';
+      prev.style.borderColor = 'var(--border)';
+    }
+  } catch(e) {}
+}
+
+async function uploadLogo() {
+  const file = document.getElementById('logoFile').files[0];
+  if (!file) return;
+  if (!file.name.endsWith('.bin')) { toast(t('TOAST_BIN_ONLY'), true); return; }
+  if (file.size > 400*400*2 + 4) { toast(t('TOAST_TOO_BIG'), true); return; }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  toast(t('TOAST_UPLOADING'));
+  try {
+    const r = await fetch('/api/upload-logo', {
+      method: 'POST',
+      body: file,
+      headers: { 'Content-Type': 'application/octet-stream' }
+    });
+    const j = await r.json().catch(() => null);
+    if (j?.ok) {
+      toast(t('TOAST_LOGO_UP'));
+      checkLogoStatus();
+    } else {
+      toast(t('TOAST_UPLOAD_FAIL'), true);
+    }
+  } catch(e) { toast(t('TOAST_ERROR') + ': ' + e.message, true); }
+}
+
+async function deleteLogo() {
+  if (!confirm(t('CONFIRM_DEL_LOGO'))) return;
+  const r = await fetch('/api/delete-logo', { method: 'DELETE' });
+  const j = await r.json().catch(() => null);
+  if (j?.ok) { toast(t('TOAST_LOGO_DEL')); checkLogoStatus(); }
+  else toast(t('TOAST_ERROR'), true);
+}
+
+function saveBootName() {
+  // Both boot-screen texts live under "boot" in the config; the firmware falls
+  // back to the project name when the title is empty. (The old flat
+  // "boot_name" key was never read by the firmware — see Config::fromJson.)
+  const patch = { boot: {
+    title: document.getElementById('boot-title').value.trim(),
+    name:  document.getElementById('boot-name').value.trim(),
+  } };
+  postPatch(patch)
+    .then(r => r?.ok ? toast(t('TOAST_BOOTNAME')) : toast(t('TOAST_ERROR'), true));
+}
+
+applyI18n();
+checkLogoStatus();
+
+// ---- Boot -------------------------------------------------------------------
+loadConfig();
+setInterval(pollLive, 1000);
+</script>
+</body>
+</html>

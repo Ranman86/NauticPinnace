@@ -1,0 +1,29 @@
+# PlatformIO build artefacts
+.pio/
+.pioenvs/
+
+# Editors
+.vscode/
+
+# OS clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Python
+__pycache__/
+*.pyc
+
+# Local backups. data/config.json in the repo is the factory default and is
+# meant to be committed; a snapshot exported from a running device is NOT —
+# it contains the WiFi credentials and the generated hotspot password.
+.backup/
+*.bak
+*.orig
+
+# Release artefacts — the ZIP goes to GitHub Releases, not into the repo.
+# (docs/flash/ IS committed: GitHub Pages serves the browser flasher from it.)
+release/
+
+# Local-only material that is deliberately not published
+enclosure/

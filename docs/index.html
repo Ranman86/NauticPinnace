@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NauticPinnace</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto;
+         padding: 0 16px; line-height: 1.55; }
+  h1 { color: #16B8B8; display: flex; align-items: center; gap: 12px; }
+  .card { border: 1px solid #8884; border-radius: 10px; padding: 16px 20px; margin: 18px 0; }
+  a { color: #16B8B8; }
+  ul { padding-left: 20px; }
+  img { max-width: 100%; border-radius: 8px; }
+</style>
+</head>
+<body>
+<h1>
+  <svg viewBox="0 0 200 176" width="40" height="35" aria-hidden="true" style="flex:none">
+    <g transform="translate(18,6) scale(0.82)" fill="none" stroke="currentColor"
+       stroke-width="15" stroke-linecap="round">
+      <path d="M40 66 H160"/><path d="M67 66 V138"/>
+      <path d="M130 66 V125 Q 130 140 147 140"/>
+    </g>
+    <path d="M16 148 C 46 128 78 128 108 148 S 158 168 186 148" fill="none"
+          stroke-width="11" stroke-linecap="round" style="stroke:#16B8B8"/>
+  </svg>
+  NauticPinnace
+</h1>
+
+<p>A DIY <strong>NMEA 2000 instrument display</strong> for sailing yachts, built on
+the Waveshare ESP32-S3-Touch-LCD-4. Wind, speed, depth, engine, AIS, autopilot,
+batteries, tanks, weather, anchor watch — 17 screens plus configurable data
+grids, in English and German.</p>
+
+<p><img src="img/wind_dark.png" alt="Wind instrument screen with sail zones and trimmed sails"></p>
+
+<div class="card">
+  <h2 style="margin-top:0">Get it</h2>
+  <ul>
+    <li><a href="flash.html">Flash it from your browser</a> — Chrome or Edge, no toolchain needed</li>
+    <li><a href="https://github.com/Ranman86/NauticPinnace">Source code, documentation and releases on GitHub</a></li>
+  </ul>
+</div>
+
+<p style="font-size:.9em;opacity:.8">Hobby project — not NMEA-certified, not sold,
+not a navigation device. Read the warning in the
+<a href="https://github.com/Ranman86/NauticPinnace#readme">README</a> before
+connecting self-built hardware to a boat's backbone. Tender to
+<a href="https://github.com/Ranman86/NauticPi">NauticPi</a>.</p>
+</body>
+</html>

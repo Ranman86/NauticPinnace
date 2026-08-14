@@ -1,0 +1,460 @@
+{
+  "wifi": {
+    "ssid": "",
+    "password": "",
+    "ap_mode": false,
+    "enabled": false
+  },
+  "display": {
+    "brightness": 200,
+    "screens": [
+      {
+        "id": 0,
+        "en": true
+      },
+      {
+        "id": 1,
+        "en": true
+      },
+      {
+        "id": 2,
+        "en": true
+      },
+      {
+        "id": 3,
+        "en": true
+      },
+      {
+        "id": 4,
+        "en": true
+      },
+      {
+        "id": 5,
+        "en": true
+      },
+      {
+        "id": 6,
+        "en": true
+      },
+      {
+        "id": 7,
+        "en": true
+      },
+      {
+        "id": 8,
+        "en": true
+      },
+      {
+        "id": 9,
+        "en": true
+      },
+      {
+        "id": 10,
+        "en": true
+      },
+      {
+        "id": 11,
+        "en": true
+      },
+      {
+        "id": 12,
+        "en": true
+      },
+      {
+        "id": 13,
+        "en": true
+      },
+      {
+        "id": 14,
+        "en": true
+      },
+      {
+        "id": 15,
+        "en": true
+      },
+      {
+        "id": 16,
+        "en": true
+      },
+      {
+        "id": 17,
+        "en": true
+      },
+      {
+        "id": 18,
+        "en": true
+      }
+    ]
+  },
+  "nmea2000": {
+    "can_tx": 6,
+    "can_rx": 0
+  },
+  "engine": {
+    "rpm_idle": 700,
+    "rpm_cruise": 2200,
+    "rpm_max_cont": 3000,
+    "rpm_max": 3600,
+    "field_count": 4,
+    "fields": [
+      {
+        "label": "",
+        "pgn": "oil",
+        "unit": "hPa",
+        "decimals": 0
+      },
+      {
+        "label": "",
+        "pgn": "coolant",
+        "unit": "°C",
+        "decimals": 1
+      },
+      {
+        "label": "",
+        "pgn": "hours",
+        "unit": "h",
+        "decimals": 0
+      },
+      {
+        "label": "",
+        "pgn": "fuel",
+        "unit": "L/h",
+        "decimals": 1
+      }
+    ]
+  },
+  "depth": {
+    "alarm": 3,
+    "unit": "m"
+  },
+  "ais": {
+    "range": 5,
+    "alarm": true,
+    "cpa": 0.5,
+    "tcpa": 10
+  },
+  "anchor": {
+    "set": false,
+    "lat": null,
+    "lon": null,
+    "radius": 40,
+    "alarm": false,
+    "north_up": true
+  },
+  "polar_file": "/polar.json",
+  "demo_mode": true,
+  "show_perf_overlay": false,
+  "sail": {
+    "lwl_m": 9.5,
+    "spinnaker": true,
+    "code_zero": true,
+    "foresail_pct": 140,
+    "butterfly": false,
+    "nogo_deg": 35,
+    "windlines_app": true,
+    "headsail_pct": 100
+  },
+  "grids": [
+    {
+      "slot": 0,
+      "name": "",
+      "rows": 3,
+      "cols": 3,
+      "layout": "",
+      "cells": [
+        {
+          "label": "SOG",
+          "pgn": "sog",
+          "unit": "kn",
+          "decimals": 1
+        },
+        {
+          "label": "COG",
+          "pgn": "cog",
+          "unit": "°",
+          "decimals": 0
+        },
+        {
+          "label": "Heading",
+          "pgn": "hdg",
+          "unit": "°",
+          "decimals": 0
+        },
+        {
+          "label": "AWA",
+          "pgn": "awa",
+          "unit": "°",
+          "decimals": 0
+        },
+        {
+          "label": "AWS",
+          "pgn": "aws",
+          "unit": "kn",
+          "decimals": 1
+        },
+        {
+          "label": "Depth",
+          "pgn": "depth",
+          "unit": "m",
+          "decimals": 1
+        },
+        {
+          "label": "RPM",
+          "pgn": "rpm",
+          "unit": "",
+          "decimals": 0
+        },
+        {
+          "label": "Batt V",
+          "pgn": "battv",
+          "unit": "V",
+          "decimals": 1
+        },
+        {
+          "label": "Rudder",
+          "pgn": "rudder",
+          "unit": "°",
+          "decimals": 1
+        }
+      ]
+    },
+    {
+      "slot": 1,
+      "name": "",
+      "rows": 2,
+      "cols": 2,
+      "layout": "hero1_2",
+      "cells": [
+        {
+          "label": "",
+          "pgn": "sog",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "hdg",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "depth",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        },
+        {
+          "label": "",
+          "pgn": "",
+          "unit": "",
+          "decimals": 1
+        }
+      ]
+    }
+  ],
+  "theme": {
+    "active": "dark",
+    "auto": false,
+    "dark": {
+      "bg": 0,
+      "surface": 1184794,
+      "border": 5198957,
+      "text": 15264493,
+      "textDim": 8028304,
+      "accent": 28415,
+      "green": 51283,
+      "yellow": 16766464,
+      "red": 16717636,
+      "orange": 16739584,
+      "port": 16717636,
+      "starboard": 51283,
+      "wind": 45311,
+      "gridLine": 1712181,
+      "navBtnBg": 0,
+      "perfText": 65280,
+      "perfBg": 0,
+      "demoBanner": 13375488,
+      "demoText": 16777215,
+      "depthBg": 330258,
+      "depthGrad": 665672,
+      "depthHdr": 1982560,
+      "depthVal": 14218495,
+      "depthEcho": 59647,
+      "depthGrid": 1718869,
+      "depthScale": 3039360,
+      "depthNow": 16723984,
+      "apCompassBg": 1054752,
+      "apCompassMaj": 6320256,
+      "apCompassMin": 2633792,
+      "apTarget": 2718207,
+      "apDevBar": 1383464,
+      "apModeActive": 864288,
+      "apModeManual": 1056816,
+      "apModeStandby": 1708552,
+      "windBezel": 791586,
+      "windInner": 528412,
+      "windRingBg": 924200,
+      "windDepthBg": 1054752,
+      "windZoneNogo": 3147784,
+      "windZoneClose": 677920,
+      "windZoneCloser": 1206320,
+      "windZoneBeam": 544848,
+      "windZoneBroad": 6833160,
+      "windZoneRun": 6823944,
+      "windTickMaj": 5599368,
+      "windTickMin": 2635848,
+      "windGrid": 4214880,
+      "windTwa": 2718207,
+      "windAwa": 13378082,
+      "windVmg": 1093696,
+      "windHull": 7903416,
+      "windSail": 13424880,
+      "windMast": 1846332,
+      "windFlow": 1060948,
+      "windRigging": 5603480
+    },
+    "light": {
+      "bg": 15922423,
+      "surface": 16777215,
+      "border": 13292252,
+      "text": 1053722,
+      "textDim": 5595246,
+      "accent": 25343,
+      "green": 1805884,
+      "yellow": 12092939,
+      "red": 13840175,
+      "orange": 15094016,
+      "port": 13840175,
+      "starboard": 1805884,
+      "wind": 161725,
+      "gridLine": 13687010,
+      "navBtnBg": 0,
+      "perfText": 686602,
+      "perfBg": 16777215,
+      "demoBanner": 13375488,
+      "demoText": 16777215,
+      "depthBg": 15265524,
+      "depthGrad": 12112096,
+      "depthHdr": 35071,
+      "depthVal": 5092094,
+      "depthEcho": 11383475,
+      "depthGrid": 11584724,
+      "depthScale": 5802152,
+      "depthNow": 13840175,
+      "apCompassBg": 15265524,
+      "apCompassMaj": 4216936,
+      "apCompassMin": 12634836,
+      "apTarget": 1402304,
+      "apDevBar": 14476524,
+      "apModeActive": 13166288,
+      "apModeManual": 13687524,
+      "apModeStandby": 15590608,
+      "windBezel": 14476524,
+      "windInner": 15659766,
+      "windRingBg": 14739696,
+      "windDepthBg": 14739696,
+      "windZoneNogo": 15780040,
+      "windZoneClose": 12116160,
+      "windZoneCloser": 13166800,
+      "windZoneBeam": 12378336,
+      "windZoneBroad": 15390888,
+      "windZoneRun": 15715248,
+      "windTickMaj": 5269632,
+      "windTickMin": 12109008,
+      "windGrid": 12634836,
+      "windTwa": 1402304,
+      "windAwa": 13840175,
+      "windVmg": 1805884,
+      "windHull": 4876938,
+      "windSail": 8425640,
+      "windMast": 8951976,
+      "windFlow": 6983872,
+      "windRigging": 4878472
+    },
+    "sizes": {
+      "cardRadius": 8,
+      "cardPad": 8,
+      "cardBorderW": 1,
+      "navBtnRadius": 8,
+      "navBtnBgOpa": 60,
+      "navBtnBgOpaPress": 130,
+      "navBtnArrowOpa": 160,
+      "swipeThreshold": 70,
+      "navFadeDelayMs": 4000,
+      "navFadeOutMs": 800,
+      "navFadeInMs": 300,
+      "perfPad": 2,
+      "perfBgOpa": 128,
+      "engineArcSize": 450,
+      "engineArcW": 26,
+      "engineCardW": 108,
+      "engineCardH": 72,
+      "engineCardGap": 6,
+      "speedCardH": 100,
+      "speedCardGap": 4,
+      "speedBarH": 22,
+      "speedBarRadius": 6,
+      "rudderTrackW": 42,
+      "rudderNeedleW": 3,
+      "rudderPortOpa": 60,
+      "rudderStbOpa": 60,
+      "apCardW": 140,
+      "apCardH": 90,
+      "apCardGap": 8,
+      "apModeW": 140,
+      "apModeH": 50,
+      "apModeRadius": 6,
+      "apDevBarH": 16,
+      "demoBannerH": 20
+    },
+    "fonts": {
+      "tiny": 12,
+      "small": 14,
+      "med": 16,
+      "large": 24,
+      "xl": 32,
+      "xxl": 40,
+      "huge": 48,
+      "depth": 96,
+      "gridHero": 192
+    }
+  },
+  "ui": {
+    "lang": "en"
+  },
+  "boot": {
+    "title": "NauticPinnace",
+    "name": ""
+  },
+  "license_ok": false
+}
