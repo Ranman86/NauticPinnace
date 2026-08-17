@@ -50,24 +50,26 @@ or classic SeaTalk input.
 
 | | | |
 |:---:|:---:|:---:|
-| <img src="docs/img/depth_dark.png" width="240" alt="Depth screen"> | <img src="docs/img/engine_dark.png" width="240" alt="Engine screen"> | <img src="docs/img/ais_dark.png" width="240" alt="AIS radar screen"> |
-| **Depth** — 96 px digits over a scrolling echo history, shallow-water alarm | **Engine** — RPM arc + 1–6 freely assignable value cards | **AIS** — radar-style target plot, tap a target for details, targets colour-coded by CPA/TCPA risk |
-| <img src="docs/img/anchor_dark.png" width="240" alt="Anchor watch screen"> | <img src="docs/img/clock_dark.png" width="240" alt="Clock screen"> | <img src="docs/img/wind_dark.png" width="240" alt="Wind screen"> |
-| **Anchor watch** — swing circle, drift track, radius alarm (fires on any screen) | **Clock** — world map with day/night terminator, sun/moon, tide curve | **Wind & Trim** — sail zones, hull with trimmed sails, polar target, trim advice |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/wind_dark.png"><img src="docs/img/wind_light.png" width="250" alt="Wind and Trim screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/speed_dark.png"><img src="docs/img/speed_light.png" width="250" alt="Speed screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/vmg_dark.png"><img src="docs/img/vmg_light.png" width="250" alt="VMG screen"></picture> |
+| **Wind &amp; Trim**<br>sail zones, hull with trimmed sails, polar target, trim advice | **Speed**<br>SOG and STW against the polar target, performance bar | **VMG**<br>live vs. best achievable, optimal TWA, steer higher/lower |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/depth_dark.png"><img src="docs/img/depth_light.png" width="250" alt="Depth screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/windplot_dark.png"><img src="docs/img/windplot_light.png" width="250" alt="Wind plot screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/route_dark.png"><img src="docs/img/route_light.png" width="250" alt="Route screen"></picture> |
+| **Depth**<br>96 px digits over a scrolling echo history, shallow alarm | **Wind plot**<br>TWD/TWS history as a polar rose with statistics | **Route**<br>distance and bearing to the waypoint, XTE bar, time to go |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/ais_dark.png"><img src="docs/img/ais_light.png" width="250" alt="AIS radar screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/anchor_dark.png"><img src="docs/img/anchor_light.png" width="250" alt="Anchor watch screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/attitude_dark.png"><img src="docs/img/attitude_light.png" width="250" alt="Attitude screen"></picture> |
+| **AIS radar**<br>target plot, tap a target for details, CPA/TCPA colouring | **Anchor watch**<br>swing circle, drift track, radius alarm on any screen | **Attitude**<br>artificial horizon, rate of turn, wave height and period |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/engine_dark.png"><img src="docs/img/engine_light.png" width="250" alt="Engine screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/tanks_dark.png"><img src="docs/img/tanks_light.png" width="250" alt="Tanks screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/battery_dark.png"><img src="docs/img/battery_light.png" width="250" alt="Batteries screen"></picture> |
+| **Engine**<br>RPM arc plus 1-6 freely assignable value cards | **Tanks**<br>one bar per fluid tank on the bus, calibrated per tank | **Batteries**<br>state of charge, voltage, current, time remaining per bank |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/autopilot_dark.png"><img src="docs/img/autopilot_light.png" width="250" alt="Autopilot screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/rudder_dark.png"><img src="docs/img/rudder_light.png" width="250" alt="Rudder screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/weather_dark.png"><img src="docs/img/weather_light.png" width="250" alt="Weather screen"></picture> |
+| **Autopilot**<br>commanded heading, mode badge, deviation and rudder | **Rudder**<br>rudder angle band with value and direction | **Weather**<br>barometer with 3 h trend, air and water temperature |
+| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/clock_dark.png"><img src="docs/img/clock_light.png" width="250" alt="Clock screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/media_dark.png"><img src="docs/img/media_light.png" width="250" alt="Media screen"></picture> | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/img/grid_dark.png"><img src="docs/img/grid_light.png" width="250" alt="Data grid screen"></picture> |
+| **Clock**<br>world map with day/night terminator, sun, moon, tide curve | **Media**<br>stereo remote (NMEA 2000, manufacturer code 419): source, now playing, transport, master and zone volumes | **Data grid**<br>your own layout, any bus value per cell, up to 6 of them |
 
-All 17 fixed screens: **Wind & Trim** · **Speed** (SOG/STW/polar target/VMG) ·
-**Depth** · **Engine** · **Rudder** · **AIS** · **Wind plot** (TWD/TWS history
-rose) · **Autopilot** (commanded heading, mode, deviation) · **Media**
-(stereo remote, NMEA 2000 manufacturer code 419) · **Attitude** (artificial
-horizon: roll/pitch, rate of turn, wave height/period estimated from heave) ·
-**Anchor watch** · **Tanks** · **Batteries** (SoC, voltage, current, time
-remaining per bank) · **Weather** (barometer + trend chart, temps, humidity) ·
-**Clock** · **VMG** (live vs. best achievable, steer higher/lower) · **Route**
-(waypoint distance/bearing, XTE bar, time to go).
+That is all 17 fixed screens, plus one **data grid** in the last cell. Every
+shot exists in light and dark and follows your GitHub theme, so what you see
+above is what the display looks like in your preferred one.
 
-On top of those you can add up to **6 data-grid screens**: free layouts up to
-3 × 3 cells (plus "hero" layouts with one big value on top), each cell mapped
-to any data point on the bus.
+You can add up to **6 data grids** of your own: free layouts up to 3 × 3
+cells (plus "hero" layouts with one big value on top), each cell mapped to
+any data point on the bus.
 
 Screen **order and visibility are configurable**; navigation is by touch
 swipe or on-screen arrows.
@@ -78,10 +80,16 @@ swipe or on-screen arrows.
 |:---:|:---:|:---:|
 | <img src="docs/img/engine_light.png" width="200" alt="Engine screen, light theme"> | <img src="docs/img/engine_dark.png" width="200" alt="Engine screen, dark theme"> | <img src="docs/img/engine_night.png" width="200" alt="Engine screen, night theme"> |
 
-Dark (default), light, and a red-preserving night mode, switchable on the
-display; an optional auto mode switches between light (day) and dark (night)
-by sun position (needs GPS + time from the bus) — the night theme is selected
-manually. Every colour, size and font role of the dark and light themes is
+Night mode keeps everything on the red channel so it doesn't wreck your dark
+adaptation on a night watch:
+
+| | | | | |
+|:---:|:---:|:---:|:---:|:---:|
+| <img src="docs/img/wind_night.png" width="150" alt="Wind screen, night theme"> | <img src="docs/img/depth_night.png" width="150" alt="Depth screen, night theme"> | <img src="docs/img/ais_night.png" width="150" alt="AIS screen, night theme"> | <img src="docs/img/anchor_night.png" width="150" alt="Anchor watch, night theme"> | <img src="docs/img/clock_night.png" width="150" alt="Clock screen, night theme"> |
+
+Dark (default), light, and night are switchable on the display; an optional
+auto mode switches between light (day) and dark (night) by sun position
+(needs GPS + time from the bus) — the night theme is selected manually. Every colour, size and font role of the dark and light themes is
 editable in the web UI and applies live; the night palette can be customised
 via config JSON import.
 
