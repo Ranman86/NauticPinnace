@@ -35,17 +35,27 @@ import zipfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENV = 'waveshare_esp32s3_4'
-BUILD = os.path.join(ROOT, '.pio', 'build', ENV)
-PIO = os.path.expanduser('~/.platformio/penv/Scripts/pio.exe')
+
+# PlatformIO's own directory. Everything below derives from it rather than
+# being written out, so this agrees with platformio.ini, build_deploy.ps1 and
+# tools/build4.ps1 - all four used to compute the 4-inch paths separately and
+# had already drifted apart.
+PIO_CORE = os.environ.get('PLATFORMIO_CORE_DIR') or os.path.expanduser('~/.platformio')
+PIO = os.path.join(PIO_CORE, 'penv', 'Scripts', 'pio.exe')
 if not os.path.exists(PIO):
-    PIO = 'pio'  # PATH fallback (Linux/macOS)
+    PIO = 'pio'  # PATH fallback (Linux/macOS, pipx installs)
 
 # The 4" env builds with a PRIVATE package dir (see tools/build4.ps1 and the
 # comment in platformio.ini): the pioarduino platform of the 7B env fights
 # over the shared package dir by NAME (tool-esptoolpy). Keep every package
-# path in this script consistent with that dir.
-PKGS = os.path.expanduser('~/.platformio/packages-4inch')
+# path in this script consistent with that dir - and the BUILD dir with it,
+# because changing the package dir makes PlatformIO treat the project as a
+# different configuration and build somewhere else.
+PKGS = os.path.join(PIO_CORE, 'packages-4inch')
+BUILD = os.path.join(PIO_CORE, 'build', 'nauticpinnace-4inch', ENV)
 os.environ['PLATFORMIO_PACKAGES_DIR'] = PKGS
+os.environ['PLATFORMIO_BUILD_DIR'] = os.path.join(PIO_CORE, 'build',
+                                                  'nauticpinnace-4inch')
 
 # flash layout — keep in sync with partitions_16MB.csv
 PARTS = [
