@@ -50,6 +50,7 @@ const char *i18nFieldName(const char *key) {
         {"fuel", STR_FLD_FUEL}, {"rudder", STR_FLD_RUDDER},
         {"battv", STR_FLD_BATTV}, {"lat", STR_FLD_LAT}, {"lon", STR_FLD_LON},
         {"aptarget", STR_FLD_APTARGET},
+        {"cpu", STR_FLD_CPU}, {"ram", STR_FLD_RAM},   // device health (sidebar)
     };
     for (const FieldName &f : K)
         if (strcmp(f.key, key) == 0) return T(f.id);

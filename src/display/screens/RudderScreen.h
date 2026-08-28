@@ -9,7 +9,7 @@ public:
     void update() override;
 
 public:
-    static constexpr int CS = 480;
+    static constexpr int CS = SCREEN_W;   // canvas spans the full screen width
 private:
     lv_obj_t  *_canvas   = nullptr;
     lv_color_t *_cbuf    = nullptr;

@@ -10,7 +10,13 @@ import json, sys, os, urllib.request
 from PIL import Image, ImageDraw
 import numpy as np
 
-MW, MH = 480, 200          # must match ClockScreen MW/MH
+MW, MH = 480, 200          # must match ClockScreen MW/MH (480 design grid)
+OUT_NAME = "WorldMask.h"
+# Optional override:  gen_world_mask.py <W> <H> <OutName.h>
+# Used for the 7B's 600x250 variant (WorldMask600.h); the default 480x200
+# header stays byte-identical to the released one - do not regenerate it.
+if len(sys.argv) >= 4:
+    MW, MH, OUT_NAME = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3]
 SS = 4                      # supersample factor
 W, H = MW * SS, MH * SS
 
@@ -77,7 +83,7 @@ def main():
             if land[y, x]:
                 packed[y * rowbytes + (x >> 3)] |= (0x80 >> (x & 7))
 
-    out = os.path.join(os.path.dirname(__file__), "..", "src", "display", "screens", "WorldMask.h")
+    out = os.path.join(os.path.dirname(__file__), "..", "src", "display", "screens", OUT_NAME)
     out = os.path.abspath(out)
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write("#pragma once\n#include <stdint.h>\n\n")

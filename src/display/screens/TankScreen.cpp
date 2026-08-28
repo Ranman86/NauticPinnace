@@ -51,7 +51,7 @@ void TankScreen::create(lv_obj_t *parent) {
     for (int i = 0; i < DataModel::MAX_TANKS; i++) {
         Row &r = _rows[i];
         r.box = lv_obj_create(container);
-        lv_obj_set_style_radius(r.box, 8, 0);
+        lv_obj_set_style_radius(r.box, UI_S(8), 0);
         lv_obj_set_style_border_width(r.box, 1, 0);
         lv_obj_set_style_border_color(r.box, CLR_BORDER, 0);
         lv_obj_set_style_bg_color(r.box, CLR_SURFACE, 0);
@@ -71,8 +71,8 @@ void TankScreen::create(lv_obj_t *parent) {
         lv_bar_set_range(r.bar, 0, 100);
         lv_obj_set_style_bg_color(r.bar, CLR_BG, 0);              // track
         lv_obj_set_style_bg_opa(r.bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(r.bar, 4, 0);
-        lv_obj_set_style_radius(r.bar, 4, LV_PART_INDICATOR);
+        lv_obj_set_style_radius(r.bar, UI_S(4), 0);
+        lv_obj_set_style_radius(r.bar, UI_S(4), LV_PART_INDICATOR);
 
         lv_obj_add_flag(r.box, LV_OBJ_FLAG_HIDDEN);
     }
@@ -86,22 +86,22 @@ void TankScreen::create(lv_obj_t *parent) {
 }
 
 void TankScreen::layout(int n) {
-    const int top = 10, bottom = 470, gap = 8;
+    const int top = UI_S(10), bottom = SCREEN_H - UI_S(10), gap = UI_S(8);
     int bh = (n > 0) ? (bottom - top - (n - 1) * gap) / n : 0;
     for (int i = 0; i < DataModel::MAX_TANKS; i++) {
         Row &r = _rows[i];
         if (i < n) {
             int y = top + i * (bh + gap);
-            lv_obj_set_size(r.box, SCREEN_W - 20, bh);
-            lv_obj_set_pos(r.box, 10, y);
+            lv_obj_set_size(r.box, SCREEN_W - UI_S(20), bh);
+            lv_obj_set_pos(r.box, UI_S(10), y);
             lv_obj_clear_flag(r.box, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_set_pos(r.name, 14, 8);
-            lv_obj_align(r.val, LV_ALIGN_TOP_RIGHT, -14, 8);
-            int barH = (bh > 92) ? 26 : 18;
-            int barY = bh - barH - 12;
-            if (barY < 40) barY = 40;
-            lv_obj_set_size(r.bar, (SCREEN_W - 20) - 28, barH);
-            lv_obj_set_pos(r.bar, 14, barY);
+            lv_obj_set_pos(r.name, UI_S(14), UI_S(8));
+            lv_obj_align(r.val, LV_ALIGN_TOP_RIGHT, UI_S(-14), UI_S(8));
+            int barH = (bh > UI_S(92)) ? UI_S(26) : UI_S(18);
+            int barY = bh - barH - UI_S(12);
+            if (barY < UI_S(40)) barY = UI_S(40);
+            lv_obj_set_size(r.bar, (SCREEN_W - UI_S(20)) - UI_S(28), barH);
+            lv_obj_set_pos(r.bar, UI_S(14), barY);
         } else {
             lv_obj_add_flag(r.box, LV_OBJ_FLAG_HIDDEN);
         }

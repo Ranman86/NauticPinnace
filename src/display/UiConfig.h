@@ -12,8 +12,15 @@
 // ══════════════════════════════════════════════════════════════
 // SCREEN STRUCTURE
 // ══════════════════════════════════════════════════════════════
+// Physical display resolution (drives the simulator window size; on device
+// builds the panel size comes from BoardConfig LCD_WIDTH/HEIGHT).
+#if defined(BOARD_PANEL_1024X600)
+#define UI_SCREEN_W        1024     // Screen width  (7B panel)
+#define UI_SCREEN_H         600     // Screen height (7B panel)
+#else
 #define UI_SCREEN_W         480     // Screen width
 #define UI_SCREEN_H         480     // Screen height
+#endif
 
 // ══════════════════════════════════════════════════════════════
 // COLOUR PALETTE (dark marine theme)
@@ -23,8 +30,17 @@
 // NAVIGATION OVERLAYS (semi-transparent side arrows)
 // Click zone: 1/6 width × 1/4 height, vertically centred
 // ══════════════════════════════════════════════════════════════
-#define UI_NAV_BTN_W     (UI_SCREEN_W / 6)    // 80px – click zone width
-#define UI_NAV_BTN_H     (UI_SCREEN_H / 4)    // 120px – click zone height
+// CAREFUL: these two derive from the PHYSICAL panel constants, so they are
+// NOT rotation-aware. That is fine because their only consumer is
+// DisplayManager::buildOverlayNav(), which is reached solely from the 4"
+// (non-BOARD_PANEL_1024X600) branch - and that panel is square, so logical ==
+// physical in every rotation. On the 1024x600 boards the nav RAIL replaces the
+// floating arrows entirely and these macros are dead; they still expand to
+// landscape-shaped numbers there (1024/6 = 170, 600/4 = 150), which would be
+// wrong for a 600x1024 logical screen. Anything new that needs "a sixth of the
+// screen" must use uiScreenW()/uiScreenH() from Theme.h instead of these.
+#define UI_NAV_BTN_W     (UI_SCREEN_W / 6)    // 80px – click zone width  (4" only)
+#define UI_NAV_BTN_H     (UI_SCREEN_H / 4)    // 120px – click zone height (4" only)
 #define UI_NAV_BTN_BG_OPA        60            // Background opacity (0=invisible, 255=full)
 #define UI_NAV_BTN_BG_OPA_PRESS 130            // Opacity when pressed
 #define UI_NAV_BTN_ARROW_OPA    160            // Arrow opacity
@@ -49,13 +65,13 @@
 // ENGINE (Engine Screen)
 // ══════════════════════════════════════════════════════════════
 #define UI_ENGINE_ARC_SIZE   340     // RPM arc diameter (px)
-#define UI_ENGINE_ARC_Y        4     // Y position of the arc from the top edge
+#define UI_ENGINE_ARC_Y      UI_S(4)    // Y position of the arc from the top edge
 #define UI_ENGINE_ARC_START  135     // Start angle (°)
 #define UI_ENGINE_ARC_END    405     // End angle (°) → 270° sweep
 #define UI_ENGINE_ARC_W       26     // Arc thickness (px)
-#define UI_ENGINE_RPM_Y      140     // Y position of RPM number
-#define UI_ENGINE_RPM_UNIT_Y 192     // Y position of "RPM" unit
-#define UI_ENGINE_STATUS_Y   215     // Y position of status label
+#define UI_ENGINE_RPM_Y      UI_S(140)  // Y position of RPM number
+#define UI_ENGINE_RPM_UNIT_Y UI_S(192)  // Y position of "RPM" unit
+#define UI_ENGINE_STATUS_Y   UI_S(215)  // Y position of status label
 #define UI_ENGINE_CARD_H      72     // Info card height
 #define UI_ENGINE_CARD_GAP     6     // Gap between cards
 #define UI_ENGINE_ALARM_COOL  95     // Coolant alarm threshold (°C)
@@ -85,30 +101,30 @@
 #define UI_RUDDER_RADIUS     0.88f   // Arc radius = CS * RADIUS
 #define UI_RUDDER_TRACK_W     42     // Arc thickness (px)
 #define UI_RUDDER_MAX_ANG    40.0f   // Maximum rudder deflection (°)
-#define UI_RUDDER_ANGLE_Y   -110     // Y offset of angle number from bottom edge
-#define UI_RUDDER_DIR_Y      -60     // Y offset of direction text from bottom edge
+#define UI_RUDDER_ANGLE_Y   UI_S(-110)  // Y offset of angle number from bottom edge
+#define UI_RUDDER_DIR_Y     UI_S(-60)   // Y offset of direction text from bottom edge
 #define UI_RUDDER_PORT_OPA    60     // Port zone tint opacity
 #define UI_RUDDER_STB_OPA     60     // Starboard zone tint opacity
 
 // ══════════════════════════════════════════════════════════════
 // AUTOPILOT (Autopilot Screen)
 // ══════════════════════════════════════════════════════════════
-#define UI_AP_COMPASS_H      170     // Compass canvas height
-#define UI_AP_CAPTION_Y      175     // "Set Heading" Label Y
-#define UI_AP_TARGET_Y       196     // Target course number Y
+#define UI_AP_COMPASS_H      UI_S(170)  // Compass canvas height (also sizes the canvas buffer)
+#define UI_AP_CAPTION_Y      UI_S(175)  // "Set Heading" Label Y
+#define UI_AP_TARGET_Y       UI_S(196)  // Target course number Y
 #define UI_AP_MODE_W         140     // Mode box width
 #define UI_AP_MODE_H          50     // Mode box height
-#define UI_AP_MODE_X           8     // Mode box X (left)
-#define UI_AP_MODE_Y         182     // Mode box Y
+#define UI_AP_MODE_X         UI_S(8)    // Mode box X (left)
+#define UI_AP_MODE_Y         UI_S(182)  // Mode box Y
 #define UI_AP_MODE_RADIUS      6     // Mode box corner radius
 #define UI_AP_MODE_BORDER_W    2     // Mode box border width
 // Cards + deviation bar fill the lower area: previously the content ended at
 // y=381 and left 99 px of dead space down to the edge.
-#define UI_AP_CARDS_Y        272     // Info cards Y position
+#define UI_AP_CARDS_Y        UI_S(272)  // Info cards Y position
 #define UI_AP_CARD_W         140     // Info card width
 #define UI_AP_CARD_H         118     // Info card height
 #define UI_AP_CARD_GAP         8     // Info card gap
-#define UI_AP_DEVBAR_Y       410     // Deviation indicator Y
+#define UI_AP_DEVBAR_Y       UI_S(410)  // Deviation indicator Y
 #define UI_AP_DEVBAR_H        26     // Deviation indicator height
 // Compass arc geometry. Must match the canvas height UI_AP_COMPASS_H (170):
 // the old values (pivot 700 / R 600 / ±50°) let the arc run out of the canvas
@@ -116,23 +132,27 @@
 // they were half cut off. Now flatter: at R=480, ±30° covers exactly half the
 // width (480·sin30 = 240), and across the full width the arc drops only
 // 64 px, so band, tick marks AND numbers stay inside the canvas.
+// (Numbers are on the 480 design grid; radii, canvas height AND canvas width
+// all scale by the same UI_SF on the 7B, so the relationship holds unchanged.)
 #define UI_AP_SPAN_DEG       30.0f   // Compass arc visible range (±°)
-#define UI_AP_PIVOT_Y       505.0f   // Compass arc pivot Y (below canvas)
-#define UI_AP_R_OUTER       480.0f   // Compass arc outer radius
-#define UI_AP_R_INNER       438.0f   // Compass arc inner radius
+#define UI_AP_PIVOT_Y       (505.0f * UI_SF)   // Compass arc pivot Y (below canvas)
+#define UI_AP_R_OUTER       (480.0f * UI_SF)   // Compass arc outer radius
+#define UI_AP_R_INNER       (438.0f * UI_SF)   // Compass arc inner radius
 #define UI_AP_DEV_THRESH_HI  10.0f   // Course deviation: orange (°)
 #define UI_AP_DEV_THRESH_LO   3.0f   // Course deviation: yellow → green (°)
 
 // ══════════════════════════════════════════════════════════════
 // WIND & TRIM (Wind Screen)
 // ══════════════════════════════════════════════════════════════
-#define UI_WIND_CX          240.0f   // Instrument centre X (centred; polar bar now at the bottom)
-#define UI_WIND_CY          226.0f   // Instrument centre Y (scaled to the max, space at top/bottom used)
-#define UI_WIND_R_OUTER     202.0f   // Outer rim radius (maximized)
-#define UI_WIND_R_ZONE_O    183.0f   // Zone arc outer radius
-#define UI_WIND_R_ZONE_I    155.0f   // Zone arc inner radius
-#define UI_WIND_R_INNER     148.0f   // Inner circle radius
-#define UI_WIND_BOAT_SCALE   3.8f    // Boat scaling (larger; up to just short of compass rose/heading)
+// Values are on the 480 design grid, scaled by UI_SF (float ×1.25 on the 7B,
+// ×1.0 elsewhere) so centre, radii and the WindScreen.h tick radii stay aligned.
+#define UI_WIND_CX          (240.0f * UI_SF)   // Instrument centre X (centred; polar bar now at the bottom)
+#define UI_WIND_CY          (226.0f * UI_SF)   // Instrument centre Y (scaled to the max, space at top/bottom used)
+#define UI_WIND_R_OUTER     (202.0f * UI_SF)   // Outer rim radius (maximized)
+#define UI_WIND_R_ZONE_O    (183.0f * UI_SF)   // Zone arc outer radius
+#define UI_WIND_R_ZONE_I    (155.0f * UI_SF)   // Zone arc inner radius
+#define UI_WIND_R_INNER     (148.0f * UI_SF)   // Inner circle radius
+#define UI_WIND_BOAT_SCALE  (3.8f * UI_SF)     // Boat scaling (larger; up to just short of compass rose/heading)
 // Wind zone colours
 
 // ══════════════════════════════════════════════════════════════

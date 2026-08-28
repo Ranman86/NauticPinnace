@@ -46,8 +46,18 @@ public:
     int  currentIndex() const { return _cur; }
     const char *currentTitle() const;
 
+#if defined(BOARD_PANEL_1024X600)
+    // Worst canvas paint per screen since boot, one line, sorted. See the
+    // definition; the 4" board has no such counters and no such method.
+    void reportScreenPaint() const;
+#endif
+
     // ---- Screen catalog / navigation config -------------------------------
     int  screenTotal() const { return MAX_SCREENS; }   // iteration bound for the catalog
+    // Active navigation order, read-only - the 7B home overlay renders one
+    // launcher tile per entry.
+    int  navCount() const { return _navLen; }
+    int  navScreenId(int pos) const { return (pos >= 0 && pos < _navLen) ? _navOrder[pos] : -1; }
     bool screenPresent(int id) const;                  // fixed (0..7) or active grid slot
     const char *screenName(int id) const;              // German label for WebUI
     const char *screenType(int id) const;              // "wind".."grid" – picks WebUI editor
@@ -63,6 +73,9 @@ public:
     // Open the on-screen config overlay on the next update() tick (set from the
     // top hot-zone gesture cb; deferred so we open outside lv_timer_handler).
     void requestOpenConfig() { _openConfigPending = true; _forceUpdate = true; }
+    // Open the 7B home/launcher overlay on the next update() tick (set by the
+    // rail's home button; deferred like the config overlay above).
+    void requestOpenHome() { _openHomePending = true; _forceUpdate = true; }
     // Show a full-screen message and reboot a few ticks later (so the message is
     // visible first). Avoids reentrant lv_refr_now()/blocking delay in an event cb.
     void requestReboot(const char *msg);
@@ -79,6 +92,7 @@ private:
     bool        _polarReloadPending = false;
     bool        _themeReloadPending = false;
     bool        _openConfigPending  = false;
+    bool        _openHomePending    = false;
     bool        _rebootPending = false;
     uint32_t    _rebootAtMs    = 0;
     void applyScreenConfig();          // rebuild _navOrder (call from LVGL-safe ctx)
@@ -88,6 +102,12 @@ private:
     lv_obj_t   *_demoBanner  = nullptr;
     uint8_t     _demoBlink   = 0;
     bool        _forceUpdate = false;
+
+    // Everything the instrument view costs is suspended while a full-screen
+    // overlay covers it. _modalWasOpen spots the closing edge so the view can
+    // be brought up to date in one go instead of reappearing stale.
+    bool        _modalWasOpen  = false;
+    uint32_t    _lastSideBarMs = 0;
 
     // Global anchor-drag alarm (evaluated every tick so it fires on ANY screen).
     lv_obj_t   *_alarmBanner = nullptr;

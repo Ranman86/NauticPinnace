@@ -1,4 +1,7 @@
 #include "ConfigOverlay.h"
+#if defined(BOARD_PANEL_1024X600)
+#include "../BoardConfig.h"   // board macros (the geometry comes from Theme.h)
+#endif
 #include "LicenseOverlay.h"
 #include "Theme.h"
 #include "DisplayManager.h"
@@ -83,9 +86,66 @@ static lv_obj_t *mkSwitch(lv_obj_t *parent, int x, int y, bool on, lv_event_cb_t
 void ConfigOverlay::open() {
     if (_open) return;
     _open = true;
+    // (An lv_mem_buf_free_all() lived here briefly - removed: the boot now
+    //  PRIMES the draw-buffer caches instead, see main.cpp. Freeing them
+    //  would re-expose renders to pool fragmentation.)
+
+#if defined(BOARD_PANEL_1024X600)
+    // Full LOGICAL screen, two columns in landscape: WLAN + theme +
+    // language/licences on the left, hotspot + QR on the right. The sections
+    // keep their proven 480-wide interior layout; only the section ORIGINS
+    // move per board and per orientation. A full-size root also absorbs every
+    // touch, so the rail and sidebar underneath are unreachable without the
+    // old dim shield.
+    //
+    // Size from uiScreenW()/uiScreenH(), never from LCD_WIDTH/LCD_HEIGHT: the
+    // latter are the PHYSICAL panel and stay 1024x600 even at display.rotation
+    // 90/270, where LVGL lays out in 600x1024 and clips the root to it - the
+    // whole right column and the close button would be off-screen while the
+    // bottom of the display kept showing (and touching) the screen below. In
+    // landscape the two are identical, so this is a no-op there.
+    const bool port = uiPortrait();
+    const int W = uiScreenW(), H = uiScreenH();
+    const int CX1 = 20,  CY_WIFI = 46, CY_THEME = 280, CY_ROW = 500;
+    // Portrait has no room beside the left column (its widest element, the
+    // 454 px connect button, already reaches x=474 of 600) but 424 px of
+    // spare height, so the second column is STACKED underneath instead: the
+    // language/licence row ends at CY_ROW+38 = 538.
+    const int CX2   = port ?  20 : 534;
+    const int CY_AP = port ? 560 :  46;
+    // QR beside the hotspot text (20 + 312 button width + 20 = 352, ending at
+    // 544 of 600) and lifted clear of the keyboard, which covers the bottom
+    // 280 px from y=744 while an SSID is being typed.
+    const int QR_X = port ? 352 : 674, QR_Y = port ? 548 : 230;
+    const int QR_CARD = 192, QR_PX = 176;
+    // The 600-grid port scaled every font by 1.25 but left these element widths
+    // on their 480-grid values, so two controls have been overflowing ever
+    // since - in LANDSCAPE as much as in portrait: the WiFi label ran under its
+    // own switch, and the licences button (whose caption is FONT_MED, not
+    // FONT_SMALL) clipped its text at both ends. Both get honest room here.
+    // The listen-only control loses its cramped inline spot next to the
+    // language buttons and becomes a row of its own in the empty band between
+    // the theme buttons and the language row - the width simply is not there
+    // once the button is wide enough to read.
+    const int WIFI_LBL_X = CX1 + 326;   // 82 px clear of the switch: fits "WLAN"
+    const int LIC_W      = 280;         // measured need is ~230 px, plus margin
+    const int RX_LBL_X   = CX1,        RX_LBL_Y = CY_THEME + 110;
+    const int RX_SW_X    = CX1 + 130,  RX_SW_Y  = CY_THEME + 106;
+#else
+    const int W = SCREEN_W, H = SCREEN_H;
+    const int CX1 = 14, CY_WIFI = 46, CY_THEME = 358, CY_ROW = 434;
+    const int CX2 = 14, CY_AP   = 216;
+    const int QR_X = 338, QR_Y = 220, QR_CARD = 128, QR_PX = 112;
+    // Unchanged 480-grid values: this is the released 4-inch product, whose
+    // fonts were never scaled, so nothing overflows here and nothing may move.
+    const int WIFI_LBL_X = CX1 + 372;
+    const int LIC_W      = 204;
+    const int RX_LBL_X   = CX1 + 326,  RX_LBL_Y = CY_ROW + 10;
+    const int RX_SW_X    = CX1 + 406,  RX_SW_Y  = CY_ROW + 6;
+#endif
 
     _root = lv_obj_create(lv_layer_top());
-    lv_obj_set_size(_root, SCREEN_W, SCREEN_H);
+    lv_obj_set_size(_root, W, H);
     lv_obj_set_pos(_root, 0, 0);
     lv_obj_set_style_bg_color(_root, CLR_BG, 0);
     lv_obj_set_style_bg_opa(_root, LV_OPA_COVER, 0);
@@ -98,7 +158,7 @@ void ConfigOverlay::open() {
 
     // ---- header ----
     mkLabel(_root, T(STR_CFG_TITLE), 14, 12, FONT_LARGE, CLR_TEXT);
-    mkButton(_root, LV_SYMBOL_CLOSE, SCREEN_W - 12 - 44, 8, 44, 36, CLR_SURFACE, CLR_TEXT, cbClose);
+    mkButton(_root, LV_SYMBOL_CLOSE, W - 12 - 44, 8, 44, 36, CLR_SURFACE, CLR_TEXT, cbClose);
 
     // ---- WLAN section ----
     // Section title on the left; the WLAN radio switch sits on the otherwise-
@@ -106,9 +166,9 @@ void ConfigOverlay::open() {
     // input fields below. A single status line goes underneath.
     // (A Bluetooth switch used to live here — removed: the firmware has no BT
     // code, so it could only reserve memory for nothing.)
-    mkLabel(_root, T(STR_CFG_WIFI_SECTION), 14, 46, FONT_MED, CLR_ACCENT);
-    mkLabel(_root, T(STR_CFG_WIFI_SHORT), 386, 48, FONT_SMALL, CLR_TEXT);
-    mkSwitch(_root, 422, 44, appConfig.cfg.wifiEnabled, cbWifiToggle);
+    mkLabel(_root, T(STR_CFG_WIFI_SECTION), CX1, CY_WIFI, FONT_MED, CLR_ACCENT);
+    mkLabel(_root, T(STR_CFG_WIFI_SHORT), WIFI_LBL_X, CY_WIFI + 2, FONT_SMALL, CLR_TEXT);
+    mkSwitch(_root, CX1 + 408, CY_WIFI - 2, appConfig.cfg.wifiEnabled, cbWifiToggle);
 
     // Status line with the address at which the web interface is reachable.
     // The state is derived from the RADIO, not from cfg.apMode: if joining the
@@ -142,36 +202,36 @@ void ConfigOverlay::open() {
                      WiFi.localIP().toString().c_str());
 #endif
     }
-    mkLabel(_root, st, 14, 70, FONT_SMALL, CLR_TEXT_DIM);
+    mkLabel(_root, st, CX1, CY_WIFI + 24, FONT_SMALL, CLR_TEXT_DIM);
 
-    mkLabel(_root, "SSID", 14, 98, FONT_SMALL, CLR_TEXT_DIM);
-    _taSsid = mkField(_root, appConfig.cfg.wifiSsid, T(STR_CFG_NETWORK_NAME), 92, 88, 376, 38, cbTaClicked);
+    mkLabel(_root, "SSID", CX1, CY_WIFI + 52, FONT_SMALL, CLR_TEXT_DIM);
+    _taSsid = mkField(_root, appConfig.cfg.wifiSsid, T(STR_CFG_NETWORK_NAME), CX1 + 78, CY_WIFI + 42, 376, 38, cbTaClicked);
 
-    mkLabel(_root, T(STR_CFG_PASSWORD_SHORT), 14, 140, FONT_SMALL, CLR_TEXT_DIM);
-    _taPass = mkField(_root, appConfig.cfg.wifiPassword, T(STR_CFG_PASSWORD), 92, 130, 376, 38, cbTaClicked);
+    mkLabel(_root, T(STR_CFG_PASSWORD_SHORT), CX1, CY_WIFI + 94, FONT_SMALL, CLR_TEXT_DIM);
+    _taPass = mkField(_root, appConfig.cfg.wifiPassword, T(STR_CFG_PASSWORD), CX1 + 78, CY_WIFI + 84, 376, 38, cbTaClicked);
 
-    mkButton(_root, T(STR_CFG_CONNECT_REBOOT), 14, 172, 454, 38, CLR_ACCENT, CLR_ON_ACCENT, cbConnect);
+    mkButton(_root, T(STR_CFG_CONNECT_REBOOT), CX1, CY_WIFI + 126, 454, 38, CLR_ACCENT, CLR_ON_ACCENT, cbConnect);
 
     // ---- internal hotspot section (auto-connect QR on the right) ----
-    mkLabel(_root, T(STR_CFG_HOTSPOT_SECTION), 14, 216, FONT_MED, CLR_ACCENT);
+    mkLabel(_root, T(STR_CFG_HOTSPOT_SECTION), CX2, CY_AP, FONT_MED, CLR_ACCENT);
     {
         String apS = wifiApSsid();
         String apP = wifiApPassword();
         char nm[64], pw[64];
         snprintf(nm, sizeof(nm), "Name:  %s", apS.c_str());
         snprintf(pw, sizeof(pw), "Pass:  %s", apP.c_str());
-        mkLabel(_root, nm, 14, 242, FONT_SMALL, CLR_TEXT);
-        mkLabel(_root, pw, 14, 264, FONT_SMALL, CLR_TEXT);
-        mkLabel(_root, T(STR_CFG_SCAN_QR), 14, 292, FONT_SMALL, CLR_TEXT_DIM);
-        mkButton(_root, T(STR_CFG_HOTSPOT_REBOOT), 14, 316, 312, 38, CLR_SURFACE, CLR_TEXT, cbHotspot);
+        mkLabel(_root, nm, CX2, CY_AP + 26, FONT_SMALL, CLR_TEXT);
+        mkLabel(_root, pw, CX2, CY_AP + 48, FONT_SMALL, CLR_TEXT);
+        mkLabel(_root, T(STR_CFG_SCAN_QR), CX2, CY_AP + 76, FONT_SMALL, CLR_TEXT_DIM);
+        mkButton(_root, T(STR_CFG_HOTSPOT_REBOOT), CX2, CY_AP + 100, 312, 38, CLR_SURFACE, CLR_TEXT, cbHotspot);
 
 #if LV_USE_QRCODE
         // WiFi auto-connect QR: "WIFI:T:WPA;S:<ssid>;P:<pw>;;". Fixed black-on-white
         // on a white card (quiet-zone border) so any phone camera scans it in either
         // theme. Encodes the hotspot's credentials (random per-device password).
         lv_obj_t *qrCard = lv_obj_create(_root);
-        lv_obj_set_size(qrCard, 128, 128);
-        lv_obj_set_pos(qrCard, 338, 220);
+        lv_obj_set_size(qrCard, QR_CARD, QR_CARD);
+        lv_obj_set_pos(qrCard, QR_X, QR_Y);
         // DELIBERATELY fixed: the quiet zone of a QR code must stay white,
         // otherwise no phone camera will recognise it. Also applies in night mode.
         lv_obj_set_style_bg_color(qrCard, lv_color_white(), 0);
@@ -180,7 +240,7 @@ void ConfigOverlay::open() {
         lv_obj_set_style_radius(qrCard, 4, 0);
         lv_obj_set_style_pad_all(qrCard, 0, 0);
         lv_obj_clear_flag(qrCard, LV_OBJ_FLAG_SCROLLABLE);
-        lv_obj_t *qr = lv_qrcode_create(qrCard, 112, lv_color_black(), lv_color_white());
+        lv_obj_t *qr = lv_qrcode_create(qrCard, QR_PX, lv_color_black(), lv_color_white());
         lv_obj_center(qr);
         String w = String("WIFI:T:WPA;S:") + apS + ";P:" + apP + ";;";
         lv_qrcode_update(qr, w.c_str(), w.length());
@@ -188,37 +248,42 @@ void ConfigOverlay::open() {
     }
 
     // ---- display (theme) section: Auto / Light / Dark / Night ----
-    // Four buttons in the same span 14…466: b=107, gap 8.
-    mkLabel(_root, T(STR_CFG_DISPLAY_SECTION), 14, 358, FONT_MED, CLR_ACCENT);
+    // Four buttons in the same span the WLAN block uses, starting at CX1:
+    // b=107, gap 8, so the row ends at CX1+3*115+107 = CX1+452 (472 on the
+    // 1024x600 boards in either orientation, 466 on the 4").
+    mkLabel(_root, T(STR_CFG_DISPLAY_SECTION), CX1, CY_THEME, FONT_MED, CLR_ACCENT);
     bool autoT = appConfig.cfg.themeAuto;
     bool light = !autoT && (strcmp(appConfig.cfg.themeActive, "light") == 0);
     bool night = !autoT && (strcmp(appConfig.cfg.themeActive, "night") == 0);
     bool dark  = !autoT && !light && !night;      // fallback, no longer a catch-all
     const int bw = 107, gap = 8;
-    mkButton(_root, T(STR_CFG_THEME_AUTO), 14, 382, bw, 42,
+    mkButton(_root, T(STR_CFG_THEME_AUTO), CX1, CY_THEME + 24, bw, 42,
              autoT ? CLR_ACCENT : CLR_SURFACE, autoT ? CLR_ON_ACCENT : CLR_TEXT, cbThemeAuto);
-    mkButton(_root, T(STR_CFG_THEME_LIGHT), 14 + (bw + gap), 382, bw, 42,
+    mkButton(_root, T(STR_CFG_THEME_LIGHT), CX1 + (bw + gap), CY_THEME + 24, bw, 42,
              light ? CLR_ACCENT : CLR_SURFACE, light ? CLR_ON_ACCENT : CLR_TEXT, cbThemeLight);
-    mkButton(_root, T(STR_CFG_THEME_DARK), 14 + 2 * (bw + gap), 382, bw, 42,
+    mkButton(_root, T(STR_CFG_THEME_DARK), CX1 + 2 * (bw + gap), CY_THEME + 24, bw, 42,
              dark ? CLR_ACCENT : CLR_SURFACE, dark ? CLR_ON_ACCENT : CLR_TEXT, cbThemeDark);
-    mkButton(_root, T(STR_CFG_THEME_NIGHT), 14 + 3 * (bw + gap), 382, bw, 42,
+    mkButton(_root, T(STR_CFG_THEME_NIGHT), CX1 + 3 * (bw + gap), CY_THEME + 24, bw, 42,
              night ? CLR_ACCENT : CLR_SURFACE, night ? CLR_ON_ACCENT : CLR_TEXT, cbThemeNight);
 
     // ---- language + licences share the last row ----
-    // Only 480 px tall: there is no room for a row of their own. DE/EN are the
-    // same in both languages, so they need no translation themselves.
+    // On the 4" board, only 480 px tall, there is no room for a row of their
+    // own. DE/EN are the same in both languages, so they need no translation
+    // themselves.
     const bool isEn = (i18nLang() == Lang::EN);
-    mkButton(_root, "DE", 14, 434, 52, 38,
+    mkButton(_root, "DE", CX1, CY_ROW, 52, 38,
              isEn ? CLR_SURFACE : CLR_ACCENT, isEn ? CLR_TEXT : CLR_ON_ACCENT, cbLangDe);
-    mkButton(_root, "EN", 70, 434, 52, 38,
+    mkButton(_root, "EN", CX1 + 56, CY_ROW, 52, 38,
              isEn ? CLR_ACCENT : CLR_SURFACE, isEn ? CLR_ON_ACCENT : CLR_TEXT, cbLangEn);
-    mkButton(_root, T(STR_CFG_LICENSES_BTN), 128, 434, 204, 38,
+    mkButton(_root, T(STR_CFG_LICENSES_BTN), CX1 + 114, CY_ROW, LIC_W, 38,
              CLR_SURFACE, CLR_TEXT, cbLicenses);
     // Listen-only: N2km_ListenOnly — the device then sends nothing onto the bus
     // (no address claim, no heartbeat, no media control). For other people's
     // boats, charter, workshop appointments. Takes effect after reboot.
-    mkLabel(_root, T(STR_CFG_N2K_LISTEN), 340, 444, FONT_SMALL, CLR_TEXT);
-    mkSwitch(_root, 420, 440, appConfig.cfg.n2kListenOnly, cbN2kListenToggle);
+    mkLabel(_root, T(STR_CFG_N2K_LISTEN), RX_LBL_X, RX_LBL_Y, FONT_SMALL, CLR_TEXT);
+    mkSwitch(_root, RX_SW_X, RX_SW_Y, appConfig.cfg.n2kListenOnly, cbN2kListenToggle);
+
+    uiDisableLabelScroll(_root);   // see the note in Theme.h
 }
 
 // Language change: apply live, like the theme. requestThemeReload() rebuilds
@@ -248,7 +313,16 @@ void ConfigOverlay::showKeyboard(lv_obj_t *ta) {
     if (!_root) return;
     if (!_kb) {
         _kb = lv_keyboard_create(_root);
+#if defined(BOARD_PANEL_1024X600)
+        // Full screen width: at 1024x600 the keys grow to real finger size.
+        // The LOGICAL width, so a rotated panel gets a 600 px keyboard instead
+        // of a 1024 px one that hangs over both edges and loses its outer key
+        // columns - backspace and enter among them - to the clip. The 280 px
+        // height is fine in portrait too (280 of 1024).
+        lv_obj_set_size(_kb, uiScreenW(), 280);
+#else
         lv_obj_set_size(_kb, SCREEN_W, 200);
+#endif
         lv_obj_align(_kb, LV_ALIGN_BOTTOM_MID, 0, 0);
         lv_obj_add_event_cb(_kb, cbKbEvent, LV_EVENT_READY, nullptr);
         lv_obj_add_event_cb(_kb, cbKbEvent, LV_EVENT_CANCEL, nullptr);

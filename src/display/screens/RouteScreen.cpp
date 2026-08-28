@@ -6,9 +6,9 @@
 
 void RouteScreen::mkTile(lv_obj_t *parent, int x, int y, const char *label, lv_obj_t *&valOut) {
     lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_set_size(c, 228, 104);
+    lv_obj_set_size(c, UI_S(228), UI_S(104));
     lv_obj_set_pos(c, x, y);
-    lv_obj_set_style_radius(c, 8, 0);
+    lv_obj_set_style_radius(c, UI_S(8), 0);
     lv_obj_set_style_border_width(c, 1, 0);
     lv_obj_set_style_border_color(c, CLR_BORDER, 0);
     lv_obj_set_style_bg_color(c, CLR_SURFACE, 0);
@@ -19,12 +19,12 @@ void RouteScreen::mkTile(lv_obj_t *parent, int x, int y, const char *label, lv_o
     lv_label_set_text(l, label);
     lv_obj_set_style_text_font(l, FONT_SMALL, 0);
     lv_obj_set_style_text_color(l, CLR_TEXT_DIM, 0);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, UI_S(10));
     valOut = lv_label_create(c);
     lv_label_set_text(valOut, "--");
     lv_obj_set_style_text_font(valOut, FONT_LARGE, 0);
     lv_obj_set_style_text_color(valOut, CLR_TEXT, 0);
-    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, UI_S(10));
 }
 
 void RouteScreen::create(lv_obj_t *parent) {
@@ -41,45 +41,45 @@ void RouteScreen::create(lv_obj_t *parent) {
     lv_label_set_text(_wp, T(STR_ROUTE_NO_WP));
     lv_obj_set_style_text_font(_wp, FONT_SMALL, 0);
     lv_obj_set_style_text_color(_wp, CLR_ACCENT, 0);
-    lv_obj_align(_wp, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(_wp, LV_ALIGN_TOP_MID, 0, UI_S(14));
 
     _dtw = lv_label_create(container);
     lv_label_set_text(_dtw, "--");
     lv_obj_set_style_text_font(_dtw, FONT_XL, 0);
     lv_obj_set_style_text_color(_dtw, CLR_TEXT, 0);
-    lv_obj_align(_dtw, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_align(_dtw, LV_ALIGN_TOP_MID, 0, UI_S(34));
 
     // CDI: cross-track error, filled from the centre toward the boat's side.
     _bar = lv_bar_create(container);
     lv_bar_set_mode(_bar, LV_BAR_MODE_SYMMETRICAL);
     lv_bar_set_range(_bar, -100, 100);
-    lv_obj_set_size(_bar, 400, 18);
-    lv_obj_align(_bar, LV_ALIGN_TOP_MID, 0, 118);
+    lv_obj_set_size(_bar, UI_S(400), UI_S(18));
+    lv_obj_align(_bar, LV_ALIGN_TOP_MID, 0, UI_S(118));
     lv_obj_set_style_bg_color(_bar, CLR_SURFACE, 0);
-    lv_obj_set_style_radius(_bar, 6, 0);
-    lv_obj_set_style_radius(_bar, 6, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(_bar, UI_S(6), 0);
+    lv_obj_set_style_radius(_bar, UI_S(6), LV_PART_INDICATOR);
     lv_obj_set_style_bg_color(_bar, CLR_ACCENT, LV_PART_INDICATOR);
 
     lv_obj_t *bbL = lv_label_create(container);
     lv_label_set_text(bbL, T(STR_ROUTE_PORT));
     lv_obj_set_style_text_font(bbL, FONT_SMALL, 0);
     lv_obj_set_style_text_color(bbL, CLR_TEXT_DIM, 0);
-    lv_obj_set_pos(bbL, 40, 142);
+    lv_obj_set_pos(bbL, UI_S(40), UI_S(142));
     lv_obj_t *stbL = lv_label_create(container);
     lv_label_set_text(stbL, T(STR_ROUTE_STBD));
     lv_obj_set_style_text_font(stbL, FONT_SMALL, 0);
     lv_obj_set_style_text_color(stbL, CLR_TEXT_DIM, 0);
-    lv_obj_align(stbL, LV_ALIGN_TOP_RIGHT, -40, 142);
+    lv_obj_align(stbL, LV_ALIGN_TOP_RIGHT, UI_S(-40), UI_S(142));
 
     _xteL = lv_label_create(container);
     lv_label_set_text(_xteL, "");
     lv_obj_set_style_text_font(_xteL, FONT_MED, 0);
-    lv_obj_align(_xteL, LV_ALIGN_TOP_MID, 0, 160);
+    lv_obj_align(_xteL, LV_ALIGN_TOP_MID, 0, UI_S(160));
 
-    mkTile(container, 11,  210, T(STR_ROUTE_BEARING), _t[0]);
-    mkTile(container, 241, 210, T(STR_ROUTE_TTG),     _t[1]);
-    mkTile(container, 11,  322, "VMC",                _t[2]);   // abbreviation, both languages
-    mkTile(container, 241, 322, T(STR_ROUTE_XTE),     _t[3]);
+    mkTile(container, UI_S(11),  UI_S(210), T(STR_ROUTE_BEARING), _t[0]);
+    mkTile(container, UI_S(241), UI_S(210), T(STR_ROUTE_TTG),     _t[1]);
+    mkTile(container, UI_S(11),  UI_S(322), "VMC",                _t[2]);   // abbreviation, both languages
+    mkTile(container, UI_S(241), UI_S(322), T(STR_ROUTE_XTE),     _t[3]);
 }
 
 void RouteScreen::update() {

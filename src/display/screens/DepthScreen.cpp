@@ -7,6 +7,8 @@
 //   This replaces the old 48 px + pixel-doubling trick (which looked blocky).
 
 #include "DepthScreen.h"
+#include "RenderYield.h"
+#include "../../PsramArena.h"
 #include "../../config/Config.h"
 #include "../UiConfig.h"
 #include <string.h>
@@ -53,7 +55,7 @@ void DepthScreen::create(lv_obj_t *parent)
     lv_label_set_text(_lblAlarm, "");
     lv_obj_set_style_text_font(_lblAlarm, FONT_MED, 0);
     lv_obj_set_style_text_color(_lblAlarm, CLR_RED, 0);
-    lv_obj_align(_lblAlarm, LV_ALIGN_TOP_MID, 0, 136);
+    lv_obj_align(_lblAlarm, LV_ALIGN_TOP_MID, 0, UI_S(136));
 }
 
 // ── drawTopSection ─────────────────────────────────────────────────────────────
@@ -64,7 +66,7 @@ void DepthScreen::drawTopSection(const char *depthStr, const char *unitStr,
 {
     if (!_cbuf || !_canvas) return;
 
-    const int W = CW, TOP = 160;
+    const int W = CW, TOP = UI_S(160);
     const lv_color_t BG = (uiTheme.depthBg);
 
     // ── Fill top header area ───────────────────────────────────────────────
@@ -80,7 +82,7 @@ void DepthScreen::drawTopSection(const char *depthStr, const char *unitStr,
     }
 
     // ── "DEPTH" caption on main canvas ────────────────────────────────────
-    ctext(_canvas, 0, 10, W, FONT_SMALL,
+    ctext(_canvas, 0, UI_S(10), W, FONT_SMALL,
           (uiTheme.depthHdr), T(STR_DEPTH_CAPTION),
           LV_TEXT_ALIGN_CENTER);
 
@@ -90,9 +92,10 @@ void DepthScreen::drawTopSection(const char *depthStr, const char *unitStr,
 
     lv_color_t textCol = alarm ? CLR_RED : (uiTheme.depthVal);
     // FONT_DEPTH (Montserrat-Medium 96 px): line_height ≈ 118, caps ~70 px.
-    // y=36 keeps the digits clear of the caption (~y28) and visually centred in
-    // the 160 px header without clipping the baseline against the separator.
-    ctext(_canvas, 0, 36, W, FONT_DEPTH, textCol,
+    // Base-480 coords (scaled via UI_S): y=36 keeps the digits clear of the
+    // caption (~y28) and visually centred in the 160 px (base) header without
+    // clipping the baseline against the separator.
+    ctext(_canvas, 0, UI_S(36), W, FONT_DEPTH, textCol,
           combined, LV_TEXT_ALIGN_CENTER);
 
     lv_obj_invalidate(_canvas);
@@ -105,7 +108,7 @@ void DepthScreen::drawWaterSection(const float *hist, int histIdx,
 {
     if (!_canvas || !_cbuf) return;
 
-    const int W = CW, TOP_Y = 160;
+    const int W = CW, TOP_Y = UI_S(160);
     const int H = (SCREEN_H - NAV_BAR_H) - TOP_Y;
     const int TOTAL = DataModel::DEPTH_HIST;
     int count = histFull ? TOTAL : histIdx;
@@ -118,7 +121,17 @@ void DepthScreen::drawWaterSection(const float *hist, int histIdx,
     maxM *= 1.20f;
     if (maxM < 2.0f) maxM = 2.0f;
 
-    static int profileY[480];
+    // Draw-time scratch, CPU-only on the UI task - PSRAM arena instead of a
+    // static DRAM array (1.9 KB of internal RAM freed).
+    static int *profileY = (int *)PsramArena::alloc(CW * sizeof(int));
+    // No internal-RAM fallback array on purpose: it would sit in .bss on every
+    // board and every boot (2.4 KB on the 600 grid, 1.9 KB on the 480 one) to
+    // cover the single case where the arena is already exhausted - i.e. exactly
+    // when internal RAM is scarcest. Skip the profile instead. The header with
+    // the depth value is drawn by drawTopSection() before we get here and the
+    // canvas itself is arena-backed and already checked above, so the worst
+    // outcome is a missing echogram below the readout, not a crash.
+    if (!profileY) return;
     for (int x = 0; x < W; x++) {
         float d = 0.f;
         if (count > 0) {
@@ -162,7 +175,7 @@ void DepthScreen::drawWaterSection(const float *hist, int histIdx,
             }
             row[x] = c;
         }
-        if ((y & 7) == 7) vTaskDelay(pdMS_TO_TICKS(1));
+        if ((y & 7) == 7) renderYield();   // see RenderYield.h
     }
     lv_obj_invalidate(_canvas);
 
@@ -174,22 +187,29 @@ void DepthScreen::drawWaterSection(const float *hist, int histIdx,
         int yabs = TOP_Y + (int)(frac * (H - 1));
         lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
         ld.color = (uiTheme.depthGrid); ld.width = 1; ld.opa = 180;
-        lv_point_t pl[2] = {{0,(lv_coord_t)yabs},{18,(lv_coord_t)yabs}};
+        lv_point_t pl[2] = {{0,(lv_coord_t)yabs},{(lv_coord_t)UI_S(18),(lv_coord_t)yabs}};
         lv_canvas_draw_line(_canvas, pl, 2, &ld);
         char tbuf[10]; snprintf(tbuf, sizeof(tbuf), "%.1f", frac * maxM);
         td.color = (uiTheme.depthScale);
-        lv_canvas_draw_text(_canvas, 2, yabs - 7, 34, &td, tbuf);
+        lv_canvas_draw_text(_canvas, UI_S(2), yabs - UI_S(7), UI_S(34), &td, tbuf);
     }
 
     // NOW marker
     {
         lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
         ld.color = (uiTheme.depthNow); ld.width = 2; ld.opa = 150;
-        lv_point_t pn[2] = {{(lv_coord_t)(W-3),(lv_coord_t)TOP_Y},
-                              {(lv_coord_t)(W-3),(lv_coord_t)(TOP_Y+H-1)}};
+        lv_point_t pn[2] = {{(lv_coord_t)(W-UI_S(3)),(lv_coord_t)TOP_Y},
+                              {(lv_coord_t)(W-UI_S(3)),(lv_coord_t)(TOP_Y+H-1)}};
         lv_canvas_draw_line(_canvas, pn, 2, &ld);
         td.color = (uiTheme.depthNow);
-        lv_canvas_draw_text(_canvas, W-28, TOP_Y+3, 26, &td, T(STR_DEPTH_NOW));
+        // 7B: FONT_TINY grew 12 -> 14; "NOW"/"JETZT" no longer fits the
+        // proportional UI_S(26)=33 box and wrapped. Wider box, 7B only -
+        // the 4" keeps its released 26 px box untouched.
+#if defined(BOARD_PANEL_1024X600)
+        lv_canvas_draw_text(_canvas, W-52, TOP_Y+UI_S(3), 48, &td, T(STR_DEPTH_NOW));
+#else
+        lv_canvas_draw_text(_canvas, W-28, TOP_Y+UI_S(3), 26, &td, T(STR_DEPTH_NOW));
+#endif
     }
 
     // Current depth guide line
@@ -197,9 +217,9 @@ void DepthScreen::drawWaterSection(const float *hist, int histIdx,
         int yc = TOP_Y + (int)(currentDepth / maxM * H);
         lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
         ld.color = CLR_TEXT; ld.width = 1; ld.opa = 70;
-        for (int xx = 24; xx < W - 30; xx += 10) {
+        for (int xx = UI_S(24); xx < W - UI_S(30); xx += UI_S(10)) {
             lv_point_t pd[2] = {{(lv_coord_t)xx,(lv_coord_t)yc},
-                                  {(lv_coord_t)(xx+5),(lv_coord_t)yc}};
+                                  {(lv_coord_t)(xx+UI_S(5)),(lv_coord_t)yc}};
             lv_canvas_draw_line(_canvas, pd, 2, &ld);
         }
     }
@@ -249,7 +269,8 @@ void DepthScreen::update()
 
     if (!_canvas || !_cbuf) return;
 
-    // Yield-safe full canvas clear
+    // Full canvas clear in 8-row chunks, offering a yield after each;
+    // renderYield() decides which of them cost a tick (see RenderYield.h).
     {
         const int totalRows = SCREEN_H - NAV_BAR_H;
         lv_color_t bg = CLR_BG, *p = _cbuf;
@@ -257,7 +278,7 @@ void DepthScreen::update()
             int rows = ((totalRows-r) < 8) ? (totalRows-r) : 8;
             lv_color_t *end = p + (size_t)rows * CW;
             while (p < end) *p++ = bg;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();
         }
         lv_obj_invalidate(_canvas);
     }

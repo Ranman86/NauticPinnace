@@ -6,9 +6,9 @@
 
 void WeatherScreen::makeTile(lv_obj_t *parent, int x, const char *label, lv_obj_t *&valOut) {
     lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_set_size(c, 148, 158);
-    lv_obj_set_pos(c, x, 304);
-    lv_obj_set_style_radius(c, 8, 0);
+    lv_obj_set_size(c, UI_S(148), UI_S(158));
+    lv_obj_set_pos(c, x, UI_S(304));
+    lv_obj_set_style_radius(c, UI_S(8), 0);
     lv_obj_set_style_border_width(c, 1, 0);
     lv_obj_set_style_border_color(c, CLR_BORDER, 0);
     lv_obj_set_style_bg_color(c, CLR_SURFACE, 0);
@@ -20,13 +20,13 @@ void WeatherScreen::makeTile(lv_obj_t *parent, int x, const char *label, lv_obj_
     lv_label_set_text(l, label);
     lv_obj_set_style_text_font(l, FONT_SMALL, 0);
     lv_obj_set_style_text_color(l, CLR_TEXT_DIM, 0);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, UI_S(14));
 
     valOut = lv_label_create(c);
     lv_label_set_text(valOut, "--");
     lv_obj_set_style_text_font(valOut, FONT_LARGE, 0);
     lv_obj_set_style_text_color(valOut, CLR_TEXT, 0);
-    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, UI_S(10));
 }
 
 void WeatherScreen::create(lv_obj_t *parent) {
@@ -43,32 +43,32 @@ void WeatherScreen::create(lv_obj_t *parent) {
     lv_label_set_text(capt, T(STR_WEA_PRESSURE));
     lv_obj_set_style_text_font(capt, FONT_SMALL, 0);
     lv_obj_set_style_text_color(capt, CLR_TEXT_DIM, 0);
-    lv_obj_set_pos(capt, 16, 10);
+    lv_obj_set_pos(capt, UI_S(16), UI_S(10));
 
     _pressVal = lv_label_create(container);
     lv_label_set_text(_pressVal, "-- hPa");
     lv_obj_set_style_text_font(_pressVal, FONT_LARGE, 0);
     lv_obj_set_style_text_color(_pressVal, CLR_TEXT, 0);
-    lv_obj_set_pos(_pressVal, 14, 28);
+    lv_obj_set_pos(_pressVal, UI_S(14), UI_S(28));
 
     _trend = lv_label_create(container);
     lv_label_set_text(_trend, "");
     lv_obj_set_style_text_font(_trend, FONT_MED, 0);
-    lv_obj_align(_trend, LV_ALIGN_TOP_RIGHT, -16, 16);
+    lv_obj_align(_trend, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(16));
 
     _trendSub = lv_label_create(container);
     lv_label_set_text(_trendSub, "");
     lv_obj_set_style_text_font(_trendSub, FONT_SMALL, 0);
     lv_obj_set_style_text_color(_trendSub, CLR_TEXT_DIM, 0);
-    lv_obj_align(_trendSub, LV_ALIGN_TOP_RIGHT, -16, 50);
+    lv_obj_align(_trendSub, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(50));
 
     _chart = lv_chart_create(container);
-    lv_obj_set_size(_chart, 458, 196);
-    lv_obj_set_pos(_chart, 11, 92);
+    lv_obj_set_size(_chart, UI_S(458), UI_S(196));
+    lv_obj_set_pos(_chart, UI_S(11), UI_S(92));
     lv_obj_set_style_bg_color(_chart, CLR_SURFACE, 0);
     lv_obj_set_style_border_color(_chart, CLR_BORDER, 0);
     lv_obj_set_style_border_width(_chart, 1, 0);
-    lv_obj_set_style_radius(_chart, 8, 0);
+    lv_obj_set_style_radius(_chart, UI_S(8), 0);
     lv_chart_set_type(_chart, LV_CHART_TYPE_LINE);
     lv_chart_set_div_line_count(_chart, 4, 0);
     lv_chart_set_point_count(_chart, DataModel::PRESS_HIST);
@@ -76,9 +76,9 @@ void WeatherScreen::create(lv_obj_t *parent) {
     lv_obj_set_style_line_width(_chart, 3, LV_PART_ITEMS);
     _series = lv_chart_add_series(_chart, CLR_ACCENT, LV_CHART_AXIS_PRIMARY_Y);
 
-    makeTile(container, 11,  T(STR_WEA_AIR),      _airVal);
-    makeTile(container, 167, T(STR_WEA_WATER),    _waterVal);
-    makeTile(container, 323, T(STR_WEA_HUMIDITY), _humVal);
+    makeTile(container, UI_S(11),  T(STR_WEA_AIR),      _airVal);
+    makeTile(container, UI_S(167), T(STR_WEA_WATER),    _waterVal);
+    makeTile(container, UI_S(323), T(STR_WEA_HUMIDITY), _humVal);
 }
 
 void WeatherScreen::update() {

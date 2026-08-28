@@ -51,4 +51,5 @@
     X(CFG_RB_CONNECT,     "Verbinde...",              "Connecting...")            \
     X(CFG_RB_HOTSPOT,     "Hotspot startet...",       "Starting hotspot...")      \
     X(CFG_RB_WIFI_ON,     "WLAN ein...",              "WiFi on...")               \
-    X(CFG_RB_WIFI_OFF,    "WLAN aus...",              "WiFi off...")
+    X(CFG_RB_WIFI_OFF,    "WLAN aus...",              "WiFi off...")              \
+    X(CFG_RB_DEMO_OFF,    "Demo aus, starte Bus...",  "Demo off, starting bus...")

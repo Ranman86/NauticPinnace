@@ -27,3 +27,38 @@ release/
 
 # Local-only material that is deliberately not published
 enclosure/
+
+# ESP-IDF component manager output, left behind by the pioarduino build that
+# compiles the Arduino layer from source: 34 components, 3,926 files, 534 MB —
+# Zigbee, speech recognition, deep learning, Modbus and RainMaker, most of it
+# prebuilt .a archives for chips this project does not even target (esp32c5,
+# esp32h2, esp32p4).
+#
+# NOT project source, and nothing in this repository references it: grep over
+# platformio.ini, extra_script.py and every script finds no mention outside the
+# directory itself. Note that src/idf_component.yml declares only `idf: ">=5.1"`
+# and none of these components, so do not assume they would be re-fetched on
+# demand — ignoring them is safe (nothing is deleted), DELETING them is not
+# something to do without a rebuild to confirm.
+#
+# Three reasons this must not be committed:
+#   * 534 MB in a public history cannot be trimmed later without a rewrite.
+#   * The tree carries real RSA and EC private keys — Espressif's own public
+#     test fixtures (secure_boot.key, ca_key.pem, client.key, priv_key.pem in
+#     six qemu_test folders), harmless in themselves, but GitHub Push
+#     Protection can refuse the push over them, mid-release.
+#   * 54 third-party LICENSE files would land under this repository's name
+#     while THIRD-PARTY-NOTICES.md lists none of them — correctly so, since
+#     none of it is linked into any firmware here.
+managed_components/
+
+# arduino-lib-builder scaffolding, same story.
+.dummy/
+
+# The simulator captures the boot screen on every start (sim_main.cpp, right
+# after the first lv_timer_handler flush) because it is only on display for
+# about 1.5 s and is otherwise impossible to look at. The call is
+# unconditional, not behind --shots, and writes to the working directory - so
+# building from the project root drops a fresh 900 KB bitmap here every run.
+# Generated, never committed in v1.0.0, and nothing reads it back.
+boot_shot.bmp

@@ -1,4 +1,5 @@
 #include "AisScreen.h"
+#include "RenderYield.h"
 #include "../../PsramArena.h"
 #include "../CanvasDraw.h"
 #include <math.h>
@@ -32,7 +33,7 @@ void AisScreen::create(lv_obj_t *parent) {
     char sl[12]; snprintf(sl, sizeof(sl), "5%s", T(STR_UNIT_NM));
     lv_label_set_text(_scaleLbl, sl);
     styleLabel(_scaleLbl, FONT_SMALL, CLR_TEXT_DIM);
-    lv_obj_set_pos(_scaleLbl, 4, 4);
+    lv_obj_set_pos(_scaleLbl, UI_S(4), UI_S(4));
 
     _countLbl = lv_label_create(container);
     {
@@ -40,12 +41,12 @@ void AisScreen::create(lv_obj_t *parent) {
         lv_label_set_text(_countLbl, cb);
     }
     styleLabel(_countLbl, FONT_SMALL, CLR_TEXT_DIM);
-    lv_obj_align(_countLbl, LV_ALIGN_TOP_RIGHT, -4, 4);
+    lv_obj_align(_countLbl, LV_ALIGN_TOP_RIGHT, UI_S(-4), UI_S(4));
 
     // Info box (shown on target tap)
     _infoBox = lv_obj_create(container);
-    lv_obj_set_size(_infoBox, SCREEN_W - 8, 80);
-    lv_obj_align(_infoBox, LV_ALIGN_BOTTOM_MID, 0, -2);
+    lv_obj_set_size(_infoBox, SCREEN_W - UI_S(8), UI_S(80));
+    lv_obj_align(_infoBox, LV_ALIGN_BOTTOM_MID, 0, UI_S(-2));
     styleCard(_infoBox);
     lv_obj_add_flag(_infoBox, LV_OBJ_FLAG_HIDDEN);
 
@@ -54,12 +55,13 @@ void AisScreen::create(lv_obj_t *parent) {
     styleLabel(_infoLbl, FONT_SMALL, CLR_TEXT);
     lv_obj_align(_infoLbl, LV_ALIGN_LEFT_MID, 0, 0);
     lv_label_set_long_mode(_infoLbl, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(_infoLbl, SCREEN_W - 24);
+    lv_obj_set_width(_infoLbl, SCREEN_W - UI_S(24));
 }
 
 void AisScreen::drawRadar() {
     if (!_canvas || !_cbuf) return;
-    // Yield-safe fill: prevents IWDT from WiFi-ISR SPI0 starvation (see WindScreen.cpp)
+    // Chunked fill so there is somewhere to yield mid-clear; renderYield()
+    // decides how many of those offers are worth a tick (see RenderYield.h).
     {
         const lv_color_t bgColor = CLR_BG;
         lv_color_t *p = _cbuf, *end = _cbuf + (size_t)CS * CS;
@@ -67,13 +69,13 @@ void AisScreen::drawRadar() {
             int rows = (CS - row < 8) ? CS - row : 8;
             lv_color_t *rowEnd = p + (size_t)rows * CS;
             while (p < rowEnd) *p++ = bgColor;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();
         }
         lv_obj_invalidate(_canvas);
     }
 
     int cx = CS/2, cy = CS/2;
-    int maxR = CS/2 - 10;
+    int maxR = CS/2 - UI_S(10);
     float nm2px = (float)maxR / _rangeNm;
 
     lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
@@ -96,7 +98,7 @@ void AisScreen::drawRadar() {
         char rlbl[12]; snprintf(rlbl, sizeof(rlbl), "%.1f%s", labelNm, T(STR_UNIT_NM));
         td.color = CLR_GRID_LINE;
         lv_canvas_draw_text(_canvas,
-            (lv_coord_t)(cx+4), (lv_coord_t)(cy-ri-14), 60, &td, rlbl);
+            (lv_coord_t)(cx+UI_S(4)), (lv_coord_t)(cy-ri-UI_S(14)), UI_S(60), &td, rlbl);
     }
 
     // Cross-hair lines
@@ -112,7 +114,7 @@ void AisScreen::drawRadar() {
     // Own ship dot
     rd.bg_color = CLR_TEXT; rd.bg_opa = OPA_FULL; rd.radius = LV_RADIUS_CIRCLE;
     lv_canvas_draw_rect(_canvas,
-        (lv_coord_t)(cx-5), (lv_coord_t)(cy-5), 10, 10, &rd);
+        (lv_coord_t)(cx-UI_S(5)), (lv_coord_t)(cy-UI_S(5)), UI_S(10), UI_S(10), &rd);
 
     // Heading vector
     float ownHdg;
@@ -121,7 +123,7 @@ void AisScreen::drawRadar() {
         ld.color = CLR_TEXT; ld.width = 2; ld.opa = OPA_FULL;
         float ar = ownHdg*DEG_TO_RAD;
         lv_point_t p1={(lv_coord_t)cx,(lv_coord_t)cy};
-        lv_point_t p2={(lv_coord_t)(cx+(int)(40*sinf(ar))),(lv_coord_t)(cy-(int)(40*cosf(ar)))};
+        lv_point_t p2={(lv_coord_t)(cx+(int)(UI_S(40)*sinf(ar))),(lv_coord_t)(cy-(int)(UI_S(40)*cosf(ar)))};
         lv_point_t _l[2]={p1,p2}; lv_canvas_draw_line(_canvas,_l,2,&ld);
     }
 
@@ -149,21 +151,26 @@ void AisScreen::drawRadar() {
         int ty = cy - (int)(dy*nm2px);
         if (tx<0||tx>=CS||ty<0||ty>=CS) continue;
 
-        // Colour by CPA/TCPA
+        // Colour by CPA/TCPA. Thresholds come from the config (WebUI: AIS
+        // editor, "Alarm CPA/TCPA") instead of being hardcoded; the yellow
+        // pre-warning tier is 2x the red alarm tier - with the defaults
+        // (0.5 nm / 10 min) that reproduces the old fixed 0.5/10 and 1.0/20.
         lv_color_t col = CLR_GREEN;
         float cpa = t.cpa, tcpa = t.tcpa;
+        const float cpaAl  = appConfig.cfg.aisCpaAlarm;
+        const float tcpaAl = appConfig.cfg.aisTcpaAlarm;
         if (!isnan(cpa) && !isnan(tcpa)) {
-            if (cpa < 0.5f && tcpa > 0 && tcpa < 10) col = CLR_RED;
-            else if (cpa < 1.0f && tcpa < 20)         col = CLR_YELLOW;
+            if (cpa < cpaAl && tcpa > 0 && tcpa < tcpaAl)          col = CLR_RED;
+            else if (cpa < 2.f * cpaAl && tcpa < 2.f * tcpaAl)     col = CLR_YELLOW;
         }
 
         // Draw triangle pointing in COG direction
         if (!isnan(t.cog)) {
             float cr = t.cog*DEG_TO_RAD;
             lv_point_t tri[3] = {
-                {(lv_coord_t)(tx+(int)(10*sinf(cr))),    (lv_coord_t)(ty-(int)(10*cosf(cr)))},
-                {(lv_coord_t)(tx+(int)(6*sinf(cr+2.3f))),(lv_coord_t)(ty-(int)(6*cosf(cr+2.3f)))},
-                {(lv_coord_t)(tx+(int)(6*sinf(cr-2.3f))),(lv_coord_t)(ty-(int)(6*cosf(cr-2.3f)))}
+                {(lv_coord_t)(tx+(int)(UI_S(10)*sinf(cr))),    (lv_coord_t)(ty-(int)(UI_S(10)*cosf(cr)))},
+                {(lv_coord_t)(tx+(int)(UI_S(6)*sinf(cr+2.3f))),(lv_coord_t)(ty-(int)(UI_S(6)*cosf(cr+2.3f)))},
+                {(lv_coord_t)(tx+(int)(UI_S(6)*sinf(cr-2.3f))),(lv_coord_t)(ty-(int)(UI_S(6)*cosf(cr-2.3f)))}
             };
             // Solid target symbol (was a hollow 2 px wireframe, which was hard to
             // pick out against the radar rings at the CPA warning colours).
@@ -185,7 +192,7 @@ void AisScreen::drawRadar() {
         } else {
             rd.bg_color = col; rd.radius = LV_RADIUS_CIRCLE; rd.bg_opa = OPA_FULL;
             lv_canvas_draw_rect(_canvas,
-                (lv_coord_t)(tx-4), (lv_coord_t)(ty-4), 8, 8, &rd);
+                (lv_coord_t)(tx-UI_S(4)), (lv_coord_t)(ty-UI_S(4)), UI_S(8), UI_S(8), &rd);
         }
 
         // Name label (truncated)
@@ -193,7 +200,7 @@ void AisScreen::drawRadar() {
             char nl[8]; strncpy(nl, t.name, 7); nl[7]=0;
             td.color = col; td.font = FONT_TINY;
             lv_canvas_draw_text(_canvas,
-                (lv_coord_t)(tx+6), (lv_coord_t)(ty-6), 60, &td, nl);
+                (lv_coord_t)(tx+UI_S(6)), (lv_coord_t)(ty-UI_S(6)), UI_S(60), &td, nl);
         }
 
         // Highlight selected
@@ -201,8 +208,8 @@ void AisScreen::drawRadar() {
             ld.color = CLR_ACCENT; ld.width = 1; ld.opa = OPA_FULL;
             for (int a=0;a<360;a+=10) {
                 float a1=(a)*DEG_TO_RAD, a2=(a+10)*DEG_TO_RAD;
-                lv_point_t p1={(lv_coord_t)(tx+14*sinf(a1)),(lv_coord_t)(ty-14*cosf(a1))};
-                lv_point_t p2={(lv_coord_t)(tx+14*sinf(a2)),(lv_coord_t)(ty-14*cosf(a2))};
+                lv_point_t p1={(lv_coord_t)(tx+UI_S(14)*sinf(a1)),(lv_coord_t)(ty-UI_S(14)*cosf(a1))};
+                lv_point_t p2={(lv_coord_t)(tx+UI_S(14)*sinf(a2)),(lv_coord_t)(ty-UI_S(14)*cosf(a2))};
                 lv_point_t _l[2]={p1,p2}; lv_canvas_draw_line(_canvas,_l,2,&ld);
             }
         }
@@ -240,14 +247,30 @@ void AisScreen::onCanvasClick(lv_event_t *e) {
     lv_point_t p; lv_indev_get_point(indev, &p);
 
     int cx = self->CS/2, cy = self->CS/2;
-    int maxR = self->CS/2 - 10;
+    int maxR = self->CS/2 - UI_S(10);
     float nm2px = (float)maxR / self->_rangeNm;
 
-    // Canvas is centred on screen: left edge at (SCREEN_W - CS) / 2
-    int canvasLeft = (SCREEN_W - self->CS) / 2;
+    // The tap arrives in SCREEN coordinates, so the canvas's own position on
+    // the screen has to come off BOTH axes before comparing against a target's
+    // canvas-relative position.
+    //
+    // This used to be derived as (SCREEN_W - CS) / 2 - the canvas's offset
+    // inside its CONTAINER - which silently assumed the container sits at the
+    // screen origin. On the 1024x600 boards it does not: the instrument block
+    // starts at (88, 0) in landscape and (0, 88) in portrait. Every tap was
+    // therefore evaluated 88 px away from where it landed, and with a pick
+    // radius of UI_S(20) = 25 px no target could ever be selected under your
+    // finger - you had to tap beside the ship. The 4-inch board's container IS
+    // at (0, 0), which is why this survived unnoticed since the 600-grid port.
+    //
+    // lv_obj_get_coords() reports the absolute position, so this is correct on
+    // every board and in every orientation. On the 4-inch it evaluates to
+    // exactly the old numbers (x1 = 45 = (480-390)/2, y1 = 0).
+    lv_area_t ca;
+    lv_obj_get_coords(self->_canvas, &ca);
 
     float ownLat, ownLon;
-    int best = -1; float bestDist = 20;
+    int best = -1; float bestDist = UI_S(20);
     {
         auto lk = data.lock();
         ownLat=data.lat; ownLon=data.lon;
@@ -259,7 +282,7 @@ void AisScreen::onCanvasClick(lv_event_t *e) {
             float dy=(t.lat-ownLat)*60.0f;
             int tx=cx+(int)(dx*nm2px), ty=cy-(int)(dy*nm2px);
             // Convert screen click to canvas coordinates before comparing
-            float d=sqrtf(powf(p.x - canvasLeft - tx, 2.f)+powf(p.y-(float)ty, 2.f));
+            float d=sqrtf(powf(p.x - ca.x1 - tx, 2.f)+powf(p.y - ca.y1 - ty, 2.f));
             if (d<bestDist) { bestDist=d; best=i; }
         }
     }

@@ -28,6 +28,9 @@ public:
 private:
     bool      _open   = false;
     lv_obj_t *_root   = nullptr;   // full-screen modal container on lv_layer_top()
+                                   // (sized to the LOGICAL screen - 1024x600 or,
+                                   //  rotated, 600x1024 - so it also absorbs
+                                   //  touches over rail/sidebar)
     lv_obj_t *_kb     = nullptr;   // on-screen keyboard (child of _root)
     lv_obj_t *_taSsid = nullptr;
     lv_obj_t *_taPass = nullptr;

@@ -79,7 +79,16 @@
  * only ~26 KB free, large HTTP responses (the UI page) stalled mid-transfer
  * because pbuf allocation failed. ~90 KB free fixes it. */
 #ifndef LV_MEM_SIZE   // the PC simulator overrides this (bigger pool, plenty of RAM)
+#if defined(BOARD_PANEL_1024X600)
+// +10 KB over the 4" pool, financed 1:1 by a smaller LVGL draw buffer
+// (DisplaySetup_7B.cpp: 5 rows instead of 10). The 600-grid render needs
+// more transient pool per frame (plus the primed draw-buf cache from
+// main.cpp), and the full home-launcher plus render peak exceeded 96.5K -
+// measured as lv_mem_buf_get/mask OOM reboots.
+#define LV_MEM_SIZE   ((106U * 1024U) + 512U)
+#else
 #define LV_MEM_SIZE   ((96U * 1024U) + 512U)
+#endif
 #endif
 #define LV_MEM_ADR    0
 #define LV_MEMCPY_MEMSET  0
@@ -87,24 +96,79 @@
 /*====================
    HAL SETTINGS
  *====================*/
-/* Render period must exceed actual SPI-flush time for the full screen.
- * A 480×480 screen over 80 MHz SPI in 480×20 strips takes ~100 ms.
- * With LV_DISP_DEF_REFR_PERIOD < render_time, LVGL 8.4's lv_timer_handler()
- * outer do-while loop re-fires the refr timer immediately after each render
- * (elapsed > period → timer still due) → infinite loop → TG1WDT.
- * 200 ms (5 fps) gives ~100 ms headroom; the display still updates at 1 Hz
- * because dispMgr.update() → drawInstrument() invalidates the canvas every
- * second, and lv_timer_handler() flushes that one render within the same
- * loop() tick. */
+/* This macro has TWO jobs, and they want different numbers.
+ *   1. it is the initial period of the display refresh timer
+ *      (lv_hal_disp.c: lv_timer_create(_lv_disp_refr_timer, ...)), and
+ *   2. it is LVGL's ANIMATION timestep - lv_anim.c creates its own timer with
+ *      the very same macro, so this one number decides how often every fade,
+ *      transition and list scroll is advanced.
+ *
+ * The old value was 200 ms for every board, justified by the fear that
+ * lv_timer_handler() would spin forever whenever a render took longer than the
+ * period. That is NOT how the vendored LVGL 8.4.0 behaves. Checked in the
+ * library sources under .pio/libdeps:
+ *   - _lv_disp_refr_timer() calls lv_timer_pause(tmr) BEFORE it renders
+ *     (lv_refr.c). That branch is compiled in because LV_USE_PERF_MONITOR and
+ *     LV_USE_MEM_MONITOR are both 0 (see DEBUG SETTINGS at the end of this
+ *     file). So the refresh timer fires at most once per invalidation, and it
+ *     is lv_obj_invalidate() / lv_obj_set_pos() that resume it.
+ *   - the outer do-while in lv_timer_handler() (lv_timer.c) only re-enters
+ *     while `timer_created || timer_deleted` made the inner walk break out. It
+ *     guards against the timer linked list being mutated under the iterator -
+ *     it is not an "elapsed > period, so run it again" retry.
+ * A short period therefore cannot loop. It only means LVGL is ALLOWED to
+ * refresh more often. What 200 ms actually did was cap the 1024x600 boards at
+ * 5 fps and step their animations five times a second, which is exactly why
+ * the licence text scrolled in visible jumps.
+ *
+ * 1024x600 boards: 33 ms. That number is chosen for the ANIMATION timestep -
+ * the job we want fast. The DISPLAY refresh interval is set separately at
+ * runtime: DisplaySetup_7B.cpp calls lv_timer_set_period() on the refresh
+ * timer right after lv_disp_drv_register(). It has to be the more
+ * conservative of the two, because one 600-grid render plus its flush takes
+ * far longer than 33 ms and refreshing back-to-back would leave core 1 with no
+ * idle time at all for AsyncTCP and lwIP. Two jobs, two numbers, one place
+ * each to tune them.
+ *
+ * The 4" board is a released product and keeps 200 ms, unchanged. */
+#if defined(BOARD_PANEL_1024X600)
+/* animation timestep; the display period is set at runtime, see
+ * DisplaySetup_7B.cpp */
+#define LV_DISP_DEF_REFR_PERIOD 33
+#else
 #define LV_DISP_DEF_REFR_PERIOD 200  /* 5 fps – must exceed ~100 ms SPI flush */
+#endif
 #define LV_INDEV_DEF_READ_PERIOD 30  /* ms */
-#define LV_TICK_CUSTOM 0
+/* 7B only: let LVGL read millis() directly instead of running a dedicated
+ * 4 KB tick task (LVTICK) whose loop does nothing but lv_tick_inc(1). Saves
+ * the stack + TCB in internal DRAM and removes a 1 kHz context switch.
+ * The 4" board and the simulator keep the task (bit-identical builds). */
+#if defined(BOARD_PANEL_1024X600) && !defined(SIMULATOR)
+  #define LV_TICK_CUSTOM 1
+  #define LV_TICK_CUSTOM_INCLUDE "Arduino.h"
+  #define LV_TICK_CUSTOM_SYS_TIME_EXPR (millis())
+#else
+  /* the simulator (also the 7B one) drives lv_tick_inc() via SDL_GetTicks() */
+  #define LV_TICK_CUSTOM 0
+#endif
 #define LV_DPI_DEF 130
 
 /*=======================
  * FEATURE CONFIGURATION
  *=======================*/
 #define LV_DRAW_COMPLEX 1
+/* 7B only: cap the SUBDIVIDABLE draw-layer chunk (opacity layers) at 8 KB -
+ * the 24 KB default is the size of the ENTIRE free LVGL pool headroom here,
+ * and lv_draw_sw_layer_create() in 8.4 lv_memset_00()s an alloc result
+ * BEFORE its NULL check. Smaller chunks only cost extra blend passes.
+ * NOTE this does NOT make transform_zoom safe: zoomed objects use the
+ * NON-subdividable branch, which needs the full transformed refresh strip
+ * (~22 KB each) in one piece - measured boot loop, see UI7_CONTENT_ZOOM in
+ * BoardConfig_7B.h. */
+#if defined(BOARD_PANEL_1024X600)
+  #define LV_LAYER_SIMPLE_BUF_SIZE          (8 * 1024)
+  #define LV_LAYER_SIMPLE_FALLBACK_BUF_SIZE (2 * 1024)
+#endif
 #define LV_SHADOW_CACHE_SIZE 0
 #define LV_CIRCLE_CACHE_SIZE 4
 /* Canvas pixel buffers live in PSRAM (PsramArena).  Keeping an image-cache
@@ -128,25 +192,42 @@
  *  FONT USAGE
  *==================*/
 // Sizes enabled so the WebUI font-size picker has a useful range (~+50 KB flash).
+//
+// 7B trims 7 sizes that no config has ever selected (not the shipped defaults,
+// not the live device snapshot, not any hardcoded screen): 10,18,20,22,28,36,44.
+// That is ~267 KB of glyph data - and on the 7B, SPIRAM_RODATA copies all of
+// .flash.rodata into PSRAM at boot, so the trim buys back real PSRAM (fonts
+// were 73% of rodata). Removal is safe by construction: montserratBySize()
+// snaps to the nearest remaining size, so a config asking for 22 gets 24.
+// The 4" board and the simulator keep the full ladder (bit-identical builds);
+// the WebUI dropdown deliberately keeps offering all sizes for the 4".
+#if defined(BOARD_PANEL_1024X600)
+  #define LV_MONT_OPT 0   // the never-selected sizes
+#else
+  #define LV_MONT_OPT 1
+#endif
 #define LV_FONT_MONTSERRAT_8  0
-#define LV_FONT_MONTSERRAT_10 1
+#define LV_FONT_MONTSERRAT_10 LV_MONT_OPT
 #define LV_FONT_MONTSERRAT_12 1
 #define LV_FONT_MONTSERRAT_14 1
 #define LV_FONT_MONTSERRAT_16 1
+// 18/20/28 are back to ALWAYS-on since the stage-3 font pass: the 7B scales
+// every role by UI_S (14->18, 16->20, 24->28 via applyThemeFromConfig), so
+// these sizes ARE selected there now. 10/22/36/44 stay trimmed.
 #define LV_FONT_MONTSERRAT_18 1
 #define LV_FONT_MONTSERRAT_20 1
-#define LV_FONT_MONTSERRAT_22 1
+#define LV_FONT_MONTSERRAT_22 LV_MONT_OPT
 #define LV_FONT_MONTSERRAT_24 1
 #define LV_FONT_MONTSERRAT_26 0
 #define LV_FONT_MONTSERRAT_28 1
 #define LV_FONT_MONTSERRAT_30 0
 #define LV_FONT_MONTSERRAT_32 1
 #define LV_FONT_MONTSERRAT_34 0
-#define LV_FONT_MONTSERRAT_36 1
+#define LV_FONT_MONTSERRAT_36 LV_MONT_OPT
 #define LV_FONT_MONTSERRAT_38 0
 #define LV_FONT_MONTSERRAT_40 1
 #define LV_FONT_MONTSERRAT_42 0
-#define LV_FONT_MONTSERRAT_44 1
+#define LV_FONT_MONTSERRAT_44 LV_MONT_OPT
 #define LV_FONT_MONTSERRAT_46 0
 #define LV_FONT_MONTSERRAT_48 1
 #define LV_FONT_MONTSERRAT_SUBPX 1
@@ -262,7 +343,46 @@
 #define LV_ATTRIBUTE_MEM_ALIGN      __attribute__((aligned(4)))
 #define LV_ATTRIBUTE_LARGE_CONST
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY DRAM_ATTR
+/* FAST_MEM is a function-PLACEMENT hint - it decides where LVGL's hot draw
+ * code (blend, mask, line, label, img) LIVES. It has nothing to do with the
+ * line directly above, which places the memory POOL and must stay exactly as
+ * it is (five failed attempts and their crashes are documented at the top of
+ * this file). Changing one does not affect the other.
+ *
+ * On the ESP32-S3 IRAM and DRAM are carved out of the same block: the linker
+ * opens a .dram0.dummy hole exactly as large as the IRAM overhang, so every
+ * byte put in IRAM costs one byte of DRAM. On the 1024x600 boards those hot
+ * functions are ~12 KB, i.e. IRAM_ATTR there quietly spends ~12 KB of the
+ * internal DRAM that lwIP and the async web server live on - and on the 5"
+ * board only ~18 KB of it is free, which is why HTTP intermittently stops
+ * answering. Dropping the attribute hands those 12 KB straight back.
+ *
+ * Safe because of two independent things:
+ *  * LVGL never runs from an interrupt handler - only from lv_timer_handler()
+ *    in the main loop - so none of this code has to survive a window with the
+ *    flash cache switched off in the first place.
+ *  * The build sets CONFIG_SPIRAM_XIP_FROM_PSRAM=y (custom_sdkconfig in
+ *    platformio.ini, the RGB-drift fix), which relocates code out of flash
+ *    into PSRAM, so it stays fetchable even while the flash cache IS off.
+ *
+ * The cost is bandwidth, not correctness: the hot loops now fetch their
+ * instructions over the PSRAM bus, the one contended resource here (LCD
+ * scan-out reads the frame buffer from it continuously). Two reasons that is
+ * affordable: the loops are small and stay in the instruction cache after the
+ * first miss, and the display refresh interval on these boards is deliberately
+ * left longer than one render (set at runtime in DisplaySetup_7B.cpp, see the
+ * LV_DISP_DEF_REFR_PERIOD block above), so there is headroom to spend.
+ *
+ * The 4" board is a released product and keeps IRAM_ATTR unchanged. Both
+ * branches DEFINE the macro, so the "#ifndef LV_ATTRIBUTE_FAST_MEM" fallback
+ * in the SIMULATOR block further down still never fires - and on the PC the
+ * empty definition simply agrees with the one sim/simulator_defines.h already
+ * force-includes. */
+#if defined(BOARD_PANEL_1024X600)
+#define LV_ATTRIBUTE_FAST_MEM
+#else
 #define LV_ATTRIBUTE_FAST_MEM       IRAM_ATTR
+#endif
 #define LV_ATTRIBUTE_DMA
 #define LV_EXPORT_CONST_INT(int_value) struct _silence_gcc_warning
 #define LV_USE_LARGE_COORD 0
@@ -298,8 +418,10 @@
 #define LV_ATTRIBUTE_LARGE_RAM_ARRAY
 #endif
 #else
+/* Print the assert site BEFORE restarting - a bare esp_restart() made every
+ * LVGL assert look like a silent spontaneous reboot (menu-crash hunt 2026-08). */
 #define LV_ASSERT_HANDLER_INCLUDE <esp_system.h>
-#define LV_ASSERT_HANDLER esp_restart();
+#define LV_ASSERT_HANDLER do { printf("[lv-assert] %s:%d\n", __FILE__, __LINE__); esp_restart(); } while (0);
 #endif
 
 #define LV_LOG_PRINTF 0

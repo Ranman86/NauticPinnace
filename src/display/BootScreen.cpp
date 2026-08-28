@@ -1,4 +1,14 @@
 #include "BootScreen.h"
+#include "../Version.h"
+
+// Boot animation runs before the normal tick source is alive, so it ticks
+// LVGL manually - except with LV_TICK_CUSTOM (7B), where LVGL reads millis()
+// itself and lv_tick_inc() does not exist.
+#if LV_TICK_CUSTOM
+  #define BOOT_TICK(ms) ((void)0)
+#else
+  #define BOOT_TICK(ms) lv_tick_inc(ms)
+#endif
 #include "../i18n/I18n.h"
 #include "../config/Config.h"
 #include <LittleFS.h>
@@ -6,6 +16,24 @@
 #include <math.h>
 
 BootScreen bootScreen;
+
+// The boot screen has two fixed clusters: the logo group pinned to the top edge
+// and the status/progress group pinned to the bottom edge. Their offsets were
+// tuned for a 600 px tall screen; on a taller (portrait) one the two groups just
+// drift apart and leave a large empty band in the middle. Move both toward the
+// centre by half the surplus height so the composition keeps its proportions.
+//
+// The landscape zero is stated STRUCTURALLY, not left to arithmetic. It is true
+// today that uiScreenH() == SCREEN_H unrotated on all three boards, but that is
+// a coincidence of the current panels: SCREEN_H is the INSTRUMENT DESIGN GRID
+// (Theme.h), and the boot screen is not laid out on it - none of its offsets go
+// through UI_S(). A future board whose panel height differs from the 600 design
+// grid would otherwise shift the boot screen in LANDSCAPE too, which is exactly
+// the regression this feature must never cause. With the uiPortrait() gate the
+// result is 0 on every board today and can never fire unrotated.
+static inline lv_coord_t bootVShift() {
+    return uiPortrait() ? (uiScreenH() - SCREEN_H) / 2 : 0;
+}
 
 // ---- Custom logo loader -----------------------------------------------------
 
@@ -121,10 +149,14 @@ lv_obj_t *BootScreen::buildMark(lv_obj_t *parent, int size) {
 // ---- Intro animation ---------------------------------------------------------
 
 void BootScreen::playIntro(const char *boatName) {
+    // Zero unless the screen is taller than the design grid (portrait) - see
+    // bootVShift(). Top offsets get it added, bottom offsets subtracted.
+    const lv_coord_t vShift = bootVShift();
+
     // --- Spinner (rotating arc, always visible during boot) -------------------
     _spinner = lv_spinner_create(_scr, 1400, 80);   // 1400ms period, 80 deg arc
     lv_obj_set_size(_spinner, 200, 200);
-    lv_obj_align(_spinner, LV_ALIGN_TOP_MID, 0, 60);
+    lv_obj_align(_spinner, LV_ALIGN_TOP_MID, 0, 60 + vShift);
     lv_obj_set_style_arc_color(_spinner, CLR_ACCENT,   LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(_spinner, CLR_SURFACE,  LV_PART_MAIN);
     lv_obj_set_style_arc_width(_spinner, 6,  LV_PART_INDICATOR);
@@ -135,12 +167,12 @@ void BootScreen::playIntro(const char *boatName) {
     // --- Logo or built-in icon inside the spinner circle ----------------------
     if (_logoImg) {
         // Custom logo: centred inside the spinner area
-        lv_obj_align(_logoImg, LV_ALIGN_TOP_MID, 0, 100);
+        lv_obj_align(_logoImg, LV_ALIGN_TOP_MID, 0, 100 + vShift);
         lv_obj_set_style_opa(_logoImg, 0, 0);   // start invisible, will fade in
     } else {
         // Built-in NauticPi signet, sized to sit inside the 200 px spinner.
         lv_obj_t *mark = buildMark(_scr, 120);
-        lv_obj_align(mark, LV_ALIGN_TOP_MID, 0, 100);
+        lv_obj_align(mark, LV_ALIGN_TOP_MID, 0, 100 + vShift);
         lv_obj_set_style_opa(mark, 0, 0);
         _logoImg = mark;   // reuse pointer for fade-in
     }
@@ -152,7 +184,7 @@ void BootScreen::playIntro(const char *boatName) {
                                                         : "NauticPinnace");
     lv_obj_set_style_text_font(title, FONT_XL, 0);
     lv_obj_set_style_text_color(title, CLR_TEXT, 0);
-    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 278);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 278 + vShift);
     lv_obj_set_style_opa(title, 0, 0);
 
     // --- Boat name (optional) -------------------------------------------------
@@ -162,16 +194,19 @@ void BootScreen::playIntro(const char *boatName) {
         lv_label_set_text(bname, boatName);
         lv_obj_set_style_text_font(bname, FONT_LARGE, 0);
         lv_obj_set_style_text_color(bname, CLR_ACCENT, 0);
-        lv_obj_align(bname, LV_ALIGN_TOP_MID, 0, 318);
+        lv_obj_align(bname, LV_ALIGN_TOP_MID, 0, 318 + vShift);
         lv_obj_set_style_opa(bname, 0, 0);
     }
 
     // --- Footer ---------------------------------------------------------------
     lv_obj_t *ver = lv_label_create(_scr);
-    lv_label_set_text(ver, "v1.0  |  NMEA 2000");
+    // From src/Version.h, not typed out again: this line and the NMEA 2000
+    // product information had already drifted apart ("v1.0" here against
+    // "1.0.0" on the bus) before they were both pointed at one definition.
+    lv_label_set_text(ver, "v" FW_VERSION "  |  NMEA 2000");
     lv_obj_set_style_text_font(ver, FONT_TINY, 0);
     lv_obj_set_style_text_color(ver, CLR_TEXT_DIM, 0);
-    lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, -14);
+    lv_obj_align(ver, LV_ALIGN_BOTTOM_MID, 0, -14 - vShift);
     lv_obj_set_style_opa(ver, 0, 0);
 
     // ---- Animate: manual pump over ~1.2 seconds in small steps ---------------
@@ -184,7 +219,7 @@ void BootScreen::playIntro(const char *boatName) {
     for (int t = 0; t <= 300; t += STEP) {
         lv_opa_t opa = (lv_opa_t)((uint32_t)t * 255 / 300);
         lv_obj_set_style_opa(_spinner, opa, 0);
-        lv_tick_inc(STEP);
+        BOOT_TICK(STEP);
         lv_timer_handler();
         delay(STEP);
     }
@@ -196,12 +231,12 @@ void BootScreen::playIntro(const char *boatName) {
         lv_coord_t dy = (lv_coord_t)(20 - (20 * t / 400));
         lv_obj_set_style_opa(_logoImg, opa, 0);
         lv_obj_set_style_opa(title,    opa, 0);
-        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 278 + dy);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 278 + vShift + dy);
         if (bname) {
             lv_obj_set_style_opa(bname, opa, 0);
-            lv_obj_align(bname, LV_ALIGN_TOP_MID, 0, 318 + dy);
+            lv_obj_align(bname, LV_ALIGN_TOP_MID, 0, 318 + vShift + dy);
         }
-        lv_tick_inc(STEP);
+        BOOT_TICK(STEP);
         lv_timer_handler();
         delay(STEP);
     }
@@ -213,7 +248,7 @@ void BootScreen::playIntro(const char *boatName) {
     for (int t = 0; t <= 300; t += STEP) {
         lv_opa_t opa = (lv_opa_t)((uint32_t)t * 255 / 300);
         lv_obj_set_style_opa(ver, opa, 0);
-        lv_tick_inc(STEP);
+        BOOT_TICK(STEP);
         lv_timer_handler();
         delay(STEP);
     }
@@ -241,17 +276,21 @@ void BootScreen::show(const char *boatName) {
     playIntro(boatName);
 
     // ---- Progress bar (appears after intro) ----------------------------------
+    // Same shift as the top cluster, mirrored: 0 in landscape, half the surplus
+    // height in portrait, so this group moves up toward the logo group.
+    const lv_coord_t vShift = bootVShift();
+
     _statusLbl = lv_label_create(_scr);
     lv_label_set_text(_statusLbl, T(STR_BOOT_INIT));
     lv_obj_set_style_text_font(_statusLbl, FONT_MED, 0);
     lv_obj_set_style_text_color(_statusLbl, CLR_TEXT_DIM, 0);
-    lv_obj_align(_statusLbl, LV_ALIGN_BOTTOM_MID, 0, -70);
+    lv_obj_align(_statusLbl, LV_ALIGN_BOTTOM_MID, 0, -70 - vShift);
     lv_label_set_long_mode(_statusLbl, LV_LABEL_LONG_DOT);
     lv_obj_set_width(_statusLbl, 340);
 
     _bar = lv_bar_create(_scr);
     lv_obj_set_size(_bar, 340, 8);
-    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, -50);
+    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, -50 - vShift);
     lv_bar_set_range(_bar, 0, 100);
     lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_bar, CLR_SURFACE, 0);
@@ -263,7 +302,7 @@ void BootScreen::show(const char *boatName) {
     lv_label_set_text(_pctLbl, "0%");
     lv_obj_set_style_text_font(_pctLbl, FONT_SMALL, 0);
     lv_obj_set_style_text_color(_pctLbl, CLR_TEXT_DIM, 0);
-    lv_obj_align(_pctLbl, LV_ALIGN_BOTTOM_MID, 0, -36);
+    lv_obj_align(_pctLbl, LV_ALIGN_BOTTOM_MID, 0, -36 - vShift);
 
     tick(30);
 }
@@ -302,6 +341,6 @@ void BootScreen::tick(uint32_t ms) {
     // calling lv_timer_handler() from setup() (before the LVGL task is running)
     // causes spurious events that can scramble object internal state.
     // Rendering starts from loop() via displayTick() after activate().
-    lv_tick_inc(ms);
+    BOOT_TICK(ms);
     delay(ms);
 }

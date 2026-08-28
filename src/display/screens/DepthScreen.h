@@ -10,9 +10,9 @@ public:
     void update() override;
 
 private:
-    static constexpr int CW   = 480;   // main canvas width
+    static constexpr int CW   = SCREEN_W;   // main canvas width
 
-    lv_obj_t   *_canvas  = nullptr;   // main 480×480 canvas
+    lv_obj_t   *_canvas  = nullptr;   // main full-width canvas
     lv_color_t *_cbuf    = nullptr;
     lv_obj_t   *_lblAlarm = nullptr;
 

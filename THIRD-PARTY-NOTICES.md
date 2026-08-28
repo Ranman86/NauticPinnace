@@ -30,11 +30,29 @@ Anyone distributing the firmware must therefore also provide:
    object files (`.pio/build/waveshare_esp32s3_4/**/*.o`),
 4. all copyright notices unchanged.
 
-| Component | Version | Copyright | Licence |
-|---|---|---|---|
-| **Arduino-ESP32 core** (incl. WiFi, HTTPClient, LittleFS, Wire, SPI) | 3.20017.241212 (ESP-IDF 4.4.7) | Espressif Systems and contributors | LGPL-2.1-or-later |
-| **ESPAsyncWebServer** | 3.6.0 (commit `ad3741d1`) | © 2016 Hristo Gochkov; maintained by the ESP32Async project | LGPL-3.0 (some source headers still say LGPL-2.1-or-later) |
-| **AsyncTCP** | 3.3.2 (commit `ef448a8a`) | © 2016 Hristo Gochkov; maintained by the ESP32Async project | LGPL-3.0 (some source headers still say LGPL-2.1-or-later) |
+**The three boards do not link the same versions.** The 4-inch stays on the
+Arduino core it was released and tested with; the two 1024×600 boards need a
+newer one for the RGB panel's bounce buffers. Since the point of naming a
+version is that a recipient can obtain the corresponding source for what they
+actually received, both columns are given.
+
+| Component | 4-inch | 7B / 5B | Copyright | Licence |
+|---|---|---|---|---|
+| **Arduino-ESP32 core** (incl. WiFi, HTTPClient, LittleFS, Wire, SPI) | 3.20017.241212 (ESP-IDF 4.4.7) | 3.3.11 (ESP-IDF 5.5.5) | Espressif Systems and contributors | LGPL-2.1-or-later |
+| **ESPAsyncWebServer** | 3.6.0 (commit `ad3741d1`) | 3.12.0 | © 2016 Hristo Gochkov; maintained by the ESP32Async project | LGPL-3.0 (some source headers still say LGPL-2.1-or-later) |
+| **AsyncTCP** | 3.3.2 (commit `ef448a8a`) | 3.5.0 | © 2016 Hristo Gochkov; maintained by the ESP32Async project | LGPL-3.0 (some source headers still say LGPL-2.1-or-later) |
+
+The two async libraries come from different places per board, which is why the
+columns differ: the 4-inch pins them to those commits in `platformio.ini`
+(the newer releases stall large responses on its Arduino core), while the panel
+boards take the current registry releases through the ranges `^3.4.4` / `^3.7.7`.
+
+Read the resolved versions from `.pio/libdeps/<env>/` before cutting a release
+— the ranges can resolve higher — and mind one trap while doing so: the 4-inch
+directory contains **two** AsyncTCP entries. `AsyncTCP@src-<hash>` is the pinned
+3.3.2 that is actually linked; a plain `AsyncTCP` directory alongside it is the
+second copy the note in `platformio.ini` mentions, and reading its version gives
+the wrong answer.
 
 > The LGPL obligation arises solely from the Arduino layer; the ESP-IDF
 > components underneath carry their own, non-copyleft licences — listed in
@@ -87,7 +105,16 @@ compatibility, but no function bodies were taken from it.
 Copyright (c) Project Nayuki
 ```
 
-### LovyanGFX 1.2.21 — MIT and BSD
+### LovyanGFX 1.2.x — MIT and BSD — **4-inch only**
+Not linked into the 7B and 5B firmware: those drive their RGB panel through
+ESP-IDF's `esp_lcd` component instead, so nothing of LovyanGFX reaches them.
+
+`platformio.ini` asks for `^1.1.16`, so the exact version depends on when the
+dependencies were installed: the released v1.0.0 binary was built against
+**1.2.21**, a checkout resolved fresh in August 2026 gets **1.2.28**. The
+licence and the copyright holders below are unchanged across those; read the
+resolved version out of `.pio/libdeps/waveshare_esp32s3_4/LovyanGFX/` when
+cutting a release.
 Contains code from several authors (the library's `license.txt`):
 ```
 Copyright (c) 2012 Adafruit Industries.  All rights reserved.   (BSD licence, Adafruit GFX)
@@ -100,11 +127,20 @@ Further embedded: **TJpgDec** (ChaN, its own permissive licence), **pngle**
 ### 2.1 ESP-IDF components linked into `firmware.bin`
 
 The Arduino core pulls in prebuilt ESP-IDF libraries. The list below is not a
-guess: it was read from the linker map
-(`.pio/build/waveshare_esp32s3_4/firmware.map`), counting the input sections
+guess: it was read from the **4-inch** linker map, counting the input sections
 actually placed in the image. Two of the largest are BSD-3-Clause, which asks
 for its copyright notice to be reproduced in binary redistributions — hence
 this section.
+
+> **Scope, honestly stated:** this list was taken from the 4-inch build alone,
+> which at the time was the only board. The 7B and 5B run a different ESP-IDF
+> major version (5.5.5 against 4.4.7) and additionally link `esp_lcd` for the
+> RGB panel, so their component set is not identical and has not been read off
+> their maps. The licences involved are the same families and no *additional*
+> obligation is expected, but the list below should be regenerated per board
+> before the next release. The map now lives under the build directory
+> configured in `platformio.ini` (`${platformio.core_dir}/build/<env>/`), not
+> under `.pio/build/` as when this was first written.
 
 ```
 lwIP (TCP/IP stack)            BSD-3-Clause
@@ -257,12 +293,43 @@ LICENSES/GPL-2.0.txt                     the licence text
 
 ---
 
+### ESP Web Tools — Apache-2.0 — *referenced, not redistributed*
+The browser flasher page (`docs/flash.html`, served from GitHub Pages) loads
+`esp-web-tools@10` from the unpkg CDN with a `<script>` tag. It is never copied
+into this repository or into any release archive, so there is no notice
+obligation — it is named here because it is a visible part of how people
+receive the firmware, and because a visitor's browser contacts unpkg.com to get
+it. `docs/flash/` itself carries only the firmware images plus a copy of
+`LICENSE`, `LICENSES/` and this document, so the notices travel with the
+binaries they describe. **Refresh that copy whenever the images there are
+rebuilt** — it is a snapshot, not a link.
+
 ## 6. Development only — not part of any distribution
+
+Nothing in this section is shipped, so nothing here carries an obligation. It
+is listed because the question "shouldn't the compiler be in here?" is a fair
+one and deserves an answer that outlives the asking.
+
+**Why the build chain is absent from sections 1–5:** licence duties attach to
+*distribution*. What this project distributes is `firmware.bin`,
+`littlefs.bin` and the release archive — those are what sections 1 through 4
+cover, plus `esptool.exe` in section 5 because that one really is shipped. The
+tools below run on the developer's machine and are fetched independently onto
+each machine by PlatformIO and pip; handing someone a compiled binary does not
+redistribute the compiler that made it.
+
+The usual worry is GCC being GPL. It does not reach the firmware: the **GCC
+Runtime Library Exception** exists precisely so that compiled output carries no
+GPL obligation, and the compiler itself is never handed on.
 
 | Tool | Licence | Purpose |
 |---|---|---|
 | SDL2 | zlib | PC simulator |
 | freetype-py / Pillow / NumPy | BSD or MIT-style | Font and map generators under `tools/` |
+| PlatformIO Core, SCons | Apache-2.0, MIT | Build system |
+| toolchain-xtensa-esp32s3, toolchain-riscv32-esp (GCC 8.4) | GPL-3.0 **with GCC Runtime Library Exception** | Compiler |
+| tool-esptoolpy, tool-mklittlefs, tool-mkspiffs, tool-mkfatfs | GPL-2.0-or-later / MIT | Image building and flashing, as tools |
+| Python wheels pulled in by esptool: `cryptography`, `ecdsa`, `bitstring`, `reedsolo`, `intelhex`, `cffi`, `six`, `bitarray`, `pycparser` | Apache-2.0 / BSD / MIT-style | Installed by pip into PlatformIO's own virtualenv |
 
 ---
 

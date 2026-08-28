@@ -29,7 +29,7 @@ void SpeedScreen::create(lv_obj_t *parent) {
     // ── Top half: 2×2 grid of key values ─────────────────────────────────────
     // SOG | STW
     // Polar | VMG
-    int cw = (SCREEN_W - 12) / 2;   // ~234px
+    int cw = (SCREEN_W - UI_S(12)) / 2;   // ~234px @480
     int ch = UI_SPEED_CARD_H;
     int gap = UI_SPEED_CARD_GAP;
 
@@ -41,7 +41,7 @@ void SpeedScreen::create(lv_obj_t *parent) {
         lv_obj_t *ll = lv_label_create(c); lv_label_set_text(ll, lbl);
         styleLabel(ll, FONT_SMALL, CLR_TEXT_DIM); lv_obj_align(ll, LV_ALIGN_TOP_MID, 0, 0);
         *vl = lv_label_create(c); lv_label_set_text(*vl, "--");
-        styleLabel(*vl, FONT_HUGE, col_); lv_obj_align(*vl, LV_ALIGN_CENTER, 0, 4);
+        styleLabel(*vl, FONT_HUGE, col_); lv_obj_align(*vl, LV_ALIGN_CENTER, 0, UI_S(4));
     };
     addCard(0, 0, "SOG kn",   &_lblSog,   CLR_ACCENT);
     addCard(1, 0, "STW kn",   &_lblStw,   CLR_TEXT);
@@ -49,9 +49,9 @@ void SpeedScreen::create(lv_obj_t *parent) {
     addCard(1, 1, "VMG kn",   &_lblVmg,   CLR_WIND);
 
     // ── Bottom half: tall perf bar + large % value ────────────────────────────
-    int topH = 2 * ch + 3 * gap;                    // ~212px used by cards
+    int topH = 2 * ch + 3 * gap;                    // ~212px @480 used by cards
     int botY = topH + gap;
-    int botH = (SCREEN_H - NAV_BAR_H) - botY - 8;  // remaining height
+    int botH = (SCREEN_H - NAV_BAR_H) - botY - UI_S(8);  // remaining height
 
     // Perf % label – very large
     lv_obj_t *perfCard = lv_obj_create(container);
@@ -62,18 +62,18 @@ void SpeedScreen::create(lv_obj_t *parent) {
     lv_obj_t *perfTitle = lv_label_create(perfCard);
     lv_label_set_text(perfTitle, "Perf %");
     styleLabel(perfTitle, FONT_MED, CLR_TEXT_DIM);
-    lv_obj_align(perfTitle, LV_ALIGN_TOP_MID, 0, 4);
+    lv_obj_align(perfTitle, LV_ALIGN_TOP_MID, 0, UI_S(4));
 
     _lblPerf = lv_label_create(perfCard);
     lv_label_set_text(_lblPerf, "--");
-    lv_obj_set_style_text_font(_lblPerf, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(_lblPerf, montserratBySize(UI_S(48)), 0);
     lv_obj_set_style_text_color(_lblPerf, CLR_YELLOW, 0);
-    lv_obj_align(_lblPerf, LV_ALIGN_CENTER, 0, -10);
+    lv_obj_align(_lblPerf, LV_ALIGN_CENTER, 0, UI_S(-10));
 
     // Horizontal performance bar – wide and tall
     _bar = lv_bar_create(perfCard);
-    lv_obj_set_size(_bar, lv_obj_get_width(perfCard) - 24, UI_SPEED_BAR_H);
-    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, UI_SPEED_BAR_BOTTOM);
+    lv_obj_set_size(_bar, lv_obj_get_width(perfCard) - UI_S(24), UI_SPEED_BAR_H);
+    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, UI_S(UI_SPEED_BAR_BOTTOM));
     lv_bar_set_range(_bar, 0, 120);
     lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
     lv_obj_set_style_bg_color(_bar, CLR_SURFACE, 0);

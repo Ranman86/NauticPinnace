@@ -14,6 +14,7 @@
 // Pull in the app headers
 #include "../src/display/DisplayManager.h"
 #include "../src/display/ConfigOverlay.h"
+#include "../src/display/HomeOverlay.h"   // --shots: the launcher is part of the set
 #include "../src/display/LicenseOverlay.h"
 #include "../src/display/LanguageOverlay.h"
 #include "../src/display/BootScreen.h"
@@ -47,6 +48,9 @@ uint32_t getTickFps(bool reset) {
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <cstdio>     // snprintf - used by the --shots file naming
+#include <cstdlib>    // atoi
+#include <cctype>     // tolower
 #include <string>
 
 // ── LVGL draw buffer (SRAM on PC) ────────────────────────────────────────────
@@ -99,6 +103,33 @@ static bool sim_load_device_config(const char *explicitPath) {
 }
 
 // ── Demo tick thread ──────────────────────────────────────────────────────────
+// Screen title -> file name stem for --shots. Titles are translated, so they
+// carry German umlauts in UTF-8; those are transliterated rather than dropped,
+// which keeps "Uebersicht" readable instead of turning it into "_bersicht".
+// Everything else outside [A-Za-z0-9] collapses to a single underscore.
+static void shotNameFromTitle(const char *title, char *out, size_t outSz) {
+    size_t o = 0;
+    for (const unsigned char *p = (const unsigned char *)title; *p && o + 3 < outSz; p++) {
+        const char *rep = nullptr;
+        if (*p == 0xC3 && p[1]) {                 // two-byte Latin-1 supplement
+            switch (*++p) {
+                case 0x84: case 0xA4: rep = "ae"; break;   // A-umlaut / a-umlaut
+                case 0x96: case 0xB6: rep = "oe"; break;   // O-umlaut / o-umlaut
+                case 0x9C: case 0xBC: rep = "ue"; break;   // U-umlaut / u-umlaut
+                case 0x9F:            rep = "ss"; break;   // sharp s
+                default:              rep = "_";  break;
+            }
+        }
+        if (rep) { while (*rep && o + 1 < outSz) out[o++] = *rep++; continue; }
+        if ((*p >= 'A' && *p <= 'Z') || (*p >= 'a' && *p <= 'z') ||
+            (*p >= '0' && *p <= '9')) out[o++] = (char)tolower(*p);
+        else if (o > 0 && out[o - 1] != '_')      out[o++] = '_';
+    }
+    while (o > 0 && out[o - 1] == '_') o--;       // no trailing underscore
+    out[o] = '\0';
+    if (o == 0) snprintf(out, outSz, "screen");
+}
+
 static std::atomic<bool> s_running{true};
 
 static std::atomic<bool> s_demo_enabled{false};
@@ -122,15 +153,27 @@ int main(int argc, char *argv[]) {
     //               remember the consent, which would block the UI every start.
     // --de / --en : force the start language. Without either, the sim uses the
     //               same default as a fresh device (cfg.lang, i.e. English).
-    bool selfTest = false, firstRun = false, openConfig = false;
+    bool selfTest = false, firstRun = false, openConfig = false, openHome = false;
     const char *forceLang = nullptr, *forceTheme = nullptr, *cfgPath = nullptr;
     int  startScreen = -1;      // --screen N : open that screen id straight away
     bool noDemo      = false;   // --nodemo   : no demo data at all (= no GPS fix)
     bool noPerf      = false;   // --noperf   : hide the fps/CPU overlay (for docs)
+    // --shots DIR : walk the whole screen catalogue plus the home launcher and
+    //               the config overlay, write one BMP each into DIR, then quit.
+    //               A runtime flag rather than the old CAPTURE_ALL_SCREENS
+    //               #define, because a documentation set has to be regenerated
+    //               for every theme and every orientation - six runs - and
+    //               rebuilding in between only invites a stale binary.
+    // --settle MS : render time granted per shot. The canvas screens are slow in
+    //               the PC software renderer, and Depth and Wind-Plot need to
+    //               build up their history before they show anything at all.
+    const char *shotsDir = nullptr;
+    int  shotSettleMs    = 4000;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--selftest") == 0) selfTest = true;
         if (strcmp(argv[i], "--firstrun") == 0) firstRun = true;
         if (strcmp(argv[i], "--config") == 0)   openConfig = true;
+        if (strcmp(argv[i], "--home") == 0)     openHome   = true;   // 7B launcher overlay
         if (strcmp(argv[i], "--light") == 0)    forceTheme = "light";
         if (strcmp(argv[i], "--dark") == 0)     forceTheme = "dark";
         if (strcmp(argv[i], "--night") == 0)    forceTheme = "night";
@@ -140,7 +183,10 @@ int main(int argc, char *argv[]) {
         if (strcmp(argv[i], "--noperf") == 0)  noPerf = true;
         if (strcmp(argv[i], "--en") == 0)       forceLang = "en";
         if (strcmp(argv[i], "--de") == 0)       forceLang = "de";
+        if (strcmp(argv[i], "--shots") == 0 && i + 1 < argc) shotsDir = argv[++i];
+        if (strcmp(argv[i], "--settle") == 0 && i + 1 < argc) shotSettleMs = atoi(argv[++i]);
     }
+    if (shotsDir) noPerf = true;   // the fps counter has no place in a manual
     if (selfTest) firstRun = true;   // the picker is the first click target
     printf("NauticPinnace Simulator\n");
     printf("Resolution: %d x %d\n", UI_SCREEN_W, UI_SCREEN_H);
@@ -178,6 +224,25 @@ int main(int argc, char *argv[]) {
     fillLightTheme(appConfig.cfg.themeLight);
     fillNightTheme(appConfig.cfg.themeNight);
     const bool cfgLoaded = sim_load_device_config(cfgPath);
+
+    // Screen rotation - AFTER the config load, which is where the value comes
+    // from (the driver is registered before that). Same contract as on the
+    // device: hor/ver stay PHYSICAL and LVGL swaps them for 90/270, so the SDL
+    // window keeps the panel shape and the picture lies on its side inside it -
+    // exactly what the real panel does when you mount it rotated.
+    switch (appConfig.cfg.displayRotation) {
+        case 90:  disp_drv.rotated = LV_DISP_ROT_90;  break;
+        case 180: disp_drv.rotated = LV_DISP_ROT_180; break;
+        case 270: disp_drv.rotated = LV_DISP_ROT_270; break;
+        default:  disp_drv.rotated = LV_DISP_ROT_NONE; break;
+    }
+    disp_drv.sw_rotate = (disp_drv.rotated != LV_DISP_ROT_NONE) ? 1 : 0;
+    if (disp_drv.sw_rotate) {
+        lv_disp_drv_update(lv_disp_get_default(), &disp_drv);
+        printf("[sim] rotation %u deg -> logical %dx%d\n",
+               (unsigned)appConfig.cfg.displayRotation,
+               (int)lv_disp_get_hor_res(NULL), (int)lv_disp_get_ver_res(NULL));
+    }
     if (!cfgLoaded) {
         // No config to mirror: fall back to the light theme, which is what the
         // simulator has always started in.
@@ -198,7 +263,14 @@ int main(int argc, char *argv[]) {
         Entropy::generateApPassword(appConfig.cfg.apPass, sizeof(appConfig.cfg.apPass));
 
     i18nSetLang(i18nLangFromCode(forceLang ? forceLang : appConfig.cfg.lang));
-    appConfig.cfg.demoMode       = !noDemo;
+    // The DEMO banner hangs off cfg.demoMode, while the demo DATA comes from
+    // s_demo_enabled further down - so a --shots run can keep the values and
+    // drop the banner. That is the same argument --noperf makes: a device with
+    // real sensors on the bus shows neither. It matters here because the banner
+    // is drawn OVER the top of the instrument instead of pushing it down, so it
+    // was covering screen titles and the first row of grid cells in a third of
+    // the captured images. For a screenshot OF demo mode, use --screen N.
+    appConfig.cfg.demoMode       = !noDemo && !shotsDir;
     // The sim has no radio; WiFi is "on" anyway so that the WiFi section of the
     // settings is shown in full (status + address instead of "WLAN aus").
     appConfig.cfg.wifiEnabled    = true;
@@ -215,7 +287,22 @@ int main(int argc, char *argv[]) {
     applyThemeFromConfig();
 
     // Pre-allocate "PSRAM" arena on PC (normal heap)
-    PsramArena::init(4 * 1024 * 1024);  // 4 MB
+    // Mirror the DEVICE arena sizes (main.cpp) so an over-budget canvas
+    // OOMs here on the PC first, not on the boat. The per-alloc trace in
+    // PsramArena.cpp (SIMULATOR only) is the sizing evidence.
+#if defined(BOARD_PANEL_1024X600)
+    PsramArena::init(4420000);
+#else
+    PsramArena::init(3350000);
+#endif
+
+    // The DataModel's AIS table and history rings are arena buffers as well
+    // (main.cpp does this right after the arena init). The sim MUST do it
+    // itself: it never runs the device's setup(), and `data` is a global whose
+    // constructor left those pointers null. Without this line the first render
+    // segfaults — DepthScreen and WindPlotScreen memcpy the whole ring
+    // unconditionally — taking the --shots documentation run with it.
+    data.initBuffers();
 
     // Allocate the polar table (else gPolar() dereferences a null polarPtr and
     // the Wind/Speed screens segfault). No load() — the PC has no polar.json, so
@@ -246,6 +333,8 @@ int main(int argc, char *argv[]) {
     if (firstRun && !appConfig.cfg.licenseAccepted) languageOverlay.requestOpen();
     // --config: open the settings straight away (layout check without a mouse click).
     if (openConfig) dispMgr.requestOpenConfig();
+    // --home: open the 7B launcher overlay straight away (crash repro/layout).
+    if (openHome) dispMgr.requestOpenHome();
 
     // Config overlay toggles for manual testing: C=open, X=close, K=keyboard.
 
@@ -287,8 +376,12 @@ int main(int argc, char *argv[]) {
         // Periodic screenshot for the dev visual-feedback loop. Note: the default
         // (Wind) screen's canvas render is heavy in the PC software renderer
         // (~250 ms/frame), so 40 iterations ≈ a fresh sim_shot.bmp every ~10 s.
-        static int shotFrame = 0;
-        if (++shotFrame == 14 || shotFrame % 40 == 0) sim_hal_screenshot("sim_shot.bmp");
+        // Suppressed during --shots: it would scribble a stray sim_shot.bmp into
+        // the working directory in the middle of a documentation run.
+        if (!shotsDir) {
+            static int shotFrame = 0;
+            if (++shotFrame == 14 || shotFrame % 40 == 0) sim_hal_screenshot("sim_shot.bmp");
+        }
 
         // ---- --selftest: guard against the lost-click regression -------------
         // Injects a FAST click (DOWN and UP in the same SDL_PollEvent drain, the
@@ -428,25 +521,64 @@ int main(int argc, char *argv[]) {
             }
         }
 
-// Layout survey aid (opt-in): #define CAPTURE_ALL_SCREENS at the top of this
-// file to walk every screen, write scr_NN.bmp for each and quit. Used to measure
-// dead space at the bottom of each screen. Give each screen a few seconds —
-// Depth and Wind-Plot build their history over time and look empty before that.
-#ifdef CAPTURE_ALL_SCREENS
-        {
-            static int capScr = 0;
-            static uint32_t capT = 0;
-            if (capT == 0) capT = now;
-            if (now - capT > 4000) {                    // settle time per screen
+        // ---- --shots DIR: documentation capture ------------------------------
+        // Walks the whole catalogue, then the two full-screen overlays, and
+        // quits. Slots that hold no screen (unconfigured grid pages) are skipped
+        // rather than captured blank: showScreen() refuses a null slot and
+        // leaves _cur where it was, so a mismatching currentIndex() identifies
+        // them exactly.
+        if (shotsDir) {
+            static int      capStep = -1;
+            static uint32_t capT    = 0;
+            const int total = dispMgr.screenTotal();
+            if (capStep < 0) { capStep = 0; capT = now; dispMgr.showScreen(0); }
+            if (now - capT > (uint32_t)shotSettleMs) {
                 capT = now;
-                char path[32];
-                snprintf(path, sizeof(path), "scr_%02d.bmp", capScr);
-                sim_hal_screenshot(path);
-                if (++capScr >= 19) s_running = false;
-                else dispMgr.showScreen(capScr);
+                char path[512];
+                if (capStep < total) {
+                    if (dispMgr.currentIndex() == capStep) {
+                        char name[64];
+                        shotNameFromTitle(dispMgr.currentTitle(), name, sizeof(name));
+                        snprintf(path, sizeof(path), "%s/scr_%02d_%s.bmp",
+                                 shotsDir, capStep, name);
+                        sim_hal_screenshot(path);
+                        printf("[shots] %s\n", path);
+                    } else {
+                        printf("[shots] slot %d empty, skipped\n", capStep);
+                    }
+                    while (++capStep < total) {
+                        dispMgr.showScreen(capStep);
+                        if (dispMgr.currentIndex() == capStep) break;
+                        printf("[shots] slot %d empty, skipped\n", capStep);
+                    }
+                    if (capStep >= total) dispMgr.requestOpenHome();
+                } else if (capStep == total) {
+                    snprintf(path, sizeof(path), "%s/ovl_00_home.bmp", shotsDir);
+                    sim_hal_screenshot(path);
+                    printf("[shots] %s\n", path);
+                    homeOverlay.close();
+                    dispMgr.requestOpenConfig();
+                    capStep++;
+                } else if (capStep == total + 1) {
+                    snprintf(path, sizeof(path), "%s/ovl_01_config.bmp", shotsDir);
+                    sim_hal_screenshot(path);
+                    printf("[shots] %s\n", path);
+                    configOverlay.close();
+                    licenseOverlay.open();
+                    capStep++;
+                } else {
+                    // The licence page belongs in the documentation like the
+                    // other two overlays, and it is also the one screen whose
+                    // layout depends on the label being unwrapped - see the
+                    // note on LV_TEXT_FLAG_FIT in LicenseOverlay::build().
+                    snprintf(path, sizeof(path), "%s/ovl_02_license.bmp", shotsDir);
+                    sim_hal_screenshot(path);
+                    printf("[shots] %s\n", path);
+                    printf("[shots] done\n");
+                    s_running = false;
+                }
             }
         }
-#endif
 
         SDL_Delay(5);
     }

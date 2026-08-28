@@ -1,12 +1,26 @@
 #pragma once
 #include <Arduino.h>
 #include <cmath>
+#include <stdlib.h>
+#include <string.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
+#include "../PsramArena.h"
 
 // ============================================================
 // DataModel – central store for all live NMEA 2000 data.
 // Access always through the RAII lock guard.
+//
+// The bulk buffers (AIS targets and the history rings) are NOT members any
+// more, only pointers into the PSRAM arena – see initBuffers(). As plain
+// arrays they were ~10.5 KB of .bss in a global object, on boards where the
+// free internal RAM is measured in tens of kilobytes and WiFi/HTTP is the
+// first thing to suffer. None of that data is touched from an ISR or used as
+// a DMA target, so PSRAM is a safe home for it.
+//
+// Consequence to keep in mind when editing this file: sizeof() on those
+// members is now the size of a POINTER. Anything that clears or copies them
+// must spell out count * element size.
 // ============================================================
 
 struct AisTarget {
@@ -191,7 +205,7 @@ public:
     }
     // ---- AIS ---------------------------------------------------------------
     static constexpr int MAX_AIS = 50;
-    AisTarget aisTargets[MAX_AIS];
+    AisTarget *aisTargets = nullptr;   // MAX_AIS entries, PSRAM (initBuffers)
     int       aisCount = 0;
 
     // ---- Tanks (PGN 127505 Fluid Level) ------------------------------------
@@ -230,27 +244,28 @@ public:
     static constexpr int DEPTH_HIST  = 300;
     static constexpr int SPEED_HIST  = 120;
 
-    WindSample windHistory[WIND_HIST];
+    // The rings live in the PSRAM arena, only the indices stay here.
+    WindSample *windHistory = nullptr;   // WIND_HIST entries
     int        windHistIdx  = 0;
     bool       windHistFull = false;
 
-    float depthHistory[DEPTH_HIST];
+    float *depthHistory = nullptr;       // DEPTH_HIST entries
     int   depthHistIdx  = 0;
     bool  depthHistFull = false;
 
-    float speedHistory[SPEED_HIST];
+    float *speedHistory = nullptr;       // SPEED_HIST entries
     int   speedHistIdx  = 0;
 
     // Heave ring for the wave estimator (~16 s @ 5 Hz). Stores value + timestamp.
     static constexpr int HEAVE_HIST = 80;
-    float    heaveHistVal[HEAVE_HIST];
-    uint32_t heaveHistMs [HEAVE_HIST];
+    float    *heaveHistVal = nullptr;    // HEAVE_HIST entries
+    uint32_t *heaveHistMs  = nullptr;    // HEAVE_HIST entries
     int      heaveHistIdx  = 0;
     bool     heaveHistFull = false;
 
     // Barometric pressure trend ring (~1.5 h @ one sample/min on real data).
     static constexpr int PRESS_HIST = 90;
-    float    pressHistVal[PRESS_HIST];
+    float    *pressHistVal = nullptr;    // PRESS_HIST entries
     int      pressHistIdx  = 0;
     bool     pressHistFull = false;
     uint32_t lastPressPushMs = 0;
@@ -260,30 +275,181 @@ public:
 
     DataModel() {
         mutex = xSemaphoreCreateMutex();
-        memset(depthHistory, 0, sizeof(depthHistory));
-        memset(speedHistory, 0, sizeof(speedHistory));
-        memset(heaveHistVal, 0, sizeof(heaveHistVal));
-        memset(heaveHistMs,  0, sizeof(heaveHistMs));
-        memset(pressHistVal, 0, sizeof(pressHistVal));
+        // The bulk buffers are deliberately NOT allocated here. This object is
+        // a global (main.cpp / sim_main.cpp), so its constructor runs before
+        // setup() and therefore before the PSRAM arena exists. initBuffers()
+        // does the allocation, right after PsramArena::init().
     }
 
-    // Reset every value to "no data" (NaN / zero) while KEEPING the mutex.
-    // Call with the lock held. A plain `data = DataModel()` must never be used
-    // for this: it would overwrite `mutex` with the temporary's fresh handle
-    // while a Lock still holds the old one — the guard would then give back a
-    // semaphore nobody waits on and every later lock would use a different
-    // object. Preserving the handle here keeps that impossible.
+    // Allocate the AIS table and the history rings from the PSRAM arena.
+    // Call ONCE at startup, after PsramArena::init() and before anything can
+    // read or write the model. Both entry points must do it themselves:
+    // main.cpp for the device, sim_main.cpp for the PC simulator — the
+    // simulator never runs the device's startup path. Miss it there and the
+    // first render walks straight into a null pointer, because screens like
+    // WindPlot/Depth memcpy the whole ring unconditionally.
+    void initBuffers() {
+        // The "already done" flag is deliberately NOT `if (aisTargets)`: if the
+        // AIS table were the one allocation that failed, that test would stay
+        // false and a second call would allocate all the OTHER buffers a second
+        // time — and the arena never frees, so the first set would be lost for
+        // good.
+        if (buffersInited) return;
+        buffersInited = true;
+
+        aisTargets   = (AisTarget  *)allocBuf(sizeof(AisTarget)  * MAX_AIS,    "aisTargets");
+        windHistory  = (WindSample *)allocBuf(sizeof(WindSample) * WIND_HIST,  "windHistory");
+        depthHistory = (float      *)allocBuf(sizeof(float)      * DEPTH_HIST, "depthHistory");
+        speedHistory = (float      *)allocBuf(sizeof(float)      * SPEED_HIST, "speedHistory");
+        heaveHistVal = (float      *)allocBuf(sizeof(float)      * HEAVE_HIST, "heaveHistVal");
+        heaveHistMs  = (uint32_t   *)allocBuf(sizeof(uint32_t)   * HEAVE_HIST, "heaveHistMs");
+        pressHistVal = (float      *)allocBuf(sizeof(float)      * PRESS_HIST, "pressHistVal");
+        // Arena memory arrives zero-filled, which is the right starting state
+        // for every numeric ring (that is what the old constructor memset did).
+        // It is NOT right for an AIS slot: its declared defaults are NaN
+        // position and navStatus 15 (undefined), while all-zero would read as a
+        // real ship sitting at 0°N 0°E.
+        resetAisSlots();
+    }
+
+    // Reset every value to "no data" (NaN / zero) while KEEPING the mutex and
+    // the arena buffers. Call with the lock held.
+    //
+    // This clears the fields IN PLACE. The old implementation built a
+    // `DataModel blank` on the stack and assigned it over *this; that is now
+    // impossible for two independent reasons, and the second one was already a
+    // live defect before any of this moved to PSRAM:
+    //   1. windHistory & co. are pointers into the arena now. The temporary's
+    //      copies are null, so the assignment would replace every live buffer
+    //      with a null pointer and all later samples would be written through
+    //      it.
+    //   2. That temporary was ~11.7 KB of automatic storage. The only caller is
+    //      the DEMO task in main.cpp, whose stack is 4,096 bytes — so booting
+    //      in demo mode and then switching demo off overflowed that stack.
+    //      In place, clearValues() needs no meaningful stack at all.
+    // The mutex needs no special handling any more either: it is simply never
+    // written, so a Lock waiting on it keeps waiting on the same semaphore.
     void clearValues() {
-        SemaphoreHandle_t keep = mutex;
-        SemaphoreHandle_t fresh;
-        {
-            DataModel blank;          // all members at their declared defaults
-            fresh = blank.mutex;      // ... including a semaphore we do not want
-            blank.mutex = keep;       // don't let the copy clobber the live one
-            *this = blank;
-        }
-        mutex = keep;
-        if (fresh) vSemaphoreDelete(fresh);   // no leak per switch
+        // ---- Navigation ----
+        lat = lon = sog = cog = hdg = variation = stw = NAN;
+        lastGpsUpdate = 0;
+
+        // ---- Wind ----
+        awa = aws = twa = tws = twd = NAN;
+        lastWindUpdate = 0;
+
+        // ---- Depth ----
+        depth = NAN;
+        depthOffset = 0;
+        lastDepthUpdate = 0;
+
+        // ---- Engine ----
+        rpm = oilPressure = coolantTemp = engineHours = fuelFlow = NAN;
+        engineInstance = 0;
+        lastEngineUpdate = 0;
+
+        // ---- Electrical ----
+        batteryVoltage = batteryCurrent = NAN;
+
+        // ---- Rudder ----
+        rudderAngle = NAN;
+        lastRudderUpdate = 0;
+
+        // ---- Attitude / motion ----
+        roll = pitch = yaw = rateOfTurn = heave = NAN;
+        lastAttitudeUpdate = 0;
+        lastHeaveUpdate    = 0;
+        waveHeight = wavePeriod = NAN;
+
+        // ---- Environment ----
+        airTemp = waterTemp = humidity = pressure = NAN;
+        lastEnvUpdate = 0;
+
+        // ---- Distance log ----
+        logDistance = tripDistance = NAN;
+        lastLogUpdate = 0;
+
+        // ---- Time / date ----
+        sysDays        = 0;
+        sysSecOfDay    = 0;
+        localOffsetMin = 0;
+        lastTimeUpdate = 0;
+        timeValid      = false;
+        timeIsReal     = false;
+
+        // ---- Tide forecast (BSH) ----
+        for (int i = 0; i < MAX_TIDE_FC; i++) tideFc[i] = TideExtreme{};
+        tideFcCount = 0;
+        memset(tideStation, 0, sizeof(tideStation));
+        tideIsBsh    = false;
+        lastTideFcMs = 0;
+
+        // ---- Tide from the bus ----
+        tideBusLevel  = NAN;
+        tideBusRising = false;
+        memset(tideBusStation, 0, sizeof(tideBusStation));
+        lastTideBusUpdate = 0;
+
+        // ---- Waypoint navigation ----
+        navActive = false;
+        navDtw = navBtw = navXte = navVmc = NAN;
+        navWpNum = 0;
+        lastNavUpdate = 0;
+
+        // ---- Autopilot ----
+        apHeading = apTargetHeading = apRudder = NAN;
+        apMode    = 0;
+        apEngaged = false;
+        lastApUpdate = 0;
+
+        // ---- Media / audio ----
+        memset(mediaSourceName, 0, sizeof(mediaSourceName));
+        mediaSourceCount = 0;
+        mediaSource      = -1;
+        memset(mediaTitle,  0, sizeof(mediaTitle));
+        memset(mediaArtist, 0, sizeof(mediaArtist));
+        memset(mediaAlbum,  0, sizeof(mediaAlbum));
+        mediaElapsedMs = 0;
+        mediaTotalMs   = 0;
+        mediaPlayState = 0;
+        memset(mediaZoneVol,  0, sizeof(mediaZoneVol));
+        memset(mediaZoneMute, 0, sizeof(mediaZoneMute));
+        mediaConnected   = false;
+        lastMediaUpdate  = 0;
+
+        // ---- AIS ----
+        resetAisSlots();
+        aisCount = 0;
+
+        // ---- Tanks / battery banks ----
+        for (int i = 0; i < MAX_TANKS; i++) tanks[i] = TankInfo{};
+        tankCount = 0;
+        for (int i = 0; i < MAX_BATT; i++) batteries[i] = BatteryBank{};
+        battCount = 0;
+
+        // ---- History rings ----
+        // sizeof(ring) is DELIBERATELY not used below: these members are
+        // pointers, so sizeof() would be 4 and each memset would clear one
+        // sample instead of the whole buffer — while still looking correct.
+        if (windHistory)  memset(windHistory,  0, sizeof(WindSample) * WIND_HIST);
+        if (depthHistory) memset(depthHistory, 0, sizeof(float)      * DEPTH_HIST);
+        if (speedHistory) memset(speedHistory, 0, sizeof(float)      * SPEED_HIST);
+        if (heaveHistVal) memset(heaveHistVal, 0, sizeof(float)      * HEAVE_HIST);
+        if (heaveHistMs)  memset(heaveHistMs,  0, sizeof(uint32_t)   * HEAVE_HIST);
+        if (pressHistVal) memset(pressHistVal, 0, sizeof(float)      * PRESS_HIST);
+        windHistIdx  = 0; windHistFull  = false;
+        depthHistIdx = 0; depthHistFull = false;
+        speedHistIdx = 0;
+        heaveHistIdx = 0; heaveHistFull = false;
+        pressHistIdx = 0; pressHistFull = false;
+        lastPressPushMs = 0;
+    }
+
+    // Put every AIS slot back to its declared defaults. Does NOT touch
+    // aisCount — the callers decide what that means.
+    void resetAisSlots() {
+        if (!aisTargets) return;
+        for (int i = 0; i < MAX_AIS; i++) aisTargets[i] = AisTarget{};
     }
 
     // RAII guard – use: { auto lock = data.lock(); ... }
@@ -295,13 +461,19 @@ public:
     Lock lock() { return Lock(mutex); }
 
     // ---- Helpers -----------------------------------------------------------
+    // The null checks in the push helpers cover the window before
+    // initBuffers() has run (and the theoretical case of an exhausted arena
+    // AND an exhausted DRAM heap). Dropping a sample there is far better than
+    // a null-pointer store: the ring simply stays empty.
     void pushWindSample(float twd_deg, float tws_kn) {
+        if (!windHistory) return;
         windHistory[windHistIdx] = { twd_deg, tws_kn, (uint32_t)millis() };
         windHistIdx = (windHistIdx + 1) % WIND_HIST;
         if (windHistIdx == 0) windHistFull = true;
     }
 
     void pushDepthSample(float d) {
+        if (!depthHistory) return;
         depthHistory[depthHistIdx] = d;
         depthHistIdx = (depthHistIdx + 1) % DEPTH_HIST;
         if (depthHistIdx == 0) depthHistFull = true;
@@ -313,6 +485,7 @@ public:
     // data lock; this mutex is NON-recursive, so re-locking here would deadlock.
     void pushHeaveSample(float h, uint32_t nowMs) {
         if (isnan(h)) return;
+        if (!heaveHistVal || !heaveHistMs) return;
         heaveHistVal[heaveHistIdx] = h;
         heaveHistMs [heaveHistIdx] = nowMs;
         heaveHistIdx = (heaveHistIdx + 1) % HEAVE_HIST;
@@ -359,6 +532,7 @@ public:
     // ring spans ~1.5 h. LOCK-FREE: callers already hold the data lock.
     void pushPressureSample(float hPa, uint32_t nowMs) {
         if (isnan(hPa)) return;
+        if (!pressHistVal) return;
         bool first = (pressHistIdx == 0 && !pressHistFull);
         if (!first && (nowMs - lastPressPushMs) < 60000) return;
         lastPressPushMs = nowMs;
@@ -388,6 +562,7 @@ public:
 
     // Remove stale AIS targets (not heard for > timeoutMs)
     void purgeAisTargets(uint32_t timeoutMs = 300000) {
+        if (!aisTargets) { aisCount = 0; return; }
         uint32_t now = millis();
         int j = 0;
         for (int i = 0; i < aisCount; i++) {
@@ -399,8 +574,26 @@ public:
         aisCount = j;
     }
 
-    // Find or allocate an AIS target slot by MMSI
+    // Find or allocate an AIS target slot by MMSI.
+    //
+    // NEVER returns null, and must not start to. The AIS handlers in
+    // N2kHandler.cpp (onAisClassA/B, onAisStaticA/B) write through the result
+    // immediately — `t->lat = ...`, `strncpy(t->name, ...)` — without checking
+    // it, which was always safe because aisTargets used to be a plain member
+    // array. Now that the table is an arena allocation it can in theory be
+    // missing (arena exhausted AND the DRAM fallback in allocBuf() failed), so
+    // that case is served from a single scratch slot: the message is parsed
+    // into a bit bucket and dropped. Dropping AIS traffic on a board that has
+    // no memory left for an AIS table is the correct behaviour; returning null
+    // here would only move the fault into four unguarded stores on the live-bus
+    // path.
     AisTarget* findOrCreateAis(uint32_t mmsi) {
+        if (!aisTargets) {
+            // aisCount stays 0, so nothing ever reads this slot back out.
+            aisScratch = AisTarget{};
+            aisScratch.mmsi = mmsi;
+            return &aisScratch;
+        }
         for (int i = 0; i < aisCount; i++)
             if (aisTargets[i].mmsi == mmsi) return &aisTargets[i];
         if (aisCount < MAX_AIS) {
@@ -415,6 +608,46 @@ public:
         aisTargets[oldest] = AisTarget{};
         aisTargets[oldest].mmsi = mmsi;
         return &aisTargets[oldest];
+    }
+
+private:
+    bool buffersInited = false;   // initBuffers() has run (see there)
+
+    // Bit bucket for findOrCreateAis() when there is no AIS table at all.
+    // ~76 bytes of internal RAM against the 3,800 the table itself no longer
+    // costs — the price of keeping that function's "never null" contract.
+    AisTarget aisScratch;
+
+    // One arena allocation for initBuffers(), with a DRAM fallback. A null
+    // here would turn every later write into a null-pointer store, so an
+    // exhausted arena must not be accepted silently: fall back to the internal
+    // heap, which is exactly where these buffers used to live. The arena hands
+    // back zeroed memory, malloc() does not — so zero it ourselves.
+    //
+    // If both fail, say so loudly. Not every consumer of these buffers checks
+    // for null — DepthScreen and WindPlotScreen memcpy their whole ring
+    // unconditionally — so a silent null resurfaces much later as an
+    // unexplained crash in a render task, where the backtrace no longer says
+    // WHICH buffer was missing. `what` is the one piece of information that
+    // cannot be recovered afterwards.
+    //
+    // It deliberately does not halt or restart: on a healthy board this path is
+    // unreachable (initBuffers() runs immediately after PsramArena::init(),
+    // with the whole arena still free), and the 4-inch board is a released
+    // product that must not gain a new way to boot-loop.
+    static void *allocBuf(size_t bytes, const char *what) {
+        void *p = PsramArena::alloc(bytes);
+        if (!p) {
+            p = malloc(bytes);
+            if (p) memset(p, 0, bytes);
+        }
+        if (!p) {
+            Serial.printf("[DataModel] FATAL: %s (%u bytes) not allocated - "
+                          "PSRAM arena exhausted AND internal heap full\n",
+                          what, (unsigned)bytes);
+            Serial.flush();
+        }
+        return p;
     }
 };
 

@@ -9,6 +9,7 @@ inline void setBrightness(uint8_t) {}
 inline void displayDiag()  {}
 inline void gt911Diag()    {}
 inline void displayInit()  {}
+inline void displayApplyRotation() {}
 inline void displayTick()  { lv_timer_handler(); }
 inline void boardBuzzer(bool) {}
 uint32_t    getTickFps(bool reset = false);
@@ -19,11 +20,19 @@ void        swipeSuppress();
 #else
 // ── Hardware (ESP32-S3) ───────────────────────────────────────────────────────
 #include <lvgl.h>
+#include "BoardConfig.h"
+
+// The 7B board is NOT driven through LovyanGFX. On that panel LovyanGFX only
+// ever produced a grey haze, while the ESP-IDF esp_lcd RGB API - the path
+// Waveshare's own example takes - works. Its backend therefore lives in
+// DisplaySetup_7B.cpp and none of the LovyanGFX types below exist for it.
+// Both boards still expose exactly the same functions further down, so nothing
+// else in the firmware has to care which one it is talking to.
+#if !defined(BOARD_PANEL_1024X600)
 #include <LovyanGFX.hpp>
 // ESP32-S3 specific RGB parallel panel and bus headers
 #include <lgfx/v1/platforms/esp32s3/Panel_RGB.hpp>
 #include <lgfx/v1/platforms/esp32s3/Bus_RGB.hpp>
-#include "BoardConfig.h"
 
 // ---------------------------------------------------------------------------
 // Panel_ST7701_WS4: panel-specific init commands for the Waveshare
@@ -131,6 +140,8 @@ public:
 
 extern LGFX gfx;
 
+#endif  // !BOARD_PANEL_1024X600
+
 // Set backlight brightness 0-255 via the CH32V003 PWM register.
 // (PWM polarity is inverted: 0=full brightness, 255=off)
 void setBrightness(uint8_t brightness);
@@ -143,6 +154,11 @@ void gt911Diag();
 uint32_t getTickFps(bool reset = false);
 
 void displayInit();
+// Apply the configured screen rotation. MUST be called AFTER the config is
+// loaded: displayInit() runs before that (LVGL has to exist first), so it
+// would only ever see the default of 0 - which is exactly the bug that made
+// a saved rotation look like it did nothing.
+void displayApplyRotation();
 void displayTick();
 
 // Drive the on-board buzzer (CH32V003 expander pin 7). Used by the anchor alarm.

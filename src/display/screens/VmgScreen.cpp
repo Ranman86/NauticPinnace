@@ -29,9 +29,9 @@ static float targetSpeed(float absTwa, float tws) {
 
 void VmgScreen::mkTile(lv_obj_t *parent, int x, int y, const char *label, lv_obj_t *&valOut) {
     lv_obj_t *c = lv_obj_create(parent);
-    lv_obj_set_size(c, 228, 104);
+    lv_obj_set_size(c, UI_S(228), UI_S(104));
     lv_obj_set_pos(c, x, y);
-    lv_obj_set_style_radius(c, 8, 0);
+    lv_obj_set_style_radius(c, UI_S(8), 0);
     lv_obj_set_style_border_width(c, 1, 0);
     lv_obj_set_style_border_color(c, CLR_BORDER, 0);
     lv_obj_set_style_bg_color(c, CLR_SURFACE, 0);
@@ -42,12 +42,12 @@ void VmgScreen::mkTile(lv_obj_t *parent, int x, int y, const char *label, lv_obj
     lv_label_set_text(l, label);
     lv_obj_set_style_text_font(l, FONT_SMALL, 0);
     lv_obj_set_style_text_color(l, CLR_TEXT_DIM, 0);
-    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, 10);
+    lv_obj_align(l, LV_ALIGN_TOP_MID, 0, UI_S(10));
     valOut = lv_label_create(c);
     lv_label_set_text(valOut, "--");
     lv_obj_set_style_text_font(valOut, FONT_LARGE, 0);
     lv_obj_set_style_text_color(valOut, CLR_TEXT, 0);
-    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, 10);
+    lv_obj_align(valOut, LV_ALIGN_CENTER, 0, UI_S(10));
 }
 
 void VmgScreen::create(lv_obj_t *parent) {
@@ -64,36 +64,36 @@ void VmgScreen::create(lv_obj_t *parent) {
     lv_label_set_text(_vmgCap, "VMG");
     lv_obj_set_style_text_font(_vmgCap, FONT_SMALL, 0);
     lv_obj_set_style_text_color(_vmgCap, CLR_TEXT_DIM, 0);
-    lv_obj_align(_vmgCap, LV_ALIGN_TOP_MID, 0, 14);
+    lv_obj_align(_vmgCap, LV_ALIGN_TOP_MID, 0, UI_S(14));
 
     _vmg = lv_label_create(container);
     lv_label_set_text(_vmg, "-- kn");
     lv_obj_set_style_text_font(_vmg, FONT_XL, 0);
     lv_obj_set_style_text_color(_vmg, CLR_TEXT, 0);
-    lv_obj_align(_vmg, LV_ALIGN_TOP_MID, 0, 34);
+    lv_obj_align(_vmg, LV_ALIGN_TOP_MID, 0, UI_S(34));
 
     _bar = lv_bar_create(container);
     lv_bar_set_range(_bar, 0, 120);
-    lv_obj_set_size(_bar, 360, 20);
-    lv_obj_align(_bar, LV_ALIGN_TOP_MID, -30, 110);
+    lv_obj_set_size(_bar, UI_S(360), UI_S(20));
+    lv_obj_align(_bar, LV_ALIGN_TOP_MID, UI_S(-30), UI_S(110));
     lv_obj_set_style_bg_color(_bar, CLR_SURFACE, 0);
-    lv_obj_set_style_radius(_bar, 6, 0);
-    lv_obj_set_style_radius(_bar, 6, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(_bar, UI_S(6), 0);
+    lv_obj_set_style_radius(_bar, UI_S(6), LV_PART_INDICATOR);
 
     _perf = lv_label_create(container);
     lv_label_set_text(_perf, "--%");
     lv_obj_set_style_text_font(_perf, FONT_MED, 0);
-    lv_obj_align(_perf, LV_ALIGN_TOP_RIGHT, -14, 108);
+    lv_obj_align(_perf, LV_ALIGN_TOP_RIGHT, UI_S(-14), UI_S(108));
 
     _guide = lv_label_create(container);
     lv_label_set_text(_guide, "");
     lv_obj_set_style_text_font(_guide, FONT_MED, 0);
-    lv_obj_align(_guide, LV_ALIGN_TOP_MID, 0, 150);
+    lv_obj_align(_guide, LV_ALIGN_TOP_MID, 0, UI_S(150));
 
-    mkTile(container, 11,  196, T(STR_VMG_T_TARGET),       _t[0]);
-    mkTile(container, 241, 196, T(STR_VMG_T_TARGET_ANGLE), _t[1]);
-    mkTile(container, 11,  308, T(STR_VMG_T_TWA_NOW),      _t[2]);
-    mkTile(container, 241, 308, "BSP",                     _t[3]);   // acronym, not translated
+    mkTile(container, UI_S(11),  UI_S(196), T(STR_VMG_T_TARGET),       _t[0]);
+    mkTile(container, UI_S(241), UI_S(196), T(STR_VMG_T_TARGET_ANGLE), _t[1]);
+    mkTile(container, UI_S(11),  UI_S(308), T(STR_VMG_T_TWA_NOW),      _t[2]);
+    mkTile(container, UI_S(241), UI_S(308), "BSP",                     _t[3]);   // acronym, not translated
 }
 
 void VmgScreen::update() {

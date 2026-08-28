@@ -25,7 +25,7 @@ public:
     void update() override;
     void resetForRebuild() override;
 
-    static constexpr int CS = 420;          // square canvas (centred drift view)
+    static constexpr int CS = UI_S(420);    // square canvas (centred drift view)
 
 private:
     lv_obj_t   *_canvas   = nullptr;
@@ -37,9 +37,14 @@ private:
     lv_obj_t   *_btnAlarmLbl = nullptr;
 
     // Breadcrumb track: boat offsets from the anchor in metres (North, East).
+    // The two 240-sample rings used to be members, i.e. ~1.9 KB of internal
+    // DRAM held for the whole app lifetime. They now come from the PSRAM arena
+    // (allocated in create()): one 8-byte sample every 3 s written from the UI
+    // task, read only by draw() - no ISR, no DMA, so PSRAM is safe here.
+    // Nullable, therefore: never dereference without the guard in update().
     static constexpr int TRACK_N = 240;
-    float    _trkN[TRACK_N];
-    float    _trkE[TRACK_N];
+    float   *_trkN    = nullptr;
+    float   *_trkE    = nullptr;
     int      _trkIdx  = 0;
     bool     _trkFull = false;
     uint32_t _lastTrkMs = 0;

@@ -32,6 +32,7 @@ private:
     // permanently, with a perfectly healthy heap. RAM responses cannot jam.
     uint8_t *_indexBuf = nullptr;
     size_t   _indexLen = 0;
+    bool     _indexGzip = false;   // cached copy is index.html.gz, not the plain file
     bool loadIndexToPsram();
 
     // ---- STA link supervision (see loop()) ----
@@ -42,6 +43,18 @@ private:
     uint32_t _retryDelay   = 0;       // current backoff
     uint16_t _reconnects   = 0;       // how often we had to step in (logged)
     bool     _wasUp        = false;   // for edge-triggered logging
+
+    // ---- half-dead link detection (gateway probe) ----
+    // WiFi.status() can stay WL_CONNECTED while the data path is gone: the
+    // radio still hears beacons (RSSI updates), but ARP/ping/TCP all die.
+    // Measured twice on the 7B - once after a crash-reboot, once simply under
+    // web-traffic load. Only an end-to-end probe catches this state, so the
+    // supervisor pings the gateway and forces a re-association after three
+    // consecutive misses.
+    uint32_t _lastProbe    = 0;       // millis of the last gateway ping
+    uint8_t  _probeMisses  = 0;       // consecutive failed probes
+    void     probeGateway();          // fire-and-forget async ping
+    void     forceReassoc(const char *why);
 
     void setupRoutes();
 

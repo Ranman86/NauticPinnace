@@ -21,13 +21,37 @@ UiFonts uiFont;
 // link, and hand those out instead. ~14 x sizeof(lv_font_t) of RAM in total.
 static struct FontPair { int sz; const lv_font_t *base; const lv_font_t *suppl; }
     s_fontPairs[] = {
-        {10,&lv_font_montserrat_10,&latin_suppl_10},{12,&lv_font_montserrat_12,&latin_suppl_12},
+        // Rows must match the LV_FONT_MONTSERRAT_XX enables in lv_conf.h -
+        // a row whose font is compiled out is an undefined-reference link
+        // error. The 7B drops the never-configured sizes (see lv_conf.h);
+        // montserratBySize() snaps requests to the nearest remaining row.
+#if LV_FONT_MONTSERRAT_10
+        {10,&lv_font_montserrat_10,&latin_suppl_10},
+#endif
+        {12,&lv_font_montserrat_12,&latin_suppl_12},
         {14,&lv_font_montserrat_14,&latin_suppl_14},{16,&lv_font_montserrat_16,&latin_suppl_16},
-        {18,&lv_font_montserrat_18,&latin_suppl_18},{20,&lv_font_montserrat_20,&latin_suppl_20},
-        {22,&lv_font_montserrat_22,&latin_suppl_22},{24,&lv_font_montserrat_24,&latin_suppl_24},
-        {28,&lv_font_montserrat_28,&latin_suppl_28},{32,&lv_font_montserrat_32,&latin_suppl_32},
-        {36,&lv_font_montserrat_36,&latin_suppl_36},{40,&lv_font_montserrat_40,&latin_suppl_40},
-        {44,&lv_font_montserrat_44,&latin_suppl_44},{48,&lv_font_montserrat_48,&latin_suppl_48},
+#if LV_FONT_MONTSERRAT_18
+        {18,&lv_font_montserrat_18,&latin_suppl_18},
+#endif
+#if LV_FONT_MONTSERRAT_20
+        {20,&lv_font_montserrat_20,&latin_suppl_20},
+#endif
+#if LV_FONT_MONTSERRAT_22
+        {22,&lv_font_montserrat_22,&latin_suppl_22},
+#endif
+        {24,&lv_font_montserrat_24,&latin_suppl_24},
+#if LV_FONT_MONTSERRAT_28
+        {28,&lv_font_montserrat_28,&latin_suppl_28},
+#endif
+        {32,&lv_font_montserrat_32,&latin_suppl_32},
+#if LV_FONT_MONTSERRAT_36
+        {36,&lv_font_montserrat_36,&latin_suppl_36},
+#endif
+        {40,&lv_font_montserrat_40,&latin_suppl_40},
+#if LV_FONT_MONTSERRAT_44
+        {44,&lv_font_montserrat_44,&latin_suppl_44},
+#endif
+        {48,&lv_font_montserrat_48,&latin_suppl_48},
     };
 static constexpr int FONT_PAIR_N = sizeof(s_fontPairs) / sizeof(s_fontPairs[0]);
 static lv_font_t s_fontWithFallback[FONT_PAIR_N];
@@ -62,17 +86,42 @@ const lv_font_t *bigFontBySize(int sz) {
     return montserratBySize(sz);             // <=48 px -> Montserrat fallback
 }
 
+// ---- Runtime screen orientation --------------------------------------------
+// Straight from LVGL: lv_disp_get_hor_res() already reports the ROTATED
+// resolution (it swaps the driver's hor/ver for 90 and 270), so this stays
+// correct no matter how the rotation was set.
+lv_coord_t uiScreenW() { return lv_disp_get_hor_res(NULL); }
+lv_coord_t uiScreenH() { return lv_disp_get_ver_res(NULL); }
+bool       uiPortrait() { return uiScreenH() > uiScreenW(); }
+
 void applyThemeFromConfig() {
-    // Sizes (shared across variants).
-    #define X(n,d) uiSz.n = appConfig.cfg.themeSizes.n;
+    // Sizes (shared across variants). Configured on the 480 DESIGN grid and
+    // scaled here once (UI_S; identity off the 7B) - same contract as the
+    // fonts below, so the WebUI size controls keep meaning the same design.
+    #define X(n,d) uiSz.n = UI_S(appConfig.cfg.themeSizes.n);
     THEME_SIZE_FIELDS(X)
     #undef X
-    // Fonts (size per role -> nearest compiled Montserrat).
-    #define X(r,d) uiFont.r = montserratBySize(appConfig.cfg.themeFonts.r);
+    // ...but NOT every themeable "size" is a pixel count. Opacities (0-255)
+    // and animation times (ms) live in the same list and must be taken raw -
+    // the blanket UI_S above turned a 4000 ms fade delay into 5000 ms and an
+    // opacity of 128 into 160. Restore those here rather than splitting the
+    // X-macro list, which four files expand.
+    #define RAW(n) uiSz.n = appConfig.cfg.themeSizes.n;
+    RAW(navBtnBgOpa) RAW(navBtnBgOpaPress) RAW(navBtnArrowOpa)   // 0-255
+    RAW(perfBgOpa) RAW(rudderPortOpa) RAW(rudderStbOpa)          // 0-255
+    RAW(navFadeDelayMs) RAW(navFadeOutMs) RAW(navFadeInMs)       // milliseconds
+    #undef RAW
+    // Fonts (size per role -> nearest compiled Montserrat). The configured
+    // sizes live on the 480 DESIGN grid; UI_S scales them to the current grid
+    // (7B: x1.25 -> 12->14, 14->18, 16->20, 24->28, 32->40, 40->48; 48 stays
+    // 48, the largest Montserrat). Identity on the 4" and 480 simulator, so
+    // one stored config keeps meaning the same design on every board.
+    #define X(r,d) uiFont.r = montserratBySize(UI_S(appConfig.cfg.themeFonts.r));
     THEME_FONT_FIELDS(X)
     #undef X
     // Large numeric fonts (96/192 px custom; <=48 px Montserrat fallback).
-    #define X(r,d) uiFont.r = bigFontBySize(appConfig.cfg.themeFonts.r);
+    // UI_S keeps 96/120 and 192/240 inside the same custom-font buckets.
+    #define X(r,d) uiFont.r = bigFontBySize(UI_S(appConfig.cfg.themeFonts.r));
     THEME_BIGFONT_FIELDS(X)
     #undef X
 
@@ -87,4 +136,16 @@ void applyThemeFromConfig() {
     THEME_COLOR_FIELDS(X)
     #undef X
     Serial.printf("[theme] applied '%s'\n", appConfig.cfg.themeActive);
+}
+
+// See the long note on the declaration in Theme.h. Depth-first over the whole
+// subtree; runs in microseconds and only when a screen is built or shown, so
+// it is cheap enough to apply defensively rather than remembering to clear the
+// flag at all 95 label creation sites.
+void uiDisableLabelScroll(lv_obj_t *root) {
+    if (!root) return;
+    if (lv_obj_check_type(root, &lv_label_class))
+        lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
+    const uint32_t n = lv_obj_get_child_cnt(root);
+    for (uint32_t i = 0; i < n; i++) uiDisableLabelScroll(lv_obj_get_child(root, i));
 }

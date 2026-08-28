@@ -2,6 +2,7 @@
 #include "DemoData.h"
 #include "MediaN2k.h"
 #include "../BoardConfig.h"
+#include "../Version.h"
 #include "../config/Config.h"
 #include <N2kMessages.h>
 
@@ -10,9 +11,82 @@
 #define ESP32_CAN_RX_PIN (gpio_num_t)CAN_RX_PIN
 #include <NMEA2000_CAN.h>
 
+// ---- N2K source selection & statistics --------------------------------------
+// Several bus devices can send the same data (two GPS, two compasses...).
+// Every handler for a selectable category calls srcGate() first: it records
+// the sender (source address + message count + last-seen, for GET
+// /api/sources) and then accepts the message only when no source is pinned
+// in the config or the pinned one matches. Bookkeeping happens for REJECTED
+// senders too, so the WebUI can list every candidate.
+N2kSrcSeen g_n2kSrcSeen[N2K_SRC_CAT_N][N2K_SRC_SLOTS] = {};
+
+static bool srcGate(int cat, const tN2kMsg &msg, int16_t pinned) {
+    N2kSrcSeen *row = g_n2kSrcSeen[cat];
+    int freeSlot = -1;
+    bool found = false;
+    for (int i = 0; i < N2K_SRC_SLOTS; i++) {
+        if (row[i].count && row[i].sa == msg.Source) {
+            row[i].count++;
+            row[i].lastMs = millis();
+            found = true;
+            break;
+        }
+        if (!row[i].count && freeSlot < 0) freeSlot = i;
+    }
+    if (!found && freeSlot >= 0) {
+        row[freeSlot].sa     = msg.Source;
+        row[freeSlot].count  = 1;
+        row[freeSlot].lastMs = millis();
+    }
+    return pinned < 0 || msg.Source == (uint8_t)pinned;
+}
+
+// ---- Sensor calibration helpers (see Config.h for the two semantics) --------
+static inline float calNorm360(float deg) {
+    while (deg >= 360.f) deg -= 360.f;
+    while (deg <    0.f) deg += 360.f;
+    return deg;
+}
+static inline float calNorm180(float deg) {
+    while (deg >  180.f) deg -= 360.f;
+    while (deg < -180.f) deg += 360.f;
+    return deg;
+}
+
 // ---- Init -------------------------------------------------------------------
 
 void N2kHandler::begin() {
+    // ---- CAN pins: board default unless the config overrides them ----------
+    // This runs inside the N2K task, long after the config file was read, so
+    // it is the first point where a configured pair CAN be applied - the
+    // instance itself was built during static initialisation with the
+    // compile-time defaults baked in.
+    //
+    // Anything unusable falls back to the board pins instead of being handed
+    // to the TWAI driver. A bad GPIO here does not fail loudly: the controller
+    // opens happily and simply never receives a frame, which looks exactly
+    // like dead hardware and is correspondingly expensive to chase.
+    auto usable = [](int p) {
+        if (p < 0 || p > 48)      return false;
+        if (p >= 22 && p <= 25)   return false;   // do not exist on the ESP32-S3
+        if (p >= 26 && p <= 37)   return false;   // SPI flash and octal PSRAM
+        return true;
+    };
+    int  txPin = appConfig.cfg.canTxPin;
+    int  rxPin = appConfig.cfg.canRxPin;
+    const bool fromCfg = usable(txPin) && usable(rxPin) && txPin != rxPin;
+    if (!fromCfg) {
+        if (txPin != -1 || rxPin != -1)
+            Serial.printf("[n2k] configured CAN pins TX=%d RX=%d are unusable - "
+                          "falling back to the board defaults\n", txPin, rxPin);
+        txPin = CAN_TX_PIN;
+        rxPin = CAN_RX_PIN;
+    }
+    static_cast<tNMEA2000_esp32 &>(NMEA2000)
+        .SetCANPins((gpio_num_t)txPin, (gpio_num_t)rxPin);
+    Serial.printf("[n2k] CAN pins TX=%d RX=%d (%s)\n", txPin, rxPin,
+                  fromCfg ? "from config" : "board default");
+
     // TJA1051T/3 standby pin: drive LOW to enable the transceiver.
     // If CAN_STB_PIN == -1 the pin is hardwired to GND on the PCB – nothing to do.
 #if CAN_STB_PIN >= 0
@@ -24,8 +98,8 @@ void N2kHandler::begin() {
         "NAUTICPINNACE-001",       // manufacturer's model serial code
         100,                     // manufacturer's product code
         "NauticPinnace",        // model ID
-        "1.0.0",                 // software version code
-        "1.0"                    // model version
+        FW_VERSION,              // software version code - see src/Version.h
+        FW_MODEL_VERSION         // model version (hardware generation)
     );
     NMEA2000.SetDeviceInformation(
         1001001,                 // unique device number
@@ -116,12 +190,14 @@ void N2kHandler::handleMsg(const tN2kMsg &msg) {
 // ---- PGN handlers -----------------------------------------------------------
 
 void N2kHandler::onHeading(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_HDG, msg, appConfig.cfg.srcHdg)) return;
     unsigned char SID;
     tN2kHeadingReference ref;
     double hdg, deviation, variation;
     if (!ParseN2kHeading(msg, SID, hdg, deviation, variation, ref)) return;
     auto lk = data.lock();
-    if (!N2kIsNA(hdg)) data.hdg = (float)RadToDeg(hdg);
+    if (!N2kIsNA(hdg))
+        data.hdg = calNorm360((float)RadToDeg(hdg) + appConfig.cfg.calHdgOffsetDeg);
     if (!N2kIsNA(variation)) data.variation = (float)RadToDeg(variation);
 }
 
@@ -132,20 +208,23 @@ void N2kHandler::onRudder(const tN2kMsg &msg) {
     if (!ParseN2kRudder(msg, angle, instance, dir, angleOrder)) return;
     auto lk = data.lock();
     if (!N2kIsNA(angle)) {
-        data.rudderAngle = (float)RadToDeg(angle);
+        // Zero-point then optional sense inversion (sensor mounted mirrored).
+        float a = (float)RadToDeg(angle) - appConfig.cfg.calRudderZeroDeg;
+        data.rudderAngle = appConfig.cfg.calRudderInvert ? -a : a;
         data.lastRudderUpdate = millis();
     }
 }
 
 // Precision-9 (or any AHRS) attitude / motion. Angles arrive in radians.
 void N2kHandler::onAttitude(const tN2kMsg &msg) {       // PGN 127257
+    if (!srcGate(N2K_SRC_ATT, msg, appConfig.cfg.srcAtt)) return;
     unsigned char SID;
     double yaw, pitch, roll;
     if (!ParseN2kAttitude(msg, SID, yaw, pitch, roll)) return;
     auto lk = data.lock();
     if (!N2kIsNA(yaw))   data.yaw   = fmodf((float)RadToDeg(yaw) + 360.f, 360.f);
-    if (!N2kIsNA(pitch)) data.pitch = (float)RadToDeg(pitch);
-    if (!N2kIsNA(roll))  data.roll  = (float)RadToDeg(roll);
+    if (!N2kIsNA(pitch)) data.pitch = (float)RadToDeg(pitch) - appConfig.cfg.calPitchZeroDeg;
+    if (!N2kIsNA(roll))  data.roll  = (float)RadToDeg(roll)  - appConfig.cfg.calRollZeroDeg;
     data.lastAttitudeUpdate = millis();
 }
 
@@ -184,17 +263,20 @@ void N2kHandler::onFluidLevel(const tN2kMsg &msg) {     // PGN 127505
 }
 
 void N2kHandler::onOutsideEnv(const tN2kMsg &msg) {     // PGN 130310
+    if (!srcGate(N2K_SRC_ENV, msg, appConfig.cfg.srcEnv)) return;
     unsigned char SID;
     double waterT, airT, press;
     if (!ParseN2kOutsideEnvironmentalParameters(msg, SID, waterT, airT, press)) return;
     auto lk = data.lock();
-    if (!N2kIsNA(waterT)) data.waterTemp = (float)(waterT - 273.15);
+    if (!N2kIsNA(waterT)) data.waterTemp = (float)(waterT - 273.15) + appConfig.cfg.calWaterTempOffC;
     if (!N2kIsNA(airT))   data.airTemp   = (float)(airT   - 273.15);
-    if (!N2kIsNA(press))  { data.pressure = (float)(press / 100.0); data.pushPressureSample(data.pressure, millis()); }
+    if (!N2kIsNA(press))  { data.pressure = (float)(press / 100.0) + appConfig.cfg.calPressureOffHpa;
+                            data.pushPressureSample(data.pressure, millis()); }
     data.lastEnvUpdate = millis();
 }
 
 void N2kHandler::onEnvParams(const tN2kMsg &msg) {     // PGN 130311
+    if (!srcGate(N2K_SRC_ENV, msg, appConfig.cfg.srcEnv)) return;
     unsigned char SID;
     tN2kTempSource     ts;
     tN2kHumiditySource hs;
@@ -203,11 +285,12 @@ void N2kHandler::onEnvParams(const tN2kMsg &msg) {     // PGN 130311
     auto lk = data.lock();
     if (!N2kIsNA(temp)) {
         float c = (float)(temp - 273.15);
-        if (ts == N2kts_SeaTemperature) data.waterTemp = c;
+        if (ts == N2kts_SeaTemperature) data.waterTemp = c + appConfig.cfg.calWaterTempOffC;
         else                            data.airTemp   = c;
     }
     if (!N2kIsNA(humid)) data.humidity = (float)humid;
-    if (!N2kIsNA(press)) { data.pressure = (float)(press / 100.0); data.pushPressureSample(data.pressure, millis()); }
+    if (!N2kIsNA(press)) { data.pressure = (float)(press / 100.0) + appConfig.cfg.calPressureOffHpa;
+                           data.pushPressureSample(data.pressure, millis()); }
     data.lastEnvUpdate = millis();
 }
 
@@ -217,8 +300,10 @@ void N2kHandler::onPressure(const tN2kMsg &msg) {       // PGN 130314
     double press;
     if (!ParseN2kPressure(msg, SID, inst, ps, press)) return;
     if (ps != N2kps_Atmospheric) return;               // only barometric
+    if (!srcGate(N2K_SRC_ENV, msg, appConfig.cfg.srcEnv)) return;
     auto lk = data.lock();
-    if (!N2kIsNA(press)) { data.pressure = (float)(press / 100.0); data.pushPressureSample(data.pressure, millis()); }
+    if (!N2kIsNA(press)) { data.pressure = (float)(press / 100.0) + appConfig.cfg.calPressureOffHpa;
+                           data.pushPressureSample(data.pressure, millis()); }
     data.lastEnvUpdate = millis();
 }
 
@@ -299,12 +384,14 @@ void N2kHandler::onDistanceLog(const tN2kMsg &msg) {   // PGN 128275
 }
 
 void N2kHandler::onTempExt(const tN2kMsg &msg) {       // PGN 130312
+    if (!srcGate(N2K_SRC_ENV, msg, appConfig.cfg.srcEnv)) return;
     unsigned char SID, inst; tN2kTempSource src; double actual, setT;
     if (!ParseN2kTemperature(msg, SID, inst, src, actual, setT)) return;
     if (N2kIsNA(actual)) return;
     float c = (float)(actual - 273.15);                 // K → °C
     auto lk = data.lock();
-    if      (src == N2kts_SeaTemperature)     { data.waterTemp = c; data.lastEnvUpdate = millis(); }
+    if      (src == N2kts_SeaTemperature)     { data.waterTemp = c + appConfig.cfg.calWaterTempOffC;
+                                                data.lastEnvUpdate = millis(); }
     else if (src == N2kts_OutsideTemperature) { data.airTemp   = c; data.lastEnvUpdate = millis(); }
 }
 
@@ -408,21 +495,27 @@ void N2kHandler::onDcStatus(const tN2kMsg &msg) {       // PGN 127506
 }
 
 void N2kHandler::onSpeed(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_STW, msg, appConfig.cfg.srcStw)) return;
     unsigned char SID;
     double waterRef, groundRef;
     tN2kSpeedWaterReferenceType type;
     if (!ParseN2kBoatSpeed(msg, SID, waterRef, groundRef, type)) return;
     auto lk = data.lock();
-    if (!N2kIsNA(waterRef)) data.stw = (float)(waterRef / 0.5144f); // m/s → kn
+    if (!N2kIsNA(waterRef))
+        data.stw = (float)(waterRef / 0.5144f)                    // m/s → kn
+                   * (appConfig.cfg.calStwFactorPct / 100.0f);    // paddle-wheel cal
 }
 
 void N2kHandler::onDepth(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_DEPTH, msg, appConfig.cfg.srcDepth)) return;
     unsigned char SID;
     double depth, offset, range;
     if (!ParseN2kWaterDepth(msg, SID, depth, offset, range)) return;
     auto lk = data.lock();
     if (!N2kIsNA(depth)) {
-        data.depth = (float)depth;
+        // Additive transducer offset (waterline vs keel); never below zero.
+        float d = (float)depth + appConfig.cfg.calDepthOffsetM;
+        data.depth = d < 0.f ? 0.f : d;
         if (!N2kIsNA(offset)) data.depthOffset = (float)offset;
         data.pushDepthSample(data.depth);
         data.lastDepthUpdate = millis();
@@ -430,6 +523,7 @@ void N2kHandler::onDepth(const tN2kMsg &msg) {
 }
 
 void N2kHandler::onPositionRapid(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_POS, msg, appConfig.cfg.srcPos)) return;
     double lat, lon;
     if (!ParseN2kPGN129025(msg, lat, lon)) return;
     auto lk = data.lock();
@@ -439,6 +533,7 @@ void N2kHandler::onPositionRapid(const tN2kMsg &msg) {
 }
 
 void N2kHandler::onCogSog(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_POS, msg, appConfig.cfg.srcPos)) return;
     unsigned char SID;
     tN2kHeadingReference ref;
     double cog, sog;
@@ -462,6 +557,7 @@ void N2kHandler::onGnss(const tN2kMsg &msg) {
     //    converted it with RadToDeg and wrote it to data.variation, thereby
     //    overwriting the CORRECT value from PGN 127258. Visible only on boats with
     //    DGNSS/RTK, because otherwise the library delivers "not available".
+    if (!srcGate(N2K_SRC_POS, msg, appConfig.cfg.srcPos)) return;
     unsigned char  SID, nSatellites, refStations;
     uint16_t       daysSince1970, refStationId;
     double         secondsSinceMidnight, lat, lon, alt;
@@ -481,6 +577,7 @@ void N2kHandler::onGnss(const tN2kMsg &msg) {
 }
 
 void N2kHandler::onWind(const tN2kMsg &msg) {
+    if (!srcGate(N2K_SRC_WIND, msg, appConfig.cfg.srcWind)) return;
     unsigned char SID;
     double speed, angle;
     tN2kWindReference ref;
@@ -493,8 +590,11 @@ void N2kHandler::onWind(const tN2kMsg &msg) {
     auto lk = data.lock();
     switch (ref) {
         case N2kWind_Apparent:
-            data.aws = spKn;
-            data.awa = angDeg;
+            // Vane rotation + anemometer scale apply to the APPARENT wind
+            // only - the sensor measures apparent; true wind derived from it
+            // (by us or by the sender) inherits the correction naturally.
+            data.aws = spKn * (appConfig.cfg.calAwsFactorPct / 100.0f);
+            data.awa = calNorm180(angDeg + appConfig.cfg.calAwaOffsetDeg);
             break;
         // True wind referenced to the vessel's axis. Accept BOTH references:
         // 4 = over water (Heading/STW), 3 = over ground (COG/SOG). Reference 3

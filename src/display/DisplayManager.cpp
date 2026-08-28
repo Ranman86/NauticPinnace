@@ -1,4 +1,5 @@
 #include "DisplayManager.h"
+#include "SideBar.h"
 #include "Theme.h"
 #include "../i18n/I18n.h"
 #include "../config/Config.h"
@@ -26,11 +27,89 @@
 #include "screens/RouteScreen.h"
 #include "../SunCalc.h"
 #include "ConfigOverlay.h"
+#include "HomeOverlay.h"
 #include "LicenseOverlay.h"
 #include "LanguageOverlay.h"
 #include <string.h>
 
 DisplayManager dispMgr;
+
+#if defined(BOARD_PANEL_1024X600)
+// Where the 600x600 instrument block sits, per orientation. Landscape puts the
+// three blocks side by side (rail | instrument | sidebar), portrait stacks them
+// (rail on top, instrument, sidebar at the bottom) - the sizes are identical,
+// only the axis changes, which is why no screen needs to know about this.
+static inline lv_coord_t contentX() { return uiPortrait() ? 0 : UI7_CONTENT_X; }
+static inline lv_coord_t contentY() { return uiPortrait() ? UI7_RAIL_W : UI7_CONTENT_Y; }
+
+// ---- Paint split (1024x600 boards only) -------------------------------------
+// main.cpp times the whole of dispMgr.update() as one number ("paint"). That
+// lump is two very different jobs: the current screen painting its instrument
+// into a PSRAM canvas, and everything else this manager does around it -
+// sidebar values, demo and alarm banners, the perf overlay, the anchor watch,
+// the deferred overlay/theme/config work. Knowing which of the two carries the
+// 250 ms decides where any optimisation goes, so both are measured here, per
+// call, and the two worst cases are handed to the heartbeat.
+//
+// Nothing prints from here; dispPaintTake() is reset-on-read like
+// dispPerfTake() in DisplaySetup_7B.cpp, so every heartbeat describes its own
+// 5 s window. These two counters have exactly ONE consumer (the heartbeat),
+// which is what makes reset-on-read safe - see the two-consumer trap spelled
+// out around s_refrTotal in DisplaySetup_7B.cpp. _perfBusyUs below is the
+// on-screen overlay's own, separate accumulator and is left untouched.
+static uint32_t s_scrPaintMaxUs = 0;   // worst _screens[_cur]->update()
+static uint32_t s_chromePaintMaxUs = 0;   // worst rest-of-update() in the SAME call
+
+// The same worst case, but kept PER SCREEN and never reset. s_scrPaintMaxUs
+// above only ever describes whatever screen happened to be up, which is why
+// the wind instrument was the only one anybody had numbers for. This table
+// costs 4 bytes per screen and fills itself in as the user navigates, so one
+// walk through the carousel produces the whole picture. Printed by
+// dispScreenPaintReport(), never reset - a max is only meaningful cumulative.
+static uint32_t s_scrPaintMaxUsBy[MAX_SCREENS] = { 0 };
+
+// Three properties that cost real time on EVERY draw-buffer pass and buy this
+// UI nothing. Applied to the full-bleed containers - the screen root, the
+// instrument block, and each screen's own container - which are by design
+// plain coloured rectangles: no scrolling, no border, no rounded corners.
+//
+// Measured context: a full-screen refresh of a nearly EMPTY screen costs 226 ms
+// of which 186 ms is LVGL drawing, and the per-strip cost is the same (~3 ms)
+// whether the pass paints 10,200 pixels or 3,300. So almost all of it is paid
+// per pass, per object - not per pixel. These three are exactly that shape:
+//
+//   SCROLLABLE  - lv_obj_create() sets it by default. A scrollable object
+//                 misses the early return in lv_obj_scroll.c and runs
+//                 lv_obj_get_scrollbar_area (~1.9 KB of code) twice per strip,
+//                 walking every child to conclude that nothing scrolls. Every
+//                 other container in this UI already clears it; these did not.
+//   border_post - the default theme's card style sets it, so lv_obj runs a
+//                 COMPLETE second descriptor pass per strip to draw a border
+//                 that these containers give width 0.
+//   radius      - inherited as ~10 from the theme. Nothing here is rounded, but
+//                 a non-zero radius makes every object draw allocate,
+//                 initialise and free a radius mask - out of the LVGL pool
+//                 whose exhaustion has rebooted this device before.
+//
+// Deliberately NOT applied to the tiles, cards or the sidebar cells: those are
+// rounded on purpose and that is the design.
+static void stripChrome(lv_obj_t *o) {
+    if (!o) return;
+    lv_obj_clear_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_border_post(o, false, 0);
+    lv_obj_set_style_radius(o, 0, 0);
+}
+
+// Declared extern at the call site (main.cpp) rather than in DisplayManager.h,
+// because that header is shared with the 4" board, which has no such counters.
+void dispPaintTake(uint32_t *screenMaxUs, uint32_t *chromeMaxUs) {
+    if (screenMaxUs) *screenMaxUs = s_scrPaintMaxUs;
+    if (chromeMaxUs) *chromeMaxUs = s_chromePaintMaxUs;
+    s_scrPaintMaxUs    = 0;
+    s_chromePaintMaxUs = 0;
+}
+#endif
+
 
 static WindScreen      s_wind;
 static SpeedScreen     s_speed;
@@ -98,6 +177,11 @@ void DisplayManager::showScreen(int idx) {
     if (_screens[_cur]->container)
         lv_obj_clear_flag(_screens[_cur]->container, LV_OBJ_FLAG_HIDDEN);
     _screens[_cur]->onShow();
+    // Every time, over the whole tree rather than just the incoming screen:
+    // it also catches the sidebar, the banners and anything a screen created
+    // lazily in onShow(). See uiDisableLabelScroll() in Theme.h for what this
+    // costs when it is NOT done - it was the single biggest item in the frame.
+    uiDisableLabelScroll(_mainScreen);
     _forceUpdate = true;
     // Bring overlay arrows to top so they stay visible over screen content
     if (_btnPrev) lv_obj_move_foreground(_btnPrev);
@@ -204,7 +288,10 @@ void DisplayManager::reloadThemeLive() {
             _screens[i]->container = nullptr;
         }
         _screens[i]->resetForRebuild();             // null now-dangling child ptrs
-        esp_task_wdt_reset();
+        // esp_task_wdt_reset() removed: this task was never subscribed to the
+        // TWDT, so the call was always a no-op - but on Arduino 3.x / IDF 5.x
+        // every call logs "task_wdt: esp_task_wdt_reset(): task not found",
+        // ~100 lines/s of serial flood on the 7B.
         vTaskDelay(pdMS_TO_TICKS(2));               // yield SPI0 to WiFi beacon ISR
         _screens[i]->create(_content);              // rebuilds with new theme; reuses _cbuf
         if (_screens[i]->container && i != _cur)
@@ -240,18 +327,31 @@ void DisplayManager::prevScreen() {
 }
 
 void DisplayManager::update() {
+#if defined(BOARD_PANEL_1024X600)
+    // Whole-function stamp. The screen's own paint is subtracted from it at the
+    // bottom, so "chrome" is measured on the SAME call as the instrument and the
+    // two never come from different frames.
+    const int64_t tUpdate0 = esp_timer_get_time();
+#endif
     _forceUpdate = false;
     languageOverlay.update();  // deferred open in the LVGL context
     licenseOverlay.update();   // deferred open in the LVGL context
     // Apply a pending screen-config change (set by the web handler) here, in the
     // LVGL-safe loop context rather than the async TCP task.
-    if (_screenCfgPending) { _screenCfgPending = false; applyScreenConfig(); }
+    if (_screenCfgPending) { _screenCfgPending = false; applyScreenConfig();
+                             sideBar.applyConfig();
+                             // Rebuilt sidebar cells are the newest siblings and
+                             // would otherwise render over the perf overlay.
+                             if (_perfOverlay) lv_obj_move_foreground(_perfOverlay); }
     // Reload polar table if the web handler just saved new data.
     if (_polarReloadPending) { _polarReloadPending = false; gPolar().load(appConfig.cfg.polarFile); }
     // Live theme re-apply (colours/sizes/fonts) — rebuilds the UI without a reboot.
-    if (_themeReloadPending) { _themeReloadPending = false; reloadThemeLive(); }
+    if (_themeReloadPending) { _themeReloadPending = false; reloadThemeLive();
+                               sideBar.restyle(); }
     // Open the on-screen config overlay (requested by the top-edge swipe gesture).
     if (_openConfigPending) { _openConfigPending = false; configOverlay.open(); }
+    // Open the 7B home/launcher overlay (requested by the rail's home button).
+    if (_openHomePending) { _openHomePending = false; homeOverlay.open(); }
     // Deferred reboot: the message was painted by earlier displayTick()s; restart
     // once the grace period elapses (config changes that need a clean WiFi re-init).
     if (_rebootPending && (int32_t)(millis() - _rebootAtMs) >= 0) {
@@ -262,24 +362,105 @@ void DisplayManager::update() {
         _rebootPending = false;
 #endif
     }
-    // Apply any pending nav-arrow show request first (safe: called outside lv_timer_handler)
-    applyNavArrowsPending();
     // A full-screen overlay covers the instrument completely. Continuing to
     // draw it anyway is pure waste — the wind page paints an entire
     // 480x480 PSRAM canvas in the process — and exactly this compute time is
     // missing from the overlay, which is why scrolling in the license text
     // stuttered badly.
+    //
+    // The home launcher belongs in this list as well. It was built after the
+    // other three and never added here, so the instrument kept rendering at
+    // full cost behind its tiles.
     const bool modalOpen = configOverlay.isOpen() || licenseOverlay.isOpen() ||
-                           languageOverlay.isOpen();
+                           languageOverlay.isOpen() || homeOverlay.isOpen();
+    // Suppressing the PAINT above is only half of it. LVGL still DRAWS the whole
+    // screen behind the overlay and the overlay then paints over the result:
+    // lv_refr.c searches for an object that covers the redraw area only inside
+    // the ACTIVE SCREEN (lv_refr_area_part, line 730), while an overlay parented
+    // to lv_layer_top() is refreshed unconditionally afterwards (line 793). So an
+    // opaque full-screen overlay can never suppress anything below it, however
+    // opaque it is.
+    //
+    // What that costs, measured on the 5B while scrolling the licence text: one
+    // frame took 1,190 ms, of which 1,160 ms was LVGL drawing and 31 ms the
+    // flush. That is 2.4 us per pixel against 0.29 us on an ordinary screen -
+    // eight times the cost, all of it spent rendering an instrument that nobody
+    // can see, including a 600x600 canvas image blitted out of PSRAM once per
+    // strip.
+    //
+    // Hiding the screen makes refr_obj() return immediately (lv_refr.c line 967)
+    // for the entire subtree. All four overlays are full-screen and LV_OPA_COVER
+    // (see their build() functions), so there is nothing to show through; the
+    // display background is set to CLR_BG in activate() for the same reason.
+    // Hidden objects are also skipped by hit-testing, so touches stop leaking
+    // through to the instrument behind a modal.
+    if (modalOpen != _modalWasOpen && _mainScreen) {
+        if (modalOpen) lv_obj_add_flag(_mainScreen, LV_OBJ_FLAG_HIDDEN);
+        else {
+            lv_obj_clear_flag(_mainScreen, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_invalidate(_mainScreen);   // nothing below was drawn while hidden
+        }
+    }
+    // Closing edge: bring the whole view up to date in the very next frame, so
+    // the instrument does not reappear showing values from before the menu.
+    if (_modalWasOpen && !modalOpen) _forceUpdate = true;
+    _modalWasOpen = modalOpen;
 
+    // 7B sidebar values, twice a second (no-op stub on other boards). Since the
+    // overlays went full-screen the sidebar is covered too, so this is just as
+    // wasteful as the instrument itself.
+    if (!modalOpen) {
+        const uint32_t nowSb = millis();
+        if (nowSb - _lastSideBarMs >= 500) { _lastSideBarMs = nowSb; sideBar.updateValues(); }
+    }
+    // Apply any pending nav-arrow show request first (safe: called outside lv_timer_handler)
+    applyNavArrowsPending();
+
+    // This brace measures the CANVAS PAINT of the current screen and nothing
+    // else - it is the "CPU%" of the perf overlay. It is a different event from
+    // the overlay's "fps", which counts finished LVGL display refreshes; the
+    // paint writes pixels into a PSRAM canvas, and LVGL only puts them on the
+    // panel later, from lv_timer_handler(). _perfFrames counts paint passes and
+    // is currently kept for the reset alone - no readout shows it.
     uint32_t t0 = (uint32_t)(esp_timer_get_time());  // µs
     if (!modalOpen && _screens[_cur]) _screens[_cur]->update();
+#if defined(BOARD_PANEL_1024X600)
+    // Same stamp, two readers: the overlay's running total (unchanged) and the
+    // heartbeat's worst case. No extra timer read, and the 4" branch below is
+    // the original statement token for token.
+    const uint32_t scrUs = (uint32_t)(esp_timer_get_time()) - t0;
+    _perfBusyUs += scrUs;
+    if (scrUs > s_scrPaintMaxUs) s_scrPaintMaxUs = scrUs;
+    // Only when a screen was actually painted: with a modal open scrUs is the
+    // cost of not painting, and folding that into the screen's own maximum
+    // would make an untouched screen look fast for the wrong reason.
+    if (!modalOpen && _cur >= 0 && _cur < MAX_SCREENS &&
+        scrUs > s_scrPaintMaxUsBy[_cur]) s_scrPaintMaxUsBy[_cur] = scrUs;
+#else
     _perfBusyUs += (uint32_t)(esp_timer_get_time()) - t0;
+#endif
     _perfFrames++;
-    updateDemoBanner();
-    updatePerfOverlay();
+    // Both of these write labels that sit UNDER the overlay. A label write
+    // invalidates its area, and LVGL then redraws that strip including the
+    // overlay stacked above it - so skipping them is a real saving, not just a
+    // skipped assignment. The perf figures stay honest: the counters keep
+    // running and the next reading simply spans the time the menu was open.
+    if (!modalOpen) {
+        updateDemoBanner();
+        updatePerfOverlay();
+    }
+    // Deliberately NOT suspended: the anchor watch is a safety function and has
+    // to keep running while the user is standing in a menu.
     evaluateAnchorAlarm();
     evaluateAutoTheme();
+#if defined(BOARD_PANEL_1024X600)
+    // Everything this function did EXCEPT the instrument paint. Unsigned
+    // subtraction of two values taken in this same call, so it cannot go
+    // negative even when the paint was skipped (scrUs is then ~0, not stale:
+    // t0 is stamped every call whether or not a screen is painted).
+    const uint32_t chromeUs = (uint32_t)(esp_timer_get_time() - tUpdate0) - scrUs;
+    if (chromeUs > s_chromePaintMaxUs) s_chromePaintMaxUs = chromeUs;
+#endif
 }
 
 // Solar auto theme: when cfg.themeAuto is on, switch the active palette to light
@@ -404,6 +585,31 @@ const char *DisplayManager::currentTitle() const {
     return _screens[_cur] ? _screens[_cur]->title() : "";
 }
 
+#if defined(BOARD_PANEL_1024X600)
+// One line naming every screen that has been on display since boot and what
+// its worst canvas paint cost, sorted by cost. Screens never visited are left
+// out rather than printed as 0, so the line says what was measured and nothing
+// more. Called from the heartbeat about once a minute.
+void DisplayManager::reportScreenPaint() const {
+    int idx[MAX_SCREENS], n = 0;
+    for (int i = 0; i < MAX_SCREENS; i++)
+        if (s_scrPaintMaxUsBy[i] && _screens[i]) idx[n++] = i;
+    if (!n) return;
+    for (int i = 1; i < n; i++) {              // insertion sort, descending
+        const int v = idx[i];
+        int k = i - 1;
+        while (k >= 0 && s_scrPaintMaxUsBy[idx[k]] < s_scrPaintMaxUsBy[v]) { idx[k+1] = idx[k]; k--; }
+        idx[k+1] = v;
+    }
+    Serial.print("[paint/screen]");
+    for (int i = 0; i < n; i++)
+        Serial.printf(" %s=%.0f", _screens[idx[i]]->title(),
+                      s_scrPaintMaxUsBy[idx[i]] / 1000.0f);
+    Serial.println();
+    Serial.flush();
+}
+#endif
+
 // ── Opacity animation helper ──────────────────────────────────────────────────
 static void anim_opa_cb(void *obj, int32_t v) {
     lv_obj_set_style_opa((lv_obj_t *)obj, (lv_opa_t)v, 0);
@@ -501,7 +707,17 @@ void DisplayManager::cbSettings(lv_event_t *e) {
 // it only CREATES objects (no reentrant refresh, no blocking delay).
 void DisplayManager::requestReboot(const char *msg) {
     lv_obj_t *p = lv_obj_create(lv_layer_top());
+#if defined(BOARD_PANEL_1024X600)
+    // Cover the whole LOGICAL screen (portrait swaps w/h). This backdrop is a
+    // child of lv_layer_top(), and applying the rotation resizes that layer to
+    // the logical resolution - sizing it from the PHYSICAL panel would leave
+    // the lower 424 px live underneath a supposedly modal message and push the
+    // centred label off the right edge. Landscape is unaffected: there
+    // uiScreenW()/uiScreenH() are exactly LCD_WIDTH/LCD_HEIGHT.
+    lv_obj_set_size(p, uiScreenW(), uiScreenH());
+#else
     lv_obj_set_size(p, SCREEN_W, SCREEN_H);
+#endif
     lv_obj_set_pos(p, 0, 0);
     lv_obj_set_style_bg_color(p, CLR_BG, 0);
     lv_obj_set_style_bg_opa(p, LV_OPA_COVER, 0);
@@ -592,7 +808,18 @@ void DisplayManager::buildPerfOverlay(lv_obj_t *parent) {
     lv_obj_set_style_bg_color(_perfOverlay, (uiTheme.perfBg), 0);
     lv_obj_set_style_bg_opa(_perfOverlay, (lv_opa_t)uiSz.perfBgOpa, 0);
     lv_obj_set_style_pad_all(_perfOverlay, uiSz.perfPad, 0);
+#if defined(BOARD_PANEL_1024X600)
+    // Top-right corner of the INSTRUMENT area, never of the screen: the screen
+    // corner belongs to the rail or the data sidebar, and every WebUI save
+    // rebuilds the sidebar cells - the fresh objects then covered this overlay,
+    // which looked exactly like "the perf overlay switch stopped working".
+    // Landscape: pull left past the sidebar column. Portrait: the sidebar is at
+    // the BOTTOM, so the right edge is free and we only drop below the rail.
+    if (uiPortrait()) lv_obj_align(_perfOverlay, LV_ALIGN_TOP_RIGHT, -2, UI7_RAIL_W + 2);
+    else              lv_obj_align(_perfOverlay, LV_ALIGN_TOP_RIGHT, -(UI7_SIDEBAR_W + 2), 2);
+#else
     lv_obj_align(_perfOverlay, LV_ALIGN_TOP_RIGHT, -2, 2);
+#endif
     // Visibility follows config
     if (!appConfig.cfg.showPerfOverlay)
         lv_obj_add_flag(_perfOverlay, LV_OBJ_FLAG_HIDDEN);
@@ -613,10 +840,28 @@ void DisplayManager::updatePerfOverlay() {
     uint32_t elapsed = now - _perfLastMs;
     if (elapsed < 1000) return;
 
-    // FPS = LVGL displayTick() calls per second (= lv_timer_handler rate)
+    // fps = COMPLETED LVGL REFRESHES per second, not displayTick() calls as
+    // this comment used to claim: displayTick() runs on every loop() pass and
+    // usually finds nothing invalidated, so counting those would have reported
+    // a couple of hundred "frames" a second on a screen that never changed.
+    // What the counter behind getTickFps() means per build:
+    //   1024x600 - LVGL's monitor_cb, one call per finished refresh in every
+    //              orientation (DisplaySetup_7B.cpp)
+    //   simulator- presented SDL frames (sim_main.cpp)
+    //   4"       - unchanged, a flush strip that reached the last screen row
+    // On 1024x600 the heartbeat in main.cpp reads that same counter, so
+    // getTickFps(true) there resets only THIS reader's baseline - otherwise the
+    // two consumers would each see a fraction of the real frame count. The 4"
+    // board and the simulator have only this one reader and keep the plain
+    // reset-on-read they always had.
     float fps = (getTickFps(true) * 1000.0f) / elapsed;
 
-    // CPU% = time dispMgr.update() (canvas render) occupies
+    // CPU% = share of wall time spent painting the CURRENT SCREEN's canvas.
+    // Narrower than the "dispMgr.update()" this used to name: _perfBusyUs is
+    // accumulated around _screens[_cur]->update() alone (see update()), so the
+    // overlay handling, sidebar, alarm and theme work in the same function are
+    // not in it. While a modal is open nothing is painted and this reads ~0,
+    // which is correct rather than broken.
     float cpu = (_perfBusyUs / 1000.0f) * 100.0f / elapsed;
 
     // Free heap
@@ -662,12 +907,48 @@ void DisplayManager::activate() {
     lv_obj_t *root = _mainScreen;
     lv_obj_set_style_bg_color(root, CLR_BG, 0);
     lv_obj_set_style_bg_opa(root, OPA_FULL, 0);
+    // While a full-screen overlay is open the main screen is hidden (see
+    // update()), and LVGL then paints the DISPLAY background instead - which
+    // defaults to white. Nothing of it is visible behind an LV_OPA_COVER
+    // overlay, but a white flash on the way in or out would be, so it matches
+    // the UI background.
+    lv_disp_set_bg_color(lv_disp_get_default(), CLR_BG);
+#if defined(BOARD_PANEL_1024X600)
+    stripChrome(root);   // see the note at stripChrome()
+#endif
     Serial.println("[ACT] 3: root created"); Serial.flush();
 
     // Content area (above nav bar)
     lv_obj_t *content = lv_obj_create(root);
     lv_obj_set_size(content, SCREEN_W, SCREEN_H - NAV_BAR_H);
+#if defined(BOARD_PANEL_1024X600)
+    stripChrome(content);   // see the note at stripChrome()
+#endif
+#if defined(BOARD_PANEL_1024X600)
+#if UI7_CONTENT_ZOOM != 256
+    // Stage 2 (DEAD since the stage-3 port - UI7_CONTENT_ZOOM is 256 on both
+    // 1024x600 boards, and SCREEN_W/H are already 600, so line 718 makes this
+    // container 600x600 and a 1.25x zoom would produce 750x750, not 600x600).
+    // The original intent was to zoom the 480x480 grid up to the 600 px middle
+    // column. Pivot top-left, so the layout position stays the column origin;
+    // LVGL extends invalidation and hit-testing to the transformed area itself.
+    // Position comes from the same orientation-aware helpers as the live stage-1
+    // branch below - the hard-coded (UI7_CENTER_X, 0) that used to stand here
+    // was the landscape three-column shape and would have dropped the block on
+    // top of the rail in portrait. Identical in landscape, where contentX() is
+    // UI7_CONTENT_X == UI7_CENTER_X and contentY() is UI7_CONTENT_Y == 0.
+    lv_obj_set_pos(content, contentX(), contentY());
+    lv_obj_set_style_transform_pivot_x(content, 0, 0);
+    lv_obj_set_style_transform_pivot_y(content, 0, 0);
+    lv_obj_set_style_transform_zoom(content, UI7_CONTENT_ZOOM, 0);
+#else
+    // Stage 1: 7B three-column layout, the 480x480 screens render 1:1 and
+    // sharp, centered in the 600px middle column between rail and sidebar.
+    lv_obj_set_pos(content, contentX(), contentY());
+#endif
+#else
     lv_obj_set_pos(content, 0, 0);
+#endif
     lv_obj_set_style_bg_color(content, CLR_BG, 0);
     lv_obj_set_style_bg_opa(content, OPA_FULL, 0);
     lv_obj_set_style_border_width(content, 0, 0);
@@ -691,7 +972,8 @@ void DisplayManager::activate() {
     // Create only PRESENT screens: the 8 fixed instruments + active grid slots.
     for (int i = 0; i < MAX_SCREENS; i++) {
         if (!_screens[i]) continue;   // inactive grid slot
-        esp_task_wdt_reset();
+        // esp_task_wdt_reset() removed - never-subscribed no-op, floods the
+        // serial log on Arduino 3.x (see the note at the other site above)
         vTaskDelay(pdMS_TO_TICKS(2));   // yield SPI0 to WiFi beacon ISR
         Serial.printf("[ACT] 5.%d: create \"%s\"  free=%u\n",
             i, _screens[i]->title(),
@@ -700,6 +982,11 @@ void DisplayManager::activate() {
         _screens[i]->create(content);
         if (_screens[i]->container)
             lv_obj_add_flag(_screens[i]->container, LV_OBJ_FLAG_HIDDEN);
+#if defined(BOARD_PANEL_1024X600)
+        // Centrally, not inside each screen's create(): the screen files are
+        // shared with the released 4-inch board and must not change there.
+        stripChrome(_screens[i]->container);
+#endif
         {
             lv_mem_monitor_t _m; lv_mem_monitor(&_m);
             Serial.printf("[ACT] 5.%d: OK  lv pool used=%u free=%u\n",
@@ -709,14 +996,28 @@ void DisplayManager::activate() {
     }
     Serial.println("[ACT] 6: screens created"); Serial.flush();
 
+#if defined(BOARD_PANEL_1024X600)
+    // 7B: navigation lives in the left rail (SideBar) - no floating overlay
+    // arrows, no fade timer, no top gear. Everything downstream is null-safe
+    // for the untouched _btnPrev/_btnNext/_btnSettings pointers.
+    sideBar.build(root);
+    Serial.println("[ACT] 7: rail + sidebar created"); Serial.flush();
+#else
     // Side-overlay navigation arrows (no bottom bar)
     buildOverlayNav(root);
     Serial.println("[ACT] 7: overlay nav created"); Serial.flush();
+#endif
 
     // Demo mode warning banner – last child so it renders on top.
     _demoBanner = lv_obj_create(root);
+#if defined(BOARD_PANEL_1024X600)
+    // Banner spans the instrument column only (not rail/sidebar).
+    lv_obj_set_size(_demoBanner, UI7_CENTER_W, uiSz.demoBannerH);
+    lv_obj_set_pos(_demoBanner, contentX(), contentY());
+#else
     lv_obj_set_size(_demoBanner, SCREEN_W, uiSz.demoBannerH);
     lv_obj_set_pos(_demoBanner, 0, 0);
+#endif
     lv_obj_set_style_bg_color(_demoBanner, (uiTheme.demoBanner), 0);
     lv_obj_set_style_bg_opa(_demoBanner, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_demoBanner, 0, 0);
@@ -741,8 +1042,13 @@ void DisplayManager::activate() {
     // all content (created last + moved to foreground when active). Fires on ANY
     // screen so the watch is effective even when another instrument is shown.
     _alarmBanner = lv_obj_create(root);
+#if defined(BOARD_PANEL_1024X600)
+    lv_obj_set_size(_alarmBanner, UI7_CENTER_W, 30);
+    lv_obj_set_pos(_alarmBanner, contentX(), contentY());
+#else
     lv_obj_set_size(_alarmBanner, SCREEN_W, 30);
     lv_obj_set_pos(_alarmBanner, 0, 0);
+#endif
     lv_obj_set_style_bg_color(_alarmBanner, CLR_RED, 0);
     lv_obj_set_style_bg_opa(_alarmBanner, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(_alarmBanner, 0, 0);

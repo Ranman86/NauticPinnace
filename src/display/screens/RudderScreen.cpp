@@ -1,4 +1,5 @@
 #include "RudderScreen.h"
+#include "RenderYield.h"
 #include "../../PsramArena.h"
 #include "../../i18n/I18n.h"
 #include "../UiConfig.h"
@@ -13,7 +14,7 @@
 // A sharp needle points to the exact value.
 // Below the arc: large numeric angle + direction word.
 
-static constexpr int CS = RudderScreen::CS;   // 480
+static constexpr int CS = RudderScreen::CS;   // SCREEN_W (480; 600 on the 7B)
 
 void RudderScreen::create(lv_obj_t *parent) {
     container = lv_obj_create(parent);
@@ -35,7 +36,7 @@ void RudderScreen::create(lv_obj_t *parent) {
 
     _lblAngle = lv_label_create(container);
     lv_label_set_text(_lblAngle, "0.0°");
-    lv_obj_set_style_text_font(_lblAngle, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(_lblAngle, montserratBySize(UI_S(48)), 0);
     lv_obj_set_style_text_color(_lblAngle, CLR_TEXT, 0);
     lv_obj_align(_lblAngle, LV_ALIGN_TOP_MID, 0, CS + UI_RUDDER_ANGLE_Y);
 
@@ -54,7 +55,7 @@ void RudderScreen::drawRudder(float angle) {
             int rows = (CS - row < 8) ? CS - row : 8;
             lv_color_t *rowEnd = p + (size_t)rows * CS;
             while (p < rowEnd) *p++ = bgColor;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();   // at most one tick per 20 ms - see RenderYield.h
         }
         lv_obj_invalidate(_canvas);
     }
@@ -115,10 +116,10 @@ void RudderScreen::drawRudder(float angle) {
     }
 
     // Centre line (thick white zero mark)
-    ld.color = CLR_TEXT; ld.width = 4; ld.opa = OPA_FULL;
+    ld.color = CLR_TEXT; ld.width = UI_S(4); ld.opa = OPA_FULL;
     {
-        lv_point_t p1 = pt(0.0f, R - trackW/2 - 6);
-        lv_point_t p2 = pt(0.0f, R + trackW/2 + 6);
+        lv_point_t p1 = pt(0.0f, R - trackW/2 - UI_S(6));
+        lv_point_t p2 = pt(0.0f, R + trackW/2 + UI_S(6));
         lv_point_t _l[2] = {p1, p2};
         lv_canvas_draw_line(_canvas, _l, 2, &ld);
     }
@@ -128,16 +129,16 @@ void RudderScreen::drawRudder(float angle) {
     for (int a = -(int)maxAng; a <= (int)maxAng; a += 10) {
         if (a == 0) continue;
         ld.color = (a < 0) ? CLR_PORT : CLR_STARBOARD;
-        lv_point_t p1 = pt((float)a, R - trackW/2 - 4);
-        lv_point_t p2 = pt((float)a, R + trackW/2 + 4);
+        lv_point_t p1 = pt((float)a, R - trackW/2 - UI_S(4));
+        lv_point_t p2 = pt((float)a, R + trackW/2 + UI_S(4));
         lv_point_t _l[2] = {p1, p2};
         lv_canvas_draw_line(_canvas, _l, 2, &ld);
         // Degree label
         td.font = FONT_SMALL; td.color = (a < 0) ? CLR_PORT : CLR_STARBOARD;
         td.opa = OPA_FULL;
         char tbuf[6]; snprintf(tbuf, sizeof(tbuf), "%d", abs(a));
-        lv_point_t lp = pt((float)a, R + trackW/2 + 18);
-        lv_canvas_draw_text(_canvas, lp.x - 10, lp.y - 8, 28, &td, tbuf);
+        lv_point_t lp = pt((float)a, R + trackW/2 + UI_S(18));
+        lv_canvas_draw_text(_canvas, lp.x - UI_S(10), lp.y - UI_S(8), UI_S(28), &td, tbuf);
     }
 
     // Needle pointer: a SOLID triangle (was three outline strokes, so the band
@@ -145,9 +146,9 @@ void RudderScreen::drawRudder(float angle) {
     if (!isnan(angle)) {
         float ang = max(-maxAng, min(maxAng, angle));
         lv_color_t ncol = (ang < -0.5f) ? CLR_PORT : (ang > 0.5f) ? CLR_STARBOARD : CLR_TEXT;
-        lv_point_t tip = pt(ang,        R - trackW/2 - 14);
-        lv_point_t bl  = pt(ang - 3.0f, R + trackW/2 + 6);
-        lv_point_t br  = pt(ang + 3.0f, R + trackW/2 + 6);
+        lv_point_t tip = pt(ang,        R - trackW/2 - UI_S(14));
+        lv_point_t bl  = pt(ang - 3.0f, R + trackW/2 + UI_S(6));
+        lv_point_t br  = pt(ang + 3.0f, R + trackW/2 + UI_S(6));
         cdFillTri(_canvas, tip, bl, br, ncol);
         lv_draw_line_dsc_t fd; lv_draw_line_dsc_init(&fd);
         fd.color = ncol; fd.width = 2; fd.opa = OPA_FULL;
@@ -162,9 +163,9 @@ void RudderScreen::drawRudder(float angle) {
     lv_point_t sPos = pt( maxAng + 2.0f, R);
     td.font = FONT_LARGE; td.opa = OPA_FULL;
     td.color = CLR_PORT;
-    lv_canvas_draw_text(_canvas, pPos.x - 28, pPos.y - 14, 30, &td, T(STR_RUD_PORT_MARK));
+    lv_canvas_draw_text(_canvas, pPos.x - UI_S(28), pPos.y - UI_S(14), UI_S(30), &td, T(STR_RUD_PORT_MARK));
     td.color = CLR_STARBOARD;
-    lv_canvas_draw_text(_canvas, sPos.x + 2,  sPos.y - 14, 30, &td, T(STR_RUD_STBD_MARK));
+    lv_canvas_draw_text(_canvas, sPos.x + UI_S(2),  sPos.y - UI_S(14), UI_S(30), &td, T(STR_RUD_STBD_MARK));
 
     lv_obj_invalidate(_canvas);
 }

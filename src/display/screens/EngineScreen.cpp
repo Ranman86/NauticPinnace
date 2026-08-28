@@ -86,9 +86,9 @@ void EngineScreen::buildFields() {
 
         lv_obj_t *vobj = lv_label_create(c);
         lv_label_set_text(vobj, "--");
-        const lv_font_t *vf = (cw > 100) ? FONT_LARGE : (cw > 76) ? FONT_MED : FONT_SMALL;
+        const lv_font_t *vf = (cw > UI_S(100)) ? FONT_LARGE : (cw > UI_S(76)) ? FONT_MED : FONT_SMALL;
         styleLabel(vobj, vf, CLR_TEXT);
-        lv_obj_align(vobj, LV_ALIGN_CENTER, 0, 6);
+        lv_obj_align(vobj, LV_ALIGN_CENTER, 0, UI_S(6));
 
         _fields[i].card = c;
         _fields[i].val  = vobj;

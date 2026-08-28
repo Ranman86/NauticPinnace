@@ -3,7 +3,7 @@
 #include "../../i18n/I18n.h"
 
 // Modern professional marine autopilot display
-// Layout (480×430 canvas):
+// Layout (480 design grid, UI_S-scaled on the 7B):
 //   Top ~140px : curved compass arc showing ~90° window with degree scale
 //   Middle      : HUGE set-heading number (target) centred
 //   Left badge  : mode/status (NO DRIFT / HEADING / STANDBY)
@@ -16,7 +16,7 @@ public:
     void update() override;
 
 private:
-    static constexpr int CW = 480, CH = 430;
+    static constexpr int CW = SCREEN_W;   // compass canvas width (full screen)
 
     lv_obj_t  *_canvas      = nullptr;
     lv_color_t *_cbuf       = nullptr;

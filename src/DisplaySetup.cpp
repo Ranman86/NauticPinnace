@@ -2,6 +2,7 @@
 #include "Entropy.h"
 #include "display/DisplayManager.h"
 #include "display/UiConfig.h"
+#include "config/Config.h"        // display.rotation
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -574,20 +575,63 @@ static bool     s_swipe_suppress = false;
 
 void swipeSuppress() { s_swipe_suppress = true; }
 
+// Config degrees -> LVGL enum. Anything unexpected means "not rotated".
+static lv_disp_rot_t rotationToLv(uint16_t deg) {
+    switch (deg) {
+        case 90:  return LV_DISP_ROT_90;
+        case 180: return LV_DISP_ROT_180;
+        case 270: return LV_DISP_ROT_270;
+        default:  return LV_DISP_ROT_NONE;
+    }
+}
+
+// The GT911 reports PHYSICAL panel coordinates. LVGL converts them to logical
+// ones ITSELF, in indev_pointer_proc(), as soon as the driver's `rotated` is
+// set - so data->point below must stay RAW; transforming it here as well
+// rotates every tap twice and kills touch outright.
+//
+// The swipe tracker does want logical coordinates, so we derive them here with
+// LVGL's own formula. This panel is square (480x480), so the two portrait
+// cases only mirror one axis.
+static void touchToLogical(uint16_t &x, uint16_t &y) {
+    const uint16_t px = x, py = y;
+    // The driver flag is the same source LVGL and uiPortrait() use; the config
+    // value only feeds it at boot.
+    lv_disp_t *d = lv_disp_get_default();
+    switch (d && d->driver ? (lv_disp_rot_t)d->driver->rotated : LV_DISP_ROT_NONE) {
+        case LV_DISP_ROT_90:
+            x = (uint16_t)(LCD_HEIGHT - 1 - py);
+            y = px;
+            break;
+        case LV_DISP_ROT_180:
+            x = (uint16_t)(LCD_WIDTH  - 1 - px);
+            y = (uint16_t)(LCD_HEIGHT - 1 - py);
+            break;
+        case LV_DISP_ROT_270:
+            x = py;
+            y = (uint16_t)(LCD_WIDTH - 1 - px);
+            break;
+        default:
+            break;
+    }
+}
+
 static void lvgl_touch_cb(lv_indev_drv_t *indev, lv_indev_data_t *data) {
     uint16_t x = 0, y = 0;
     bool pressed = gt911_read_touch(&x, &y);
+    uint16_t lx = x, ly = y;
+    if (pressed) touchToLogical(lx, ly);   // swipe tracker only
 
     if (pressed) {
-        Entropy::feed(x, y);   // touches during initial commissioning add to the random mix
-        s_swipe_last_x = x;
-        s_swipe_last_y = y;
+        Entropy::feed(lx, ly);   // touches during initial commissioning add to the random mix
+        s_swipe_last_x = lx;
+        s_swipe_last_y = ly;
         if (!s_swipe_active) {
             s_swipe_active   = true;
             s_swipe_done     = false;
             s_swipe_suppress = false;   // a widget may claim this touch below
-            s_swipe_start_x = x;
-            s_swipe_start_y = y;
+            s_swipe_start_x = lx;
+            s_swipe_start_y = ly;
             // Any new touch: request arrow show (safe flag, no LVGL calls here!)
             dispMgr.requestShowNavArrows();
         }
@@ -654,6 +698,9 @@ void displayInit() {
     disp_drv.ver_res  = LCD_HEIGHT;
     disp_drv.flush_cb = lvgl_flush_cb;
     disp_drv.draw_buf = &draw_buf;
+    // Rotation is NOT set here: displayInit() runs before the config is loaded,
+    // so the value would always be the default 0. main.cpp calls
+    // displayApplyRotation() right after appConfig.begin().
     lv_disp_drv_register(&disp_drv);
 
     // Register touch input driver
@@ -673,4 +720,20 @@ uint32_t getTickFps(bool reset) {
 void displayTick() {
     esp_task_wdt_reset();
     lv_timer_handler();
+}
+
+// Apply the configured rotation to the already-registered driver; see the
+// note in displayInit(). This board goes through LovyanGFX, which hands the
+// flush a plain rectangle - so here LVGL does the rotating (sw_rotate). At
+// 480x480 its scratch buffer is far less painful than on the 1024x600 boards.
+void displayApplyRotation() {
+    lv_disp_t *d = lv_disp_get_default();
+    if (!d || !d->driver) return;
+    lv_disp_drv_t *drv = d->driver;
+    drv->rotated   = rotationToLv(appConfig.cfg.displayRotation);
+    drv->sw_rotate = (drv->rotated != LV_DISP_ROT_NONE) ? 1 : 0;
+    lv_disp_drv_update(d, drv);
+    if (drv->rotated != LV_DISP_ROT_NONE)
+        Serial.printf("[disp] rotation %u deg (LVGL software rotation)\n",
+                      (unsigned)appConfig.cfg.displayRotation);
 }

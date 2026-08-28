@@ -20,7 +20,7 @@ private:
     int  _rangeNm  = 5;
     int  _selIdx   = -1;  // selected AIS target index
 
-    static constexpr int CS = 390;
+    static constexpr int CS = UI_S(390);
 
     void drawRadar();
     void showTargetInfo(int idx);

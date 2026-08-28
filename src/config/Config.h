@@ -71,6 +71,28 @@ struct GridConfig {
     GridCell cells[9];
 };
 
+// Right-hand data sidebar on the 7B (1024x600): a 1xN column of value cells,
+// configurable in the WebUI. Reuses the GridCell struct and the same pgn keys
+// as the data grids. Serialized on every board (config files stay portable);
+// only the 7B build instantiates the widget.
+#define SIDEBAR_MAX_CELLS 8
+struct SidebarConfig {
+    uint8_t  count = 5;               // visible cells, 1..SIDEBAR_MAX_CELLS
+    GridCell cells[SIDEBAR_MAX_CELLS];
+    SidebarConfig() {                 // sensible defaults for a sailing boat
+        auto set = [](GridCell &c, const char *pgn, const char *unit, int dec) {
+            strlcpy(c.pgn, pgn, sizeof(c.pgn));
+            strlcpy(c.unit, unit, sizeof(c.unit));
+            c.decimals = dec;
+        };
+        set(cells[0], "sog",   "kn", 1);
+        set(cells[1], "depth", "m",  1);
+        set(cells[2], "aws",   "kn", 1);
+        set(cells[3], "hdg",   "°",  0);
+        set(cells[4], "battv", "V",  1);
+    }
+};
+
 // Themeable colour palette, stored as 0xRRGGBB. Member defaults = dark theme.
 // The light variant is filled with the light defaults in Config::begin().
 #include "../display/theme_colors.h"
@@ -136,8 +158,14 @@ struct AppConfig {
     uint8_t  screenCount      = N_FIXED_SCREENS;   // grids appended by DisplayManager when active
 
     // NMEA 2000
-    int      canTxPin         = 17;
-    int      canRxPin         = 18;
+    // -1 means "use the pins from BoardConfig" - the normal case on every
+    // board we ship. A real pin number here overrides them, which is what the
+    // web UI's "CAN pins (for modified boards)" field is for. N2kHandler
+    // resolves and validates the pair at startup and writes the effective
+    // values back here, so /api/config always shows what the bus is really
+    // using rather than a bare -1.
+    int      canTxPin         = -1;
+    int      canRxPin         = -1;
     // Listen only: N2km_ListenOnly instead of ListenAndNode. The device then
     // sends NOTHING on the bus (no address claim, no heartbeat, no media
     // control) — for other people's boats, charter, or workshop appointments.
@@ -157,6 +185,7 @@ struct AppConfig {
 
     // Data-grid screens (up to MAX_GRIDS independent slots)
     GridConfig grids[MAX_GRIDS];
+    SidebarConfig sidebar;            // 7B right-hand data sidebar
 
     // Theme: active variant ("dark"/"light") + per-variant colour palettes.
     char        themeActive[8] = "dark";
@@ -175,11 +204,49 @@ struct AppConfig {
     // Depth display unit: "m" = metres, "ft" = feet (internal always metres)
     char  depthUnit[4] = "m";
 
+    // Screen rotation in degrees: 0, 90, 180, 270. Applied at boot via LVGL's
+    // software rotation (the RGB panels cannot rotate in hardware), so a
+    // change needs a restart. On the 1024x600 boards 90/270 additionally
+    // switches the UI to the PORTRAIT layout: nav rail on top, instrument in
+    // the middle, data sidebar at the bottom - all three keep their exact
+    // sizes (88 / 600 / 336 add up to 1024 either way).
+    uint16_t displayRotation = 0;
+
     // AIS
     int  aisRange   = 5;    // nm, display range
     bool aisAlarm   = true; // CPA/TCPA alarm
     float aisCpaAlarm  = 0.5f;  // nm
     float aisTcpaAlarm = 10.0f; // min
+
+    // ---- Sensor calibration (applied ONCE at N2K ingestion, N2kHandler) ----
+    // Defaults are all neutral, so an unconfigured device behaves exactly as
+    // before. Two semantics, labelled accordingly in the WebUI:
+    //   * additive corrections (offset IS ADDED to the received value)
+    //   * zero-points (the value the sensor reports in the neutral position
+    //     IS SUBTRACTED - "read it at rest and type it in")
+    float calDepthOffsetM    = 0.0f;   // additive, + = deeper (waterline vs keel)
+    float calAwaOffsetDeg    = 0.0f;   // additive, wind-vane mounting rotation
+    float calAwsFactorPct    = 100.0f; // scale, anemometer over/under-read
+    float calHdgOffsetDeg    = 0.0f;   // additive, compass installation deviation
+    float calStwFactorPct    = 100.0f; // scale, paddle-wheel calibration
+    float calRollZeroDeg     = 0.0f;   // zero-point, attitude sensor mounting
+    float calPitchZeroDeg    = 0.0f;   // zero-point
+    float calRudderZeroDeg   = 0.0f;   // zero-point, rudder feedback centered
+    bool  calRudderInvert    = false;  // rudder sense mounted mirrored
+    float calWaterTempOffC   = 0.0f;   // additive
+    float calPressureOffHpa  = 0.0f;   // additive, barometer altitude correction
+
+    // ---- N2K source selection (-1 = auto/any sender) -----------------------
+    // When several bus devices send the same data (two GPS, two compasses...),
+    // pin the authoritative sender's source address per category. The list of
+    // seen senders is reported by GET /api/sources.
+    int16_t srcPos   = -1;   // 129025/129026/129029
+    int16_t srcHdg   = -1;   // 127250
+    int16_t srcWind  = -1;   // 130306
+    int16_t srcDepth = -1;   // 128267
+    int16_t srcStw   = -1;   // 128259
+    int16_t srcEnv   = -1;   // 130310/130311/130314
+    int16_t srcAtt   = -1;   // 127257
 
     // Anchor watch (drift alarm). Position persisted so the watch resumes after a
     // reboot while still at anchor. Evaluated globally in DisplayManager::update().
@@ -209,6 +276,13 @@ struct AppConfig {
     bool  allowButterfly    = false;   // wing-on-wing: jib poled out opposite the main on a run
     int16_t noGoAngle       = 30;      // No-Go half-angle (deg): |TWA| < this = in irons (configurable)
     bool  windLinesApparent = false;   // wind-flow lines: false=true wind (TWA), true=apparent (AWA)
+    // Inner compass card of the wind / attitude screen. false = course-up (the
+    // card turns so the current heading is at the top, the behaviour this
+    // screen always had), true = north-up (N fixed at the top, the heading
+    // marked by an index on the card's rim). Toggled by tapping the card.
+    // Only the CARD switches: the outer relative-wind ring, the boat symbol and
+    // the wind pointers are boat-fixed and must stay aligned with the bow.
+    bool  compassNorthUp    = false;
     uint8_t headsailSizePct = 100;     // headsail size percentage (50–150 %), future use
 };
 

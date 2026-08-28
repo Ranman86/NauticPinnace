@@ -31,12 +31,12 @@ void BatteryScreen::create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(container, 0, 0);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
-    const int W = SCREEN_W - 20;
+    const int W = SCREEN_W - UI_S(20);
     for (int i = 0; i < DataModel::MAX_BATT; i++) {
         Row &r = _rows[i];
         r.box = lv_obj_create(container);
-        lv_obj_set_size(r.box, W, 100);
-        lv_obj_set_style_radius(r.box, 8, 0);
+        lv_obj_set_size(r.box, W, UI_S(100));
+        lv_obj_set_style_radius(r.box, UI_S(8), 0);
         lv_obj_set_style_border_width(r.box, 1, 0);
         lv_obj_set_style_border_color(r.box, CLR_BORDER, 0);
         lv_obj_set_style_bg_color(r.box, CLR_SURFACE, 0);
@@ -47,29 +47,29 @@ void BatteryScreen::create(lv_obj_t *parent) {
         r.name = lv_label_create(r.box);
         lv_obj_set_style_text_font(r.name, FONT_MED, 0);
         lv_obj_set_style_text_color(r.name, CLR_TEXT, 0);
-        lv_obj_set_pos(r.name, 16, 10);
+        lv_obj_set_pos(r.name, UI_S(16), UI_S(10));
 
         r.soc = lv_label_create(r.box);
         lv_obj_set_style_text_font(r.soc, FONT_LARGE, 0);
-        lv_obj_align(r.soc, LV_ALIGN_TOP_RIGHT, -16, 4);
+        lv_obj_align(r.soc, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(4));
 
         r.bar = lv_bar_create(r.box);
         lv_bar_set_range(r.bar, 0, 100);
         lv_obj_set_style_bg_color(r.bar, CLR_BG, 0);
         lv_obj_set_style_bg_opa(r.bar, LV_OPA_COVER, 0);
-        lv_obj_set_style_radius(r.bar, 4, 0);
-        lv_obj_set_style_radius(r.bar, 4, LV_PART_INDICATOR);
-        lv_obj_set_size(r.bar, W - 32, 22);
-        lv_obj_set_pos(r.bar, 16, 50);
+        lv_obj_set_style_radius(r.bar, UI_S(4), 0);
+        lv_obj_set_style_radius(r.bar, UI_S(4), LV_PART_INDICATOR);
+        lv_obj_set_size(r.bar, W - UI_S(32), UI_S(22));
+        lv_obj_set_pos(r.bar, UI_S(16), UI_S(50));
 
         r.info = lv_label_create(r.box);
         lv_obj_set_style_text_font(r.info, FONT_SMALL, 0);
         lv_obj_set_style_text_color(r.info, CLR_TEXT_DIM, 0);
-        lv_obj_set_pos(r.info, 16, 80);
+        lv_obj_set_pos(r.info, UI_S(16), UI_S(80));
 
         r.cur = lv_label_create(r.box);
         lv_obj_set_style_text_font(r.cur, FONT_MED, 0);
-        lv_obj_align(r.cur, LV_ALIGN_TOP_RIGHT, -16, 76);
+        lv_obj_align(r.cur, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(76));
 
         lv_obj_add_flag(r.box, LV_OBJ_FLAG_HIDDEN);
     }
@@ -83,26 +83,26 @@ void BatteryScreen::create(lv_obj_t *parent) {
 }
 
 void BatteryScreen::layout(int n) {
-    const int top = 10, bottom = 470, gap = 10;
+    const int top = UI_S(10), bottom = SCREEN_H - UI_S(10), gap = UI_S(10);
     int bh = (n > 0) ? (bottom - top - (n - 1) * gap) / n : 0;
     // Cap only so a SINGLE bank doesn't become one absurd full-height card. The
     // old cap of 150 also applied to two banks and left 160 px empty below them.
-    if (bh > 230) bh = 230;
+    if (bh > UI_S(230)) bh = UI_S(230);
     for (int i = 0; i < DataModel::MAX_BATT; i++) {
         Row &r = _rows[i];
         if (i < n) {
-            lv_obj_set_size(r.box, SCREEN_W - 20, bh);
-            lv_obj_set_pos(r.box, 10, top + i * (bh + gap));
-            // Re-centre the card's contents: they were laid out for a 100 px box
-            // (name 10 / soc 4 / bar 50 / info 80 / cur 76), so shifting all five
-            // by half the extra height keeps the original spacing intact instead
-            // of letting a taller card grow empty space underneath.
-            int d = (bh - 100) / 2;
-            lv_obj_set_pos(r.name, 16, 10 + d);
-            lv_obj_align(r.soc, LV_ALIGN_TOP_RIGHT, -16, 4 + d);
-            lv_obj_set_pos(r.bar,  16, 50 + d);
-            lv_obj_set_pos(r.info, 16, 80 + d);
-            lv_obj_align(r.cur, LV_ALIGN_TOP_RIGHT, -16, 76 + d);
+            lv_obj_set_size(r.box, SCREEN_W - UI_S(20), bh);
+            lv_obj_set_pos(r.box, UI_S(10), top + i * (bh + gap));
+            // Re-centre the card's contents: they were laid out for a UI_S(100) box
+            // (name 10 / soc 4 / bar 50 / info 80 / cur 76, all UI_S-scaled), so
+            // shifting all five by half the extra height keeps the original spacing
+            // intact instead of letting a taller card grow empty space underneath.
+            int d = (bh - UI_S(100)) / 2;
+            lv_obj_set_pos(r.name, UI_S(16), UI_S(10) + d);
+            lv_obj_align(r.soc, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(4) + d);
+            lv_obj_set_pos(r.bar,  UI_S(16), UI_S(50) + d);
+            lv_obj_set_pos(r.info, UI_S(16), UI_S(80) + d);
+            lv_obj_align(r.cur, LV_ALIGN_TOP_RIGHT, UI_S(-16), UI_S(76) + d);
             lv_obj_clear_flag(r.box, LV_OBJ_FLAG_HIDDEN);
         } else {
             lv_obj_add_flag(r.box, LV_OBJ_FLAG_HIDDEN);

@@ -40,6 +40,13 @@ PIO = os.path.expanduser('~/.platformio/penv/Scripts/pio.exe')
 if not os.path.exists(PIO):
     PIO = 'pio'  # PATH fallback (Linux/macOS)
 
+# The 4" env builds with a PRIVATE package dir (see tools/build4.ps1 and the
+# comment in platformio.ini): the pioarduino platform of the 7B env fights
+# over the shared package dir by NAME (tool-esptoolpy). Keep every package
+# path in this script consistent with that dir.
+PKGS = os.path.expanduser('~/.platformio/packages-4inch')
+os.environ['PLATFORMIO_PACKAGES_DIR'] = PKGS
+
 # flash layout — keep in sync with partitions_16MB.csv
 PARTS = [
     ('0x0',      'bootloader.bin'),
@@ -62,12 +69,20 @@ def run(args, **kw):
 
 
 def find_boot_app0():
-    cand = os.path.expanduser(
-        '~/.platformio/packages/framework-arduinoespressif32/tools/'
-        'partitions/boot_app0.bin')
-    if os.path.exists(cand):
-        return cand
-    sys.exit('boot_app0.bin not found — build the project once with PlatformIO first')
+    import glob
+    # Private package dir first (the framework may sit in a "@version" or
+    # "@src-<hash>" suffixed dir there); shared dir as legacy fallback.
+    for pattern in (
+        os.path.join(PKGS, 'framework-arduinoespressif32*',
+                     'tools', 'partitions', 'boot_app0.bin'),
+        os.path.expanduser('~/.platformio/packages/'
+                           'framework-arduinoespressif32*/tools/'
+                           'partitions/boot_app0.bin'),
+    ):
+        hits = glob.glob(pattern)
+        if hits:
+            return hits[0]
+    sys.exit('boot_app0.bin not found — build the project once via tools/build4.ps1 first')
 
 
 def fetch_esptool_exe(dest_dir):
@@ -160,8 +175,9 @@ def main():
         run([sys.executable, '-m', 'esptool'] + tail)
     except Exception:
         # esptool not importable with this interpreter — use PlatformIO's copy
+        # (from the 4" env's private package dir, see PKGS above)
         run([os.path.expanduser('~/.platformio/penv/Scripts/python.exe'),
-             os.path.expanduser('~/.platformio/packages/tool-esptoolpy/esptool.py')]
+             os.path.join(PKGS, 'tool-esptoolpy', 'esptool.py')]
             + tail)
 
     # ---- flash scripts ------------------------------------------------------
@@ -248,21 +264,19 @@ def main():
     }
     json.dump(manifest, io.open(os.path.join(rel, 'manifest.json'), 'w'), indent=1)
 
-    # ---- docs/flash payload for the browser flasher ------------------------
-    # The licences travel WITH the images here too: this directory is a
-    # distribution channel of its own (GitHub Pages hands the firmware to
-    # anyone who clicks Install), and the LGPL wants the licence text to
-    # accompany the binary — not just live in a ZIP somewhere else.
-    docs_flash = os.path.join(ROOT, 'docs', 'flash')
-    shutil.rmtree(docs_flash, ignore_errors=True)
-    os.makedirs(docs_flash)
-    for _, fn in PARTS:
-        shutil.copy(os.path.join(rel, fn), docs_flash)
-    shutil.copy(os.path.join(rel, 'manifest.json'), docs_flash)
-    for f in ('LICENSE', 'THIRD-PARTY-NOTICES.md'):
-        shutil.copy(os.path.join(ROOT, f), docs_flash)
-    shutil.copytree(os.path.join(ROOT, 'LICENSES'),
-                    os.path.join(docs_flash, 'LICENSES'))
+    # ---- docs/flash is NOT written here any more ---------------------------
+    # It used to be: this script emptied docs/flash/ and dropped the 4-inch
+    # images straight into it. That layout only ever fitted one board, and the
+    # browser flasher now serves all three from docs/flash/<board>/ - so doing
+    # it from here would delete the 7-inch and 5-inch payloads every time a
+    # 4-inch release was cut, silently, and the page would 404 for two of its
+    # three buttons.
+    #
+    # tools/gen_web_flasher.py owns that directory now. It builds every board,
+    # writes one manifest each, and refreshes the licence copies that travel
+    # with the binaries.
+    print('\nNOTE: docs/flash/ is built separately, for all three boards:')
+    print('      python tools/gen_web_flasher.py')
 
     # ---- licences + instructions -------------------------------------------
     for f in ('LICENSE', 'THIRD-PARTY-NOTICES.md'):

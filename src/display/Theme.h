@@ -106,8 +106,45 @@ LV_FONT_DECLARE(depth_font_192);
 
 // --- Dimensions -------------------------------------------------------------
 #define NAV_BAR_H     0    // No bottom bar – navigation via side-overlay arrows + swipe
+#if defined(BOARD_PANEL_1024X600)
+// Stage 3: the content area renders NATIVELY at 600x600 in the 7B's middle
+// column (LVGL transform-zoom was measured non-viable, see BoardConfig_7B.h).
+// Screens designed on the 480 grid wrap their absolute pixel literals in
+// UI_S(); everything derived from SCREEN_W/H adapts by itself.
+//
+// NAMING TRAP: on these boards SCREEN_W/H are NOT the screen. They are the
+// 600x600 instrument CONTENT square inside the middle column, and they are
+// orientation-independent by design - the square keeps its size whether the
+// three blocks sit side by side or stacked, which is why none of the 17
+// screens has to know about rotation. Code that really means "the whole
+// logical screen" must call uiScreenW()/uiScreenH() below.
+#define SCREEN_W    600
+#define SCREEN_H    600
+// 480-design pixels -> current grid: x1.25 with round-to-nearest, symmetric
+// for negative offsets (-16 -> -20, mirroring 16 -> 20; C division truncates
+// toward zero, so the bias constant must follow the sign). Exact for
+// multiples of 4; for tiny odd values check the result once (3 -> 4).
+#define UI_S(px)    (((px) * 5 + ((px) >= 0 ? 2 : -2)) / 4)
+#define UI_SF 1.25f   // float scale for non-integer factors (float geometry, px-per-unit)
+#else
 #define SCREEN_W    480
 #define SCREEN_H    480
+#define UI_S(px)    (px)   // 4" and 480-simulator: the design grid IS the panel
+#define UI_SF 1.0f    // float scale for non-integer factors (float geometry, px-per-unit)
+#endif
+
+// --- Runtime screen orientation ---------------------------------------------
+// The rotation (config: display.rotation, 0/90/180/270) is a RUNTIME value, so
+// layout code must ask these instead of using LCD_WIDTH/LCD_HEIGHT, which are
+// the PHYSICAL panel dimensions and do not change when the picture is rotated.
+//
+// Note what does NOT change in portrait: the instrument square stays 600x600
+// and the rail (88) and data sidebar (336) keep their exact sizes - 88 + 600 +
+// 336 = 1024 works out the same whether the three sit side by side or stacked.
+// That is why none of the 17 screens needs to know about orientation at all.
+bool       uiPortrait();    // true when the logical screen is taller than wide
+lv_coord_t uiScreenW();     // logical width  (what LVGL reports, post-rotation)
+lv_coord_t uiScreenH();     // logical height
 
 // --- Helper: apply dark style to a base object ------------------------------
 static inline void styleCard(lv_obj_t *obj) {
@@ -125,4 +162,29 @@ static inline void styleLabel(lv_obj_t *lbl, const lv_font_t *font, lv_color_t c
     lv_obj_set_style_text_font(lbl, font, 0);
     lv_obj_set_style_text_color(lbl, col, 0);
 }
+
+// Clears LV_OBJ_FLAG_SCROLLABLE on every label in a subtree.
+//
+// WHY: LVGL makes every object scrollable - lv_obj_constructor sets the flag
+// (lv_obj.c:441) and lv_label_constructor clears only CLICKABLE, never this.
+// A scrollable object runs draw_scrollbar() in its DRAW_POST pass, once per
+// draw-buffer strip, and lv_obj_get_scrollbar_area() then asks for scroll_top,
+// scroll_bottom, scroll_left and scroll_right. Each of those calls
+// lv_obj_get_self_height/width, which for a LABEL raises
+// LV_EVENT_GET_SELF_SIZE, and lv_label.c:764 answers by measuring the entire
+// text with lv_txt_get_size() - word-wrapping character by character through
+// lv_font_get_glyph_width(), because lv_label.c:770 hard-codes
+// LV_TEXT_FLAG_NONE. Four full text measurements, per label, per strip, for a
+// scrollbar that can never appear because a label has no children to overflow.
+//
+// Measured on the 5B with a per-object DRAW_MAIN/DRAW_POST stopwatch: on the
+// licence overlay, whose label holds 2 KB of text, that POST pass was 5.0 of
+// every 5.0 seconds of wall clock. Clearing the flag took a scroll frame from
+// 971 ms to 162 ms - 1.0 fps to 6.1 fps.
+//
+// No label in this UI scrolls itself: LV_LABEL_LONG_SCROLL animates the
+// label's own text offset, not the object's scroll position, so the flag has
+// no legitimate use here. Clearing it also stops a label from swallowing a
+// drag meant for the container it sits in.
+void uiDisableLabelScroll(lv_obj_t *root);
 

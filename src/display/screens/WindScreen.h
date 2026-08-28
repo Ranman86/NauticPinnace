@@ -9,7 +9,7 @@
 //
 // Ported from BngRenderer.cs (SailTrimMonitor project).
 //
-// Layout (480 × 430 working area):
+// Layout (480 × 430 design grid; scaled via UI_S/UI_SF to the panel):
 //   Outer ring  : degree scale 000–330, coloured zone arcs
 //   Inner circle: boat bird's-eye with wind-flow lines
 //   Centre      : large TWA value + Stb/Bb side
@@ -43,7 +43,7 @@ private:
     CenterMode _centerMode = CenterMode::SAILS;
 
     // ── Canvas ───────────────────────────────────────────────
-    static constexpr int   CW = 480, CH = 480;  // canvas size (full screen)
+    static constexpr int   CW = SCREEN_W, CH = SCREEN_H;  // canvas size (full screen)
 
     // ── Instrument geometry (scaled from BngRenderer 220px → 148px) ─
     static constexpr float CX = UI_WIND_CX, CY = UI_WIND_CY;
@@ -52,10 +52,10 @@ private:
     static constexpr float R_ZONE_I   = UI_WIND_R_ZONE_I;  // zone-arc inner radius
     static constexpr float R_INNER    = UI_WIND_R_INNER;   // inner display circle
     static constexpr float BOAT_S     = UI_WIND_BOAT_SCALE; // boat scale (fills inner circle)
-    static constexpr float R_TICK_O   = 202.f;  // tick outer end (= R_OUTER)
-    static constexpr float R_TICK_MAJ = 191.f;  // major tick inner end
-    static constexpr float R_TICK_MIN = 196.f;  // minor tick inner end
-    static constexpr float R_LABEL    = 216.f;  // degree labels (outside ring)
+    static constexpr float R_TICK_O   = 202.f * UI_SF;  // tick outer end (= R_OUTER)
+    static constexpr float R_TICK_MAJ = 191.f * UI_SF;  // major tick inner end
+    static constexpr float R_TICK_MIN = 196.f * UI_SF;  // minor tick inner end
+    static constexpr float R_LABEL    = 216.f * UI_SF;  // degree labels (outside ring)
 
     // ── Sail state (computed once per frame) ──────────────────
     struct SailState {
@@ -74,6 +74,17 @@ private:
 
     lv_obj_t   *_canvas = nullptr;
     lv_color_t *_cbuf   = nullptr;   // PSRAM pixel buffer
+
+    // Compass-card tap (north-up <-> course-up). The press point is kept so the
+    // release can tell a tap from the horizontal drag that means "next screen":
+    // that drag ends in an LV_EVENT_CLICKED on this canvas as well.
+    lv_coord_t _pressX      = 0;
+    lv_coord_t _pressY      = 0;
+    bool       _pressOnCard = false;
+
+    // Canvas touch handler: toggles the compass card's orientation when the tap
+    // both starts and ends inside the card. Registered for PRESSED and CLICKED.
+    static void onCanvasTouch(lv_event_t *e);
 
     // Smoothed (low-pass) sail trim, signed degrees (+ = clew to starboard).
     // Persisted across frames so the sails ease continuously and tacks swing
@@ -103,7 +114,7 @@ private:
     void drawCenter_Attitude(float roll, float pitch, float rot);
     void drawAttitudeKpis(float roll, float pitch, float waveH, float waveT);
     void drawHeadingBelow(float hdg);
-    void drawCompassRose(float hdg);     // heading-up compass card inside the inner circle
+    void drawCompassRose(float hdg);     // compass card inside the inner circle (course-up or north-up)
     void drawRudderArc(float rudderDeg); // rudder-angle gauge on the bottom arc (Bb/Stb)
     void drawCornerKpis(float stw, float twa, float awa, float tws);
     void drawTrimAdvice(float absTwa, float twa, float tws);
@@ -121,9 +132,19 @@ void drawSpinnaker(const SailState &sail);
     void fillEllipse(float cx, float cy, float rx, float ry,
                      lv_color_t col, lv_opa_t opa = LV_OPA_COVER);
 
+    // One horizontal run of pixels written straight into _cbuf, clipped to the
+    // canvas. See the comment on the definition for why this does not go
+    // through lv_canvas_draw_line.
+    void spanH(int y, int x0, int x1, lv_color_t col, lv_opa_t opa);
+
+    // Filled ring between rInner and rOuter, scanline by scanline through
+    // spanH(). Replaces a full-circle lv_canvas_draw_arc(), which evaluates an
+    // LVGL radius mask across the whole bounding box.
+    void fillAnnulus(float cx, float cy, float rInner, float rOuter,
+                     lv_color_t col, lv_opa_t opa = LV_OPA_COVER);
+
     // Scanline fill of a simple polygon (even-odd rule). Used instead of
-    // lv_canvas_draw_polygon, which segfaults in the PC simulator's LVGL build;
-    // this uses lv_canvas_draw_line spans (works on both device and simulator).
+    // lv_canvas_draw_polygon, which segfaults in the PC simulator's LVGL build.
     void fillPolygon(const lv_point_t *pts, int n, lv_color_t col, lv_opa_t opa);
 
     // Draw one sail as a cambered airfoil seen from above: a filled lens between

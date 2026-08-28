@@ -7,6 +7,10 @@
 #include "../SunCalc.h"
 #include <math.h>
 #include <string.h>
+#include <lvgl.h>              // lv_timer_get_idle() for the "cpu" field
+#ifndef SIMULATOR
+#include <esp_heap_caps.h>     // free-DRAM figure for the "ram" field
+#endif
 
 DemoDataSource demoData;
 
@@ -43,6 +47,14 @@ float dmFieldByKey(const char *key) {
     if (!strcmp(key,"variation")) return data.variation;      // PGN 127258
     if (!strcmp(key,"log"))       return data.logDistance;    // PGN 128275
     if (!strcmp(key,"trip"))      return data.tripDistance;   // PGN 128275
+    // System health (no NMEA source - device-local, for the 7B sidebar):
+    // cpu = LVGL busy percentage (100 - idle), ram = free internal DRAM in KB.
+    if (!strcmp(key,"cpu"))       return 100.0f - (float)lv_timer_get_idle();
+#ifndef SIMULATOR
+    if (!strcmp(key,"ram"))       return heap_caps_get_free_size(MALLOC_CAP_INTERNAL) / 1024.0f;
+#else
+    if (!strcmp(key,"ram"))       return 4096.0f;   // sim: no meaningful DRAM figure
+#endif
     return NAN;
 }
 

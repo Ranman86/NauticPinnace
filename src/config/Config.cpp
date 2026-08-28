@@ -2,6 +2,75 @@
 #include "../i18n/I18n.h"
 #include "../Entropy.h"
 
+#ifndef SIMULATOR
+#include <esp_idf_version.h>   // not among the sim stubs; leaving the macro
+#endif                         // undefined there selects the plain-doc branch
+#if ESP_IDF_VERSION_MAJOR >= 5
+#include <esp_heap_caps.h>
+// The ~12 KB config JSON costs, transiently and all at once: ArduinoJson pool
+// blocks (~13 KB) + the pretty-printed output String (~12 KB) + the async
+// response's own copy (~12 KB). On the 7B that exceeds the free internal heap
+// (~24 KB with WiFi up) - and ArduinoJson/String fail SILENTLY on a lost
+// allocation, so /api/config delivered structurally broken JSON with the
+// break at a different offset every time (measured), and the WebUI fell back
+// to defaults (empty screens list, wrong IP). Routing the doc pools through
+// PSRAM removes the whole spike. 7B-only: the 4" stays on its proven DRAM
+// path (its IDF 4.4 has the documented OPI-PSRAM coherency bug).
+struct SpiRamAllocator final : ArduinoJson::Allocator {
+    void *allocate(size_t n) override {
+        return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    void deallocate(void *p) override { heap_caps_free(p); }
+    void *reallocate(void *p, size_t n) override {
+        return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+};
+static SpiRamAllocator s_jsonPsram;
+#define CFG_JSON_DOC() JsonDocument doc(&s_jsonPsram)
+#else
+#define CFG_JSON_DOC() JsonDocument doc
+#endif
+
+#if defined(BOARD_PANEL_1024X600) && !defined(SIMULATOR)
+#include <Preferences.h>
+// "pio run -t uploadfs" replaces the WHOLE LittleFS partition with the image
+// built from data/ - including config.json, whose repo copy deliberately holds
+// no WiFi credentials. Every filesystem deploy therefore knocked the device
+// off the network until someone retyped the WLAN on the on-screen keyboard.
+// NVS lives in its own partition and survives uploadfs, so the WiFi section is
+// mirrored there on save and pulled back when a factory config (empty SSID)
+// shows up after a deploy. WiFi only: a full-config mirror will not reliably
+// fit the small nvs partition alongside the WiFi stack's own storage.
+static void wifiBackupStore(const AppConfig &cfg) {
+    if (!cfg.wifiSsid[0]) return;   // never overwrite a good backup with factory-empty
+    Preferences p;
+    if (!p.begin("wifibak", false)) return;
+    if (p.getString("ssid") != cfg.wifiSsid ||
+        p.getString("pass") != cfg.wifiPassword ||
+        p.getBool("en", false) != cfg.wifiEnabled ||
+        p.getBool("ap", true)  != cfg.apMode) {
+        p.putString("ssid", cfg.wifiSsid);
+        p.putString("pass", cfg.wifiPassword);
+        p.putBool("en", cfg.wifiEnabled);
+        p.putBool("ap", cfg.apMode);
+    }
+    p.end();
+}
+static bool wifiBackupRestore(AppConfig &cfg) {
+    if (cfg.wifiSsid[0]) return false;   // config already carries a network
+    Preferences p;
+    if (!p.begin("wifibak", true)) return false;   // read-only; absent on first boot
+    String ssid = p.getString("ssid");
+    if (!ssid.length()) { p.end(); return false; }
+    strlcpy(cfg.wifiSsid,     ssid.c_str(),          sizeof(cfg.wifiSsid));
+    strlcpy(cfg.wifiPassword, p.getString("pass").c_str(), sizeof(cfg.wifiPassword));
+    cfg.wifiEnabled = p.getBool("en", false);
+    cfg.apMode      = p.getBool("ap", true);
+    p.end();
+    return true;
+}
+#endif
+
 Config appConfig;
 
 // Light-theme defaults (dark defaults live in the ThemeColors struct members).
@@ -100,6 +169,12 @@ bool Config::begin() {
         set(cfg.engineFields[3], "fuel",    "", "L/h", 1);
     }
     bool ok = load();
+#if defined(BOARD_PANEL_1024X600) && !defined(SIMULATOR)
+    if (wifiBackupRestore(cfg)) {
+        Serial.println("[wifi] Zugangsdaten aus NVS-Backup wiederhergestellt (uploadfs hatte sie geloescht)");
+        save();   // write them back into config.json on the fresh filesystem
+    }
+#endif
     // Ensure the hotspot password BEFORE WiFi starts (setup() calls
     // webCfg.begin() after Config::begin()). On the very first start — or when
     // updating an existing device — the field is empty.
@@ -126,11 +201,14 @@ bool Config::save() {
     String json = toJson();
     f.print(json);
     f.close();
+#if defined(BOARD_PANEL_1024X600) && !defined(SIMULATOR)
+    wifiBackupStore(cfg);
+#endif
     return true;
 }
 
 String Config::toJson() const {
-    JsonDocument doc;
+    CFG_JSON_DOC();
     doc["wifi"]["ssid"]     = cfg.wifiSsid;
     doc["wifi"]["password"] = cfg.wifiPassword;
     doc["wifi"]["ap_mode"]  = cfg.apMode;
@@ -174,11 +252,32 @@ String Config::toJson() const {
 
     doc["depth"]["alarm"] = cfg.depthAlarm;
     doc["depth"]["unit"]  = cfg.depthUnit;
+    doc["display"]["rotation"] = cfg.displayRotation;
 
     doc["ais"]["range"]     = cfg.aisRange;
     doc["ais"]["alarm"]     = cfg.aisAlarm;
     doc["ais"]["cpa"]       = cfg.aisCpaAlarm;
     doc["ais"]["tcpa"]      = cfg.aisTcpaAlarm;
+
+    // Sensor calibration + N2K source pinning (see Config.h for semantics).
+    doc["cal"]["depth_off"]    = cfg.calDepthOffsetM;
+    doc["cal"]["awa_off"]      = cfg.calAwaOffsetDeg;
+    doc["cal"]["aws_fac"]      = cfg.calAwsFactorPct;
+    doc["cal"]["hdg_off"]      = cfg.calHdgOffsetDeg;
+    doc["cal"]["stw_fac"]      = cfg.calStwFactorPct;
+    doc["cal"]["roll_zero"]    = cfg.calRollZeroDeg;
+    doc["cal"]["pitch_zero"]   = cfg.calPitchZeroDeg;
+    doc["cal"]["rudder_zero"]  = cfg.calRudderZeroDeg;
+    doc["cal"]["rudder_inv"]   = cfg.calRudderInvert;
+    doc["cal"]["wtemp_off"]    = cfg.calWaterTempOffC;
+    doc["cal"]["press_off"]    = cfg.calPressureOffHpa;
+    doc["sources"]["pos"]   = cfg.srcPos;
+    doc["sources"]["hdg"]   = cfg.srcHdg;
+    doc["sources"]["wind"]  = cfg.srcWind;
+    doc["sources"]["depth"] = cfg.srcDepth;
+    doc["sources"]["stw"]   = cfg.srcStw;
+    doc["sources"]["env"]   = cfg.srcEnv;
+    doc["sources"]["att"]   = cfg.srcAtt;
 
     doc["anchor"]["set"]    = cfg.anchorSet;
     doc["anchor"]["lat"]    = cfg.anchorLat;
@@ -224,6 +323,7 @@ String Config::toJson() const {
     doc["sail"]["butterfly"]      = cfg.allowButterfly;
     doc["sail"]["nogo_deg"]       = cfg.noGoAngle;
     doc["sail"]["windlines_app"]  = cfg.windLinesApparent;
+    doc["sail"]["compass_north_up"] = cfg.compassNorthUp;
     doc["sail"]["headsail_pct"]   = cfg.headsailSizePct;
 
     // Data-grid slots: serialise only ACTIVE slots (keeps config.json small),
@@ -245,6 +345,21 @@ String Config::toJson() const {
             c["pgn"]      = g.cells[i].pgn;
             c["unit"]     = g.cells[i].unit;
             c["decimals"] = g.cells[i].decimals;
+        }
+    }
+
+    // 7B right-hand sidebar: count + all cells (always serialized, so configs
+    // stay portable between boards; the 4" simply never instantiates it).
+    {
+        JsonObject js = doc["sidebar"].to<JsonObject>();
+        js["count"] = cfg.sidebar.count;
+        JsonArray cells = js["cells"].to<JsonArray>();
+        for (int i = 0; i < SIDEBAR_MAX_CELLS; i++) {
+            JsonObject c = cells.add<JsonObject>();
+            c["label"]    = cfg.sidebar.cells[i].label;
+            c["pgn"]      = cfg.sidebar.cells[i].pgn;
+            c["unit"]     = cfg.sidebar.cells[i].unit;
+            c["decimals"] = cfg.sidebar.cells[i].decimals;
         }
     }
 
@@ -274,12 +389,17 @@ String Config::toJson() const {
     }
 
     String out;
+    // One up-front allocation: >=4 KB goes to PSRAM automatically
+    // (CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096), and the ~380 realloc-grow
+    // steps of serializeJsonPretty - each a chance to fail silently on a
+    // tight heap - disappear.
+    out.reserve(16384);
     serializeJsonPretty(doc, out);
     return out;
 }
 
 bool Config::fromJson(const String &json) {
-    JsonDocument doc;
+    CFG_JSON_DOC();
     DeserializationError err = deserializeJson(doc, json);
     if (err) { Serial.printf("Config JSON error: %s\n", err.c_str()); return false; }
 
@@ -325,6 +445,22 @@ bool Config::fromJson(const String &json) {
 
     cfg.canTxPin = doc["nmea2000"]["can_tx"] | cfg.canTxPin;
     cfg.canRxPin = doc["nmea2000"]["can_rx"] | cfg.canRxPin;
+    // MIGRATION. Until now these two values were stored and served but never
+    // read by anything - the pins came only from the compile-time BoardConfig
+    // defines. So every config in the field carries one of two historical
+    // pairs that nobody chose: 17/18 (the old struct default, correct on no
+    // board at all) or 6/0 (the 4-inch pins, which data/config.json shipped to
+    // every board). Now that the values ARE honoured, taking them at face
+    // value would silence the bus on every existing device the moment this
+    // firmware lands. Both pairs therefore mean "not configured".
+    // Consequence worth knowing: a modified 4-inch board cannot pin 6/0
+    // explicitly - but it does not need to, since that is what BoardConfig
+    // resolves to there anyway.
+    if ((cfg.canTxPin == 17 && cfg.canRxPin == 18) ||
+        (cfg.canTxPin ==  6 && cfg.canRxPin ==  0)) {
+        cfg.canTxPin = -1;
+        cfg.canRxPin = -1;
+    }
     cfg.n2kListenOnly = doc["nmea2000"]["listen_only"] | cfg.n2kListenOnly;
 
     cfg.engine.rpmIdle    = doc["engine"]["rpm_idle"]     | cfg.engine.rpmIdle;
@@ -349,7 +485,33 @@ bool Config::fromJson(const String &json) {
     cfg.aisRange     = doc["ais"]["range"]     | cfg.aisRange;
     cfg.aisAlarm     = doc["ais"]["alarm"]     | cfg.aisAlarm;
     cfg.aisCpaAlarm  = doc["ais"]["cpa"]       | cfg.aisCpaAlarm;
+    // Only the four right angles are legal; anything else falls back to 0
+    // rather than handing LVGL an undefined rotation.
+    {
+        uint16_t r = doc["display"]["rotation"] | cfg.displayRotation;
+        cfg.displayRotation = (r == 90 || r == 180 || r == 270) ? r : 0;
+    }
     cfg.aisTcpaAlarm = doc["ais"]["tcpa"]      | cfg.aisTcpaAlarm;
+
+    // Sensor calibration + N2K source pinning (partial patches merge).
+    cfg.calDepthOffsetM   = doc["cal"]["depth_off"]   | cfg.calDepthOffsetM;
+    cfg.calAwaOffsetDeg   = doc["cal"]["awa_off"]     | cfg.calAwaOffsetDeg;
+    cfg.calAwsFactorPct   = doc["cal"]["aws_fac"]     | cfg.calAwsFactorPct;
+    cfg.calHdgOffsetDeg   = doc["cal"]["hdg_off"]     | cfg.calHdgOffsetDeg;
+    cfg.calStwFactorPct   = doc["cal"]["stw_fac"]     | cfg.calStwFactorPct;
+    cfg.calRollZeroDeg    = doc["cal"]["roll_zero"]   | cfg.calRollZeroDeg;
+    cfg.calPitchZeroDeg   = doc["cal"]["pitch_zero"]  | cfg.calPitchZeroDeg;
+    cfg.calRudderZeroDeg  = doc["cal"]["rudder_zero"] | cfg.calRudderZeroDeg;
+    cfg.calRudderInvert   = doc["cal"]["rudder_inv"]  | cfg.calRudderInvert;
+    cfg.calWaterTempOffC  = doc["cal"]["wtemp_off"]   | cfg.calWaterTempOffC;
+    cfg.calPressureOffHpa = doc["cal"]["press_off"]   | cfg.calPressureOffHpa;
+    cfg.srcPos   = doc["sources"]["pos"]   | cfg.srcPos;
+    cfg.srcHdg   = doc["sources"]["hdg"]   | cfg.srcHdg;
+    cfg.srcWind  = doc["sources"]["wind"]  | cfg.srcWind;
+    cfg.srcDepth = doc["sources"]["depth"] | cfg.srcDepth;
+    cfg.srcStw   = doc["sources"]["stw"]   | cfg.srcStw;
+    cfg.srcEnv   = doc["sources"]["env"]   | cfg.srcEnv;
+    cfg.srcAtt   = doc["sources"]["att"]   | cfg.srcAtt;
 
     cfg.anchorSet     = doc["anchor"]["set"]    | cfg.anchorSet;
     cfg.anchorLat     = doc["anchor"]["lat"]    | cfg.anchorLat;
@@ -403,6 +565,10 @@ bool Config::fromJson(const String &json) {
     cfg.allowButterfly    = doc["sail"]["butterfly"]     | cfg.allowButterfly;
     cfg.noGoAngle         = doc["sail"]["nogo_deg"]      | cfg.noGoAngle;
     cfg.windLinesApparent = doc["sail"]["windlines_app"] | cfg.windLinesApparent;
+    // Missing key keeps the current value, so the WebUI's sail editor - which
+    // posts only the keys it knows - cannot reset the card orientation the user
+    // last picked on the panel.
+    cfg.compassNorthUp    = doc["sail"]["compass_north_up"] | cfg.compassNorthUp;
     cfg.headsailSizePct   = doc["sail"]["headsail_pct"]  | cfg.headsailSizePct;
 
     // Helper to fill one GridConfig from a JSON object {name,rows,cols,cells[]}.
@@ -433,6 +599,31 @@ bool Config::fromJson(const String &json) {
     } else if (doc["grid"].is<JsonObject>()) {
         // Legacy migration: single "grid" object -> slot 0.
         loadGrid(cfg.grids[0], doc["grid"].as<JsonObjectConst>(), "Datenraster 1");
+    }
+
+    // 7B sidebar. When the block is present, the posted cells REPLACE the
+    // stored ones up to the array length and the remainder is cleared -
+    // otherwise shrinking the count and re-growing it would resurrect stale
+    // cell contents (the engine-fields loader has exactly that quirk).
+    if (doc["sidebar"].is<JsonObject>()) {
+        JsonObjectConst js = doc["sidebar"].as<JsonObjectConst>();
+        int cnt = js["count"] | (int)cfg.sidebar.count;
+        if (cnt < 1) cnt = 1;
+        if (cnt > SIDEBAR_MAX_CELLS) cnt = SIDEBAR_MAX_CELLS;
+        cfg.sidebar.count = (uint8_t)cnt;
+        if (js["cells"].is<JsonArrayConst>()) {
+            int i = 0;
+            for (JsonObjectConst c : js["cells"].as<JsonArrayConst>()) {
+                if (i >= SIDEBAR_MAX_CELLS) break;
+                GridCell &g = cfg.sidebar.cells[i];
+                strlcpy(g.label, c["label"] | "", sizeof(g.label));
+                strlcpy(g.pgn,   c["pgn"]   | "", sizeof(g.pgn));
+                strlcpy(g.unit,  c["unit"]  | "", sizeof(g.unit));
+                g.decimals = c["decimals"] | 1;
+                i++;
+            }
+            for (; i < SIDEBAR_MAX_CELLS; i++) cfg.sidebar.cells[i] = GridCell{};
+        }
     }
 
     // Theme

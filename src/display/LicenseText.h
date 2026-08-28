@@ -21,7 +21,33 @@
 // CC BY 4.0, Apache-2.0) and every copyright line are legal text — they are
 // byte-identical in both languages and must stay that way. Only the surrounding
 // prose is translated.
+//
+// VERSIONS DIFFER BY BOARD. The 4-inch stays on the Arduino core it shipped
+// with; the 1024x600 boards need a newer one for the RGB panel. This screen is
+// the copy of the notice that travels with the device, so it has to name what
+// THAT device links - it used to state the 4-inch versions on all three. The
+// three strings below are concatenated into the text; keep them in step with
+// the table in THIRD-PARTY-NOTICES.md, which carries both columns.
 // ============================================================
+
+// The 4-inch pins AsyncTCP and ESPAsyncWebServer to specific commits in
+// platformio.ini (the newer releases stall large responses on its Arduino
+// core); the panel boards take the current registry versions. So all three
+// differ, not just the core.
+//
+// Read them from .pio/libdeps/<env>/, and mind the trap: the 4-inch directory
+// holds BOTH a git-pinned "AsyncTCP@src-<hash>" (3.3.2, the one that is
+// linked) and a stray registry "AsyncTCP" (3.5.0, the second copy the comment
+// in platformio.ini warns about). The plain name is the wrong one to believe.
+#if defined(BOARD_PANEL_1024X600)
+#define LIC_V_CORE     "3.3.11 (ESP-IDF 5.5.5)"
+#define LIC_V_WEBSRV   "3.12.0"
+#define LIC_V_ASYNCTCP "3.5.0"
+#else
+#define LIC_V_CORE     "3.20017 (ESP-IDF 4.4.7)"
+#define LIC_V_WEBSRV   "3.6.0"
+#define LIC_V_ASYNCTCP "3.3.2"
+#endif
 
 static const char *const LICENSE_TEXT_DE =
 "Diese Firmware nutzt Software und Daten Dritter.\n"
@@ -34,15 +60,15 @@ static const char *const LICENSE_TEXT_DE =
 "quellcode und die eigene Anwendung in neu\n"
 "linkbarer Form beilegen.\n"
 "\n"
-"Arduino-ESP32-Kern 3.20017\n"
+"Arduino-ESP32-Kern " LIC_V_CORE "\n"
 "   LGPL-2.1-or-later\n"
 "   Copyright (c) Espressif Systems\n"
 "   and contributors\n"
-"ESPAsyncWebServer 3.6.0\n"
+"ESPAsyncWebServer " LIC_V_WEBSRV "\n"
 "   LGPL-3.0\n"
 "   Copyright (c) 2016 Hristo Gochkov,\n"
 "   ESP32Async project\n"
-"AsyncTCP 3.3.2\n"
+"AsyncTCP " LIC_V_ASYNCTCP "\n"
 "   LGPL-3.0\n"
 "   Copyright (c) 2016 Hristo Gochkov,\n"
 "   ESP32Async project\n"
@@ -103,15 +129,15 @@ static const char *const LICENSE_TEXT_EN =
 "library source, and their own application in a\n"
 "relinkable form.\n"
 "\n"
-"Arduino-ESP32 core 3.20017\n"
+"Arduino-ESP32 core " LIC_V_CORE "\n"
 "   LGPL-2.1-or-later\n"
 "   Copyright (c) Espressif Systems\n"
 "   and contributors\n"
-"ESPAsyncWebServer 3.6.0\n"
+"ESPAsyncWebServer " LIC_V_WEBSRV "\n"
 "   LGPL-3.0\n"
 "   Copyright (c) 2016 Hristo Gochkov,\n"
 "   ESP32Async project\n"
-"AsyncTCP 3.3.2\n"
+"AsyncTCP " LIC_V_ASYNCTCP "\n"
 "   LGPL-3.0\n"
 "   Copyright (c) 2016 Hristo Gochkov,\n"
 "   ESP32Async project\n"

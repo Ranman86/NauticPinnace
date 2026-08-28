@@ -180,9 +180,11 @@ textarea{background:var(--input-bg);border:1px solid var(--border);color:var(--c
   <div class="tab" onclick="showTab('display')" data-i18n="TAB_DISPLAY">Display</div>
   <div class="tab" onclick="showTab('design')" data-i18n="TAB_DESIGN">Design</div>
   <div class="tab" onclick="showTab('nmea')" data-i18n="TAB_NMEA">NMEA 2000</div>
+  <div class="tab" onclick="showTab('devices')" data-i18n="TAB_DEVICES">Ger&auml;te</div>
   <div class="tab" onclick="showTab('polar')" data-i18n="TAB_POLAR">Polar</div>
   <div class="tab" onclick="showTab('logo')" data-i18n="TAB_LOGO">Boot-Logo</div>
   <div class="tab" onclick="showTab('backup')" data-i18n="TAB_BACKUP">Import / Export</div>
+  <div class="tab" onclick="showTab('update')" data-i18n="TAB_UPDATE">Update</div>
 </nav>
 <main>
 
@@ -247,6 +249,19 @@ textarea{background:var(--input-bg);border:1px solid var(--border);color:var(--c
       <span id="bright-val" style="color:var(--text-muted);font-size:.8rem;grid-column:2;margin-top:-8px"></span>
     </div>
     <div class="form-row">
+      <label data-i18n="F_ROTATION">Bildschirm-Ausrichtung</label>
+      <select id="disp-rot">
+        <option value="0" data-i18n="ROT_0">0° – Querformat</option>
+        <option value="90" data-i18n="ROT_90">90° – Hochkant</option>
+        <option value="180" data-i18n="ROT_180">180° – Querformat, kopfüber</option>
+        <option value="270" data-i18n="ROT_270">270° – Hochkant, andersherum</option>
+      </select>
+    </div>
+    <p data-i18n="ROT_HINT" style="font-size:.8rem;color:var(--text-muted);margin:-6px 0 12px">
+      Das Gerät startet nach dem Speichern neu. Im Hochkant-Modus steht die Navigationsleiste
+      oben, das Instrument in der Mitte und die Werteleiste unten.
+    </p>
+    <div class="form-row">
       <label data-i18n="F_PERF_OVERLAY">FPS / CPU-Overlay</label>
       <div style="display:flex;align-items:center;gap:10px">
         <input type="checkbox" id="perf-overlay" style="width:18px;height:18px;accent-color:var(--accent)">
@@ -278,6 +293,21 @@ textarea{background:var(--input-bg);border:1px solid var(--border);color:var(--c
           <button class="btn btn-secondary" data-i18n="BTN_CANCEL" onclick="document.getElementById('gridWizard').style.display='none'">Abbrechen</button>
         </div>
       </div>
+    </div>
+    <div class="form-row" style="grid-template-columns:1fr;align-items:start">
+      <label data-i18n="SB_H" style="margin-bottom:4px">Seitenleiste (7-Zoll) – Dauerwerte rechts</label>
+      <div data-i18n="SB_HINT" style="font-size:.8rem;color:var(--text-muted);margin-bottom:8px">
+        Auf dem 7-Zoll-Display werden diese Werte dauerhaft rechts neben den
+        Instrumenten angezeigt. Leeres Label = übersetzter Standardname.
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+        <label data-i18n="SB_COUNT" style="margin:0">Anzahl Felder</label>
+        <select id="sb-count" onchange="sbSetCount(+this.value)" style="max-width:90px">
+          <option>1</option><option>2</option><option>3</option><option>4</option>
+          <option>5</option><option>6</option><option>7</option><option>8</option>
+        </select>
+      </div>
+      <div id="sidebarCells" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:6px"></div>
     </div>
     <div class="actions">
       <button class="btn btn-primary" onclick="saveDisplay()" data-i18n="BTN_SAVE">Speichern</button>
@@ -366,6 +396,53 @@ textarea{background:var(--input-bg);border:1px solid var(--border);color:var(--c
        — a route that never existed in WebConfig.cpp. It never worked.
        The C++ stubs (Config::sendViaN2k/receiveViaN2k) still exist, in case the
        idea of a config transfer via proprietary PGN is ever picked up again. -->
+</div>
+
+<!-- ============ DEVICES: calibration + source selection ============ -->
+<div id="tab-devices" class="panel">
+  <div class="section">
+    <h2><span class="ico">🧭</span> <span data-i18n="CAL_H">Kalibrierung</span></h2>
+    <p data-i18n="CAL_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Korrekturen werden einmal beim Empfang angewendet — alle Anzeigen nutzen die kalibrierten Werte.
+      Offsets werden addiert; Nullpunkte sind der Wert, den der Sensor in Ruhelage anzeigt.
+    </p>
+    <div class="form-row"><label data-i18n="CAL_DEPTH">Tiefe: Geber-Offset (m)</label>
+      <input type="number" id="cal-depth" step="0.05" min="-5" max="5"></div>
+    <div class="form-row"><label data-i18n="CAL_AWA">Wind: Geber-Rotation (&deg;)</label>
+      <input type="number" id="cal-awa" step="1" min="-180" max="180"></div>
+    <div class="form-row"><label data-i18n="CAL_AWSF">Wind: AWS-Faktor (%)</label>
+      <input type="number" id="cal-awsf" step="1" min="50" max="150"></div>
+    <div class="form-row"><label data-i18n="CAL_HDG">Kompass: Offset (&deg;)</label>
+      <input type="number" id="cal-hdg" step="1" min="-180" max="180"></div>
+    <div class="form-row"><label data-i18n="CAL_STWF">Logge: STW-Faktor (%)</label>
+      <input type="number" id="cal-stwf" step="1" min="50" max="150"></div>
+    <div class="form-row"><label data-i18n="CAL_ROLL">Lage: Roll-Nullpunkt (&deg;)</label>
+      <input type="number" id="cal-roll" step="0.1" min="-45" max="45"></div>
+    <div class="form-row"><label data-i18n="CAL_PITCH">Lage: Pitch-Nullpunkt (&deg;)</label>
+      <input type="number" id="cal-pitch" step="0.1" min="-45" max="45"></div>
+    <div class="form-row"><label data-i18n="CAL_RUDDER">Ruder: Nullpunkt (&deg;)</label>
+      <input type="number" id="cal-rudder" step="0.5" min="-45" max="45"></div>
+    <div class="form-row"><label data-i18n="CAL_RUDINV">Ruder: Richtung invertieren</label>
+      <input type="checkbox" id="cal-rudinv"></div>
+    <div class="form-row"><label data-i18n="CAL_WTEMP">Wassertemperatur: Offset (&deg;C)</label>
+      <input type="number" id="cal-wtemp" step="0.1" min="-10" max="10"></div>
+    <div class="form-row"><label data-i18n="CAL_PRESS">Luftdruck: Offset (hPa)</label>
+      <input type="number" id="cal-press" step="0.1" min="-50" max="50"></div>
+  </div>
+  <div class="section">
+    <h2><span class="ico">📡</span> <span data-i18n="SRC_H">Datenquellen</span></h2>
+    <p data-i18n="SRC_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Senden mehrere Ger&auml;te dieselben Daten (zwei GPS, zwei Kompasse &hellip;), w&auml;hle hier
+      den ma&szlig;geblichen Absender. &bdquo;Auto&ldquo; nimmt jeden Absender an.
+    </p>
+    <div id="srcRows"></div>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="loadSources()" data-i18n="SRC_REFRESH">Absender neu einlesen</button>
+    </div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-primary" onclick="saveDevices()" data-i18n="BTN_SAVE_LIVE">Speichern (sofort aktiv)</button>
+  </div>
 </div>
 
 <!-- ============ POLAR ============ -->
@@ -476,6 +553,56 @@ python logo_convert.py logo.png logo.bin --size 160</code></pre>
 </div>
 
 <!-- ============ BACKUP ============ -->
+<!-- ============ UPDATE (OTA over WiFi) ============ -->
+<div id="tab-update" class="panel">
+  <div class="section">
+    <h2><span class="ico">⬆️</span> <span data-i18n="OTA_H">Firmware-Update über WLAN</span></h2>
+    <!-- What is running right now. Directly above the update controls on
+         purpose: the question "do I even need this update?" is asked here,
+         and until now the answer was nowhere on this page. Filled by
+         loadInfo() from GET /api/info. -->
+    <p style="font-size:.85rem;margin-bottom:14px">
+      <span data-i18n="OTA_RUNNING" style="color:var(--text-muted)">Zurzeit installiert:</span>
+      <strong id="fw-version" style="color:var(--accent)">…</strong>
+      <span id="fw-detail" style="color:var(--text-muted)"></span>
+    </p>
+    <p data-i18n="OTA_P" style="font-size:.85rem;color:var(--text-muted);margin-bottom:14px">
+      Spielt eine neue Firmware ein, ohne das Gerät per USB anzuschließen. Das Update landet im
+      zweiten Speicherbereich. Ein unvollständig übertragenes Bild wird vom Bootloader erkannt
+      und die alte Version weiter verwendet. Ein vollständiges Bild, das erst im Betrieb
+      abstürzt, lässt sich jedoch NUR per USB reparieren — neue Firmware daher im Hafen
+      einspielen, nicht auf See.
+    </p>
+    <p data-i18n="OTA_ORDER" style="font-size:.85rem;color:var(--warn);margin-bottom:14px">
+      Reihenfolge beachten: Gehört zum Update eine neue Bedienoberfläche, zuerst das
+      Dateisystem einspielen, dann die Firmware.
+    </p>
+
+    <div class="form-row">
+      <label data-i18n="OTA_FW">Firmware (firmware.bin)</label>
+      <input type="file" id="ota-fw" accept=".bin">
+    </div>
+    <div class="actions">
+      <button class="btn btn-primary" onclick="otaUpload('fw')" data-i18n="OTA_START_FW">Firmware einspielen</button>
+    </div>
+
+    <div class="form-row" style="margin-top:18px">
+      <label data-i18n="OTA_FS">Dateisystem (littlefs.bin)</label>
+      <input type="file" id="ota-fs" accept=".bin">
+    </div>
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="otaUpload('fs')" data-i18n="OTA_START_FS">Dateisystem einspielen</button>
+    </div>
+
+    <div id="ota-progress-wrap" style="display:none;margin-top:18px">
+      <div style="background:var(--card-border,#ccc);border-radius:6px;height:22px;overflow:hidden">
+        <div id="ota-bar" style="height:100%;width:0%;background:var(--accent);transition:width .2s"></div>
+      </div>
+      <div id="ota-status" style="margin-top:8px;font-size:.9rem"></div>
+    </div>
+  </div>
+</div>
+
 <div id="tab-backup" class="panel">
   <div class="section">
     <h2><span class="ico">💾</span> <span data-i18n="BACKUP_H">Import / Export</span></h2>
@@ -603,6 +730,60 @@ LOGO_NONE_BR:'Kein<br>Logo',
 LOGO_STORED:'✓ Logo gespeichert',
 BTN_LOGO_UPLOAD:'Logo hochladen (.bin)',
 BTN_LOGO_DELETE:'Logo löschen',
+F_ROTATION:'Bildschirm-Ausrichtung',
+ROT_0:'0° – Querformat',
+ROT_90:'90° – Hochkant',
+ROT_180:'180° – Querformat, kopfüber',
+ROT_270:'270° – Hochkant, andersherum',
+ROT_HINT:'Das Gerät startet nach dem Speichern neu. Im Hochkant-Modus steht die Navigationsleiste oben, das Instrument in der Mitte und die Werteleiste unten.',
+TAB_UPDATE:'Update',
+OTA_H:'Firmware-Update über WLAN',
+OTA_RUNNING:'Zurzeit installiert:',
+OTA_P:'Spielt eine neue Firmware ein, ohne das Gerät per USB anzuschließen. Das Update landet im zweiten Speicherbereich. Ein unvollständig übertragenes Bild wird vom Bootloader erkannt und die alte Version weiter verwendet. Ein vollständiges Bild, das erst im Betrieb abstürzt, lässt sich jedoch NUR per USB reparieren — neue Firmware daher im Hafen einspielen, nicht auf See.',
+OTA_ORDER:'Reihenfolge beachten: Gehört zum Update eine neue Bedienoberfläche, zuerst das Dateisystem einspielen, dann die Firmware.',
+OTA_FW:'Firmware (firmware.bin)',
+OTA_FS:'Dateisystem (littlefs.bin)',
+OTA_START_FW:'Firmware einspielen',
+OTA_START_FS:'Dateisystem einspielen',
+OTA_NOFILE:'Bitte zuerst eine Datei auswählen',
+OTA_CONFIRM_FW:'Firmware jetzt einspielen? Das Gerät startet danach neu. Stromversorgung bis dahin nicht trennen. Hinweis: Eine Firmware, die erst im Betrieb abstürzt, braucht zur Reparatur den USB-Anschluss.',
+OTA_CONFIRM_FS:'Dateisystem jetzt einspielen? Achtung: Dabei werden die gespeicherten Einstellungen überschrieben. Vorher unter Import/Export sichern.',
+OTA_UPLOADING:'Übertrage …',
+OTA_OK:'Übertragung erfolgreich',
+OTA_WAIT:'Gerät startet neu …',
+OTA_BACK:'Gerät ist wieder da – lade neu …',
+OTA_NORESP:'Gerät meldet sich nicht zurück. Bitte Stromversorgung prüfen und Seite neu laden.',
+OTA_FAIL:'Update fehlgeschlagen:',
+TAB_DEVICES:'Geräte',
+CAL_H:'Kalibrierung',
+CAL_P:'Korrekturen werden einmal beim Empfang angewendet — alle Anzeigen nutzen die kalibrierten Werte. Offsets werden addiert; Nullpunkte sind der Wert, den der Sensor in Ruhelage anzeigt.',
+CAL_DEPTH:'Tiefe: Geber-Offset (m)',
+CAL_AWA:'Wind: Geber-Rotation (°)',
+CAL_AWSF:'Wind: AWS-Faktor (%)',
+CAL_HDG:'Kompass: Offset (°)',
+CAL_STWF:'Logge: STW-Faktor (%)',
+CAL_ROLL:'Lage: Roll-Nullpunkt (°)',
+CAL_PITCH:'Lage: Pitch-Nullpunkt (°)',
+CAL_RUDDER:'Ruder: Nullpunkt (°)',
+CAL_RUDINV:'Ruder: Richtung invertieren',
+CAL_WTEMP:'Wassertemp.: Offset (°C)',
+CAL_PRESS:'Luftdruck: Offset (hPa)',
+SRC_H:'Datenquellen',
+SRC_P:'Senden mehrere Geräte dieselben Daten (zwei GPS, zwei Kompasse …), wähle hier den maßgeblichen Absender. „Auto" nimmt jeden Absender an.',
+SRC_POS:'Position (GPS)',
+SRC_HDG:'Kompass',
+SRC_WIND:'Wind',
+SRC_DEPTH:'Tiefe',
+SRC_STW:'Fahrt durchs Wasser',
+SRC_ENV:'Umwelt (Temp/Druck)',
+SRC_ATT:'Lage (Roll/Pitch)',
+SRC_AUTO:'Auto (jeder Absender)',
+SRC_GONE:'nicht mehr gesehen',
+SRC_REFRESH:'Absender neu einlesen',
+BTN_SAVE_LIVE:'Speichern (sofort aktiv)',
+SB_H:'Seitenleiste (7-Zoll) – Dauerwerte rechts',
+SB_HINT:'Auf dem 7-Zoll-Display werden diese Werte dauerhaft rechts neben den Instrumenten angezeigt. Leeres Label = übersetzter Standardname.',
+SB_COUNT:'Anzahl Felder',
 ANIM_H:'Animations-Einstellungen',
 F_BOOTTITLE:'Titel',
 BOOTTITLE_HINT:'Große Zeile im Startbildschirm. Leer lassen für „NauticPinnace“.',
@@ -634,6 +815,8 @@ FLD_HOURS:'Betriebsstd.',
 FLD_FUEL:'Kraftstoff',
 FLD_RUDDER:'Ruder',
 FLD_BATTV:'Batt V',
+FLD_CPU:'CPU',
+FLD_RAM:'RAM frei',
 FLD_LAT:'Breite',
 FLD_LON:'Länge',
 FLD_APTARGET:'AP Ziel',
@@ -922,6 +1105,60 @@ LOGO_NONE_BR:'No<br>logo',
 LOGO_STORED:'✓ Logo stored',
 BTN_LOGO_UPLOAD:'Upload logo (.bin)',
 BTN_LOGO_DELETE:'Delete logo',
+F_ROTATION:'Screen orientation',
+ROT_0:'0° – landscape',
+ROT_90:'90° – portrait',
+ROT_180:'180° – landscape, upside down',
+ROT_270:'270° – portrait, the other way',
+ROT_HINT:'The device restarts after saving. In portrait the nav bar sits on top, the instrument in the middle and the data bar at the bottom.',
+TAB_UPDATE:'Update',
+OTA_H:'Firmware update over WiFi',
+OTA_RUNNING:'Currently installed:',
+OTA_P:'Installs new firmware without connecting USB. The update is written to the second flash slot. An incompletely transferred image is detected by the bootloader, which keeps running the previous version. A complete image that only crashes at runtime can be recovered ONLY over USB - so install new firmware at the dock, not at sea.',
+OTA_ORDER:'Mind the order: if the update ships a new web interface, install the filesystem first, then the firmware.',
+OTA_FW:'Firmware (firmware.bin)',
+OTA_FS:'Filesystem (littlefs.bin)',
+OTA_START_FW:'Install firmware',
+OTA_START_FS:'Install filesystem',
+OTA_NOFILE:'Please choose a file first',
+OTA_CONFIRM_FW:'Install firmware now? The device reboots afterwards. Do not cut power until it is back. Note: firmware that only crashes at runtime needs USB access to recover.',
+OTA_CONFIRM_FS:'Install filesystem now? This overwrites the stored settings. Back them up under Import/Export first.',
+OTA_UPLOADING:'Uploading …',
+OTA_OK:'Upload complete',
+OTA_WAIT:'Device is rebooting …',
+OTA_BACK:'Device is back – reloading …',
+OTA_NORESP:'Device did not come back. Check power and reload the page.',
+OTA_FAIL:'Update failed:',
+TAB_DEVICES:'Devices',
+CAL_H:'Calibration',
+CAL_P:'Corrections are applied once at reception — every display uses the calibrated values. Offsets are added; zero-points are the value the sensor reports at rest.',
+CAL_DEPTH:'Depth: transducer offset (m)',
+CAL_AWA:'Wind: vane rotation (°)',
+CAL_AWSF:'Wind: AWS factor (%)',
+CAL_HDG:'Compass: offset (°)',
+CAL_STWF:'Log: STW factor (%)',
+CAL_ROLL:'Attitude: roll zero (°)',
+CAL_PITCH:'Attitude: pitch zero (°)',
+CAL_RUDDER:'Rudder: zero point (°)',
+CAL_RUDINV:'Rudder: invert direction',
+CAL_WTEMP:'Water temp: offset (°C)',
+CAL_PRESS:'Pressure: offset (hPa)',
+SRC_H:'Data sources',
+SRC_P:'When several devices send the same data (two GPS, two compasses …), pick the authoritative sender here. "Auto" accepts any sender.',
+SRC_POS:'Position (GPS)',
+SRC_HDG:'Compass',
+SRC_WIND:'Wind',
+SRC_DEPTH:'Depth',
+SRC_STW:'Speed through water',
+SRC_ENV:'Environment (temp/pressure)',
+SRC_ATT:'Attitude (roll/pitch)',
+SRC_AUTO:'Auto (any sender)',
+SRC_GONE:'no longer seen',
+SRC_REFRESH:'Rescan senders',
+BTN_SAVE_LIVE:'Save (applies immediately)',
+SB_H:'Sidebar (7-inch) – permanent values on the right',
+SB_HINT:'On the 7-inch display these values are shown permanently next to the instruments. Empty label = translated default name.',
+SB_COUNT:'Number of fields',
 ANIM_H:'Animation settings',
 F_BOOTTITLE:'Title',
 BOOTTITLE_HINT:'Large line on the boot screen. Leave empty for “NauticPinnace”.',
@@ -953,6 +1190,8 @@ FLD_HOURS:'Engine hrs',
 FLD_FUEL:'Fuel',
 FLD_RUDDER:'Rudder',
 FLD_BATTV:'Batt V',
+FLD_CPU:'CPU',
+FLD_RAM:'RAM free',
 FLD_LAT:'Latitude',
 FLD_LON:'Longitude',
 FLD_APTARGET:'AP target',
@@ -1172,6 +1411,11 @@ let connOnline = false;   // connection state for the badge (see above)
 
 function setConnBadge(online) {
   connOnline = online;
+  // The IP badge shows the address the page was actually loaded from -
+  // the static "192.168.4.1" in the markup is only the file:// fallback
+  // (it used to be shown unconditionally, which was wrong in STA mode).
+  const ip = document.getElementById('ipBadge');
+  if (ip && location.host) ip.textContent = location.host;
   const b = document.getElementById('connBadge');
   if (!b) return;
   b.textContent = t(online ? 'CONN_ONLINE' : 'CONN_OFFLINE');
@@ -1272,7 +1516,8 @@ const FIELDS = {
   awa:'FLD_AWA', aws:'FLD_AWS', twa:'FLD_TWA', tws:'FLD_TWS', twd:'FLD_TWD',
   depth:'FLD_DEPTH', rpm:'FLD_RPM', oil:'FLD_OIL', coolant:'FLD_COOLANT',
   hours:'FLD_HOURS', fuel:'FLD_FUEL', rudder:'FLD_RUDDER',
-  battv:'FLD_BATTV', lat:'FLD_LAT', lon:'FLD_LON', aptarget:'FLD_APTARGET'
+  battv:'FLD_BATTV', lat:'FLD_LAT', lon:'FLD_LON', aptarget:'FLD_APTARGET',
+  cpu:'FLD_CPU', ram:'FLD_RAM'
 };
 
 // ---- Tabs --------------------------------------------------------------------
@@ -1281,8 +1526,9 @@ function showTab(id) {
   document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
   document.getElementById('tab-'+id).classList.add('active');
   event.target.classList.add('active');
-  if (id==='backup') refreshRawConfig();
-  if (id==='logo')   checkLogoStatus();
+  if (id==='backup')  refreshRawConfig();
+  if (id==='logo')    checkLogoStatus();
+  if (id==='devices') loadSources();
 }
 
 // ---- Toast -------------------------------------------------------------------
@@ -1337,11 +1583,28 @@ function populateForm() {
   setVal('wifi-ssid',    cfg.wifi?.ssid??'');
   setVal('wifi-pass',    cfg.wifi?.password??'');
   setVal('disp-bright',  cfg.display?.brightness??200);
+  setVal('disp-rot',     cfg.display?.rotation??0);
+  rotAtLoad = +(cfg.display?.rotation??0);
   document.getElementById('bright-val').textContent = cfg.display?.brightness??200;
   document.getElementById('perf-overlay').checked = cfg.show_perf_overlay??false;
   setVal('can-tx',       cfg.nmea2000?.can_tx??17);
   setVal('can-rx',       cfg.nmea2000?.can_rx??18);
   document.getElementById('can-listen').checked = cfg.nmea2000?.listen_only??false;
+  // Devices tab: calibration values + pinned sources
+  setVal('cal-depth',  cfg.cal?.depth_off??0);
+  setVal('cal-awa',    cfg.cal?.awa_off??0);
+  setVal('cal-awsf',   cfg.cal?.aws_fac??100);
+  setVal('cal-hdg',    cfg.cal?.hdg_off??0);
+  setVal('cal-stwf',   cfg.cal?.stw_fac??100);
+  setVal('cal-roll',   cfg.cal?.roll_zero??0);
+  setVal('cal-pitch',  cfg.cal?.pitch_zero??0);
+  setVal('cal-rudder', cfg.cal?.rudder_zero??0);
+  document.getElementById('cal-rudinv').checked = cfg.cal?.rudder_inv??false;
+  setVal('cal-wtemp',  cfg.cal?.wtemp_off??0);
+  setVal('cal-press',  cfg.cal?.press_off??0);
+  devSources = Object.assign({pos:-1,hdg:-1,wind:-1,depth:-1,stw:-1,env:-1,att:-1},
+                             cfg.sources || {});
+  renderSources();
   setVal('boot-title',   cfg.boot?.title??'');
   setVal('boot-name',    cfg.boot?.name??'');
   // Engine/AIS/Depth/Sail settings now live inline in the screen list (built below).
@@ -1402,6 +1665,13 @@ function buildScreenList() {
     gridState[g.slot] = { name: g.name || '', rows: g.rows||3, cols: g.cols||3, layout: g.layout||'',
                           cells: (g.cells||[]).map(c => ({label:c.label||'',pgn:c.pgn||'',unit:c.unit||'',decimals:c.decimals??1})) };
   });
+  // 7B sidebar editor state
+  sbState = {
+    count: cfg.sidebar?.count ?? 5,
+    cells: (cfg.sidebar?.cells || []).map(c => ({label:c.label||'', pgn:c.pgn||'', unit:c.unit||'', decimals:c.decimals??1}))
+  };
+  renderSidebarCfg();
+
   // fixed-screen inline edit state
   cfgEdits = {
     sail:   { lwl_m: cfg.sail?.lwl_m ?? 9, spinnaker: cfg.sail?.spinnaker ?? true, code_zero: cfg.sail?.code_zero ?? false, foresail_pct: cfg.sail?.foresail_pct ?? 100, butterfly: cfg.sail?.butterfly ?? false, nogo_deg: cfg.sail?.nogo_deg ?? 30, windlines_app: cfg.sail?.windlines_app ?? false },
@@ -1614,6 +1884,31 @@ function toggleScreen(i, on) {
 // ---- grid inline state mutators ---------------------------------------------
 function gridSetName(slot,val){ if(gridState[slot]){ gridState[slot].name=val; const s=screenList.find(x=>x.id===GRID_BASE+slot); if(s) s.name=val; } }
 function gridSetCell(slot,i,key,val){ const g=gridState[slot]; if(!g)return; if(!g.cells[i]) g.cells[i]={label:'',pgn:'',unit:'',decimals:1}; g.cells[i][key]=val; }
+
+// ---- 7B sidebar (right-hand permanent value column) -------------------------
+let sbState = { count: 5, cells: [] };
+function sbSetCount(v){ sbState.count = Math.min(8, Math.max(1, v|0)); renderSidebarCfg(); }
+function sbSetCell(i,key,val){ if(!sbState.cells[i]) sbState.cells[i]={label:'',pgn:'',unit:'',decimals:1}; sbState.cells[i][key]=val; }
+function sbCellEditorHtml(i, c){
+  c = c || {};
+  return `<div style="background:var(--surface3);border:1px solid var(--border);border-radius:5px;padding:6px">
+    <div style="font-size:.7rem;color:var(--text-muted)">${t('CELL')+' '+(i+1)}</div>
+    <select onchange="sbSetCell(${i},'pgn',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0"><option value="">${t('OPT_EMPTY')}</option>${gridFieldOptions(c.pgn)}</select>
+    <input type="text" placeholder="${t('PH_LABEL')}" value="${esc(c.label||'')}" onchange="sbSetCell(${i},'label',this.value)" style="${_cfgIn};width:100%;max-width:100%;margin:3px 0">
+    <div style="display:flex;gap:4px">
+      <input type="text" placeholder="${t('PH_UNIT')}" value="${esc(c.unit||'')}" onchange="sbSetCell(${i},'unit',this.value)" style="${_cfgIn};width:60%">
+      <input type="number" placeholder="${t('PH_DEC')}" value="${c.decimals??1}" min="0" max="3" onchange="sbSetCell(${i},'decimals',+this.value)" style="${_cfgIn};width:40%">
+    </div></div>`;
+}
+function renderSidebarCfg(){
+  const sel = document.getElementById('sb-count');
+  if (sel) sel.value = String(sbState.count);
+  const host = document.getElementById('sidebarCells');
+  if (!host) return;
+  let h = '';
+  for (let i=0;i<sbState.count;i++) h += sbCellEditorHtml(i, sbState.cells[i]);
+  host.innerHTML = h;
+}
 function gridSetSize(slot,key){ const info=LAYOUTS[key]; const g=gridState[slot]; if(!g||!info)return; g.layout=key; g.rows=info.rows; g.cols=info.cols; structuralChange=true; renderScreenList(); }
 
 // ---- grid wizard / delete ---------------------------------------------------
@@ -2008,6 +2303,9 @@ async function saveWifi() {
   if (r?.ok) { toast(t('TOAST_SAVED_RESTART')); setTimeout(()=>api('POST','/api/restart'),1500); }
   else toast(t('TOAST_ERROR'),true);
 }
+// Rotation is applied at boot (LVGL software rotation), so a change needs a
+// restart - remember what was loaded to tell a real change from a re-save.
+let rotAtLoad = 0;
 async function saveDisplay() {
   const e = cfgEdits;
   const grids = Object.keys(gridState).map(slot => {
@@ -2031,6 +2329,7 @@ async function saveDisplay() {
   const patch = {
     display:{
       brightness:+v('disp-bright'),
+      rotation:+v('disp-rot'),
       screens: screenList.map(s => ({ id:s.id, en:s.enabled }))
     },
     show_perf_overlay: document.getElementById('perf-overlay').checked,
@@ -2042,11 +2341,21 @@ async function saveDisplay() {
     tankcfg, battcfg,
     depth:  { alarm:+e.depth.alarm, unit:e.depth.unit },
     sail:   { lwl_m:+e.sail.lwl_m, spinnaker:!!e.sail.spinnaker, code_zero:!!e.sail.code_zero, foresail_pct:+e.sail.foresail_pct, butterfly:!!e.sail.butterfly, nogo_deg:+e.sail.nogo_deg, windlines_app:!!e.sail.windlines_app },
-    grids
+    grids,
+    // 7B sidebar: send ALL 8 cell slots so the firmware clears trailing ones
+    // (shrink-then-grow must not resurrect stale cells).
+    sidebar: { count: sbState.count,
+               cells: Array.from({length:8}, (_,i) => { const c = sbState.cells[i]||{};
+                 return { label:c.label||'', pgn:c.pgn||'', unit:c.unit||'', decimals:(c.decimals??1) }; }) }
   };
   const r = await postPatch(patch);
   if (r?.ok) {
-    if (structuralChange) { toast(t('TOAST_SAVED_RESTART')); structuralChange=false; setTimeout(()=>api('POST','/api/restart'),1500); }
+    // A rotation change only takes effect at boot (LVGL sets it up once,
+    // and the canvases are built for the resulting layout), so treat it
+    // exactly like a structural change.
+    const rotChanged = +v('disp-rot') !== rotAtLoad;
+    if (rotChanged) rotAtLoad = +v('disp-rot');
+    if (structuralChange || rotChanged) { toast(t('TOAST_SAVED_RESTART')); structuralChange=false; setTimeout(()=>api('POST','/api/restart'),1500); }
     else toast(t('TOAST_SAVED'));
   } else toast(t('TOAST_ERROR'),true);
 }
@@ -2055,6 +2364,48 @@ async function saveNmea() {
   const r = await postPatch(patch);
   if (r?.ok) { toast(t('TOAST_SAVED_RESTART')); setTimeout(()=>api('POST','/api/restart'),1500); }
   else toast(t('TOAST_ERROR'),true);
+}
+
+// ---- Devices tab: calibration + N2K source pinning ---------------------------
+// Applied at ingestion in the firmware; takes effect on the next message,
+// no restart needed.
+const SRC_CATS = { pos:'SRC_POS', hdg:'SRC_HDG', wind:'SRC_WIND',
+                   depth:'SRC_DEPTH', stw:'SRC_STW', env:'SRC_ENV', att:'SRC_ATT' };
+let devSources = { pos:-1, hdg:-1, wind:-1, depth:-1, stw:-1, env:-1, att:-1 };
+let srcSeen = {};
+async function loadSources() {
+  try { srcSeen = await (await fetch('/api/sources')).json() || {}; }
+  catch (e) { srcSeen = {}; }
+  renderSources();
+}
+function renderSources() {
+  const host = document.getElementById('srcRows');
+  if (!host) return;
+  host.innerHTML = Object.keys(SRC_CATS).map(k => {
+    const seen = srcSeen[k] || [];
+    const sel  = devSources[k] ?? -1;
+    const opts = [`<option value="-1"${sel<0?' selected':''}>${t('SRC_AUTO')}</option>`]
+      .concat(seen.map(s =>
+        `<option value="${s.sa}"${s.sa==sel?' selected':''}>SA ${s.sa} &middot; ${s.n} Msg &middot; ${s.age}s</option>`));
+    if (sel >= 0 && !seen.some(s => s.sa == sel))
+      opts.push(`<option value="${sel}" selected>SA ${sel} (${t('SRC_GONE')})</option>`);
+    return `<div class="form-row"><label>${t(SRC_CATS[k])}</label>`
+         + `<select onchange="devSources['${k}']=+this.value">${opts.join('')}</select></div>`;
+  }).join('');
+}
+async function saveDevices() {
+  const patch = {
+    cal: { depth_off:+v('cal-depth'), awa_off:+v('cal-awa'), aws_fac:+v('cal-awsf'),
+           hdg_off:+v('cal-hdg'), stw_fac:+v('cal-stwf'),
+           roll_zero:+v('cal-roll'), pitch_zero:+v('cal-pitch'),
+           rudder_zero:+v('cal-rudder'),
+           rudder_inv:document.getElementById('cal-rudinv').checked,
+           wtemp_off:+v('cal-wtemp'), press_off:+v('cal-press') },
+    sources: { ...devSources },
+  };
+  const r = await postPatch(patch);
+  if (r?.ok) toast(t('TOAST_SAVED'));
+  else toast(t('TOAST_ERROR'), true);
 }
 async function saveDemo() {
   const isDemo = document.getElementById('demo-mode').checked;
@@ -2085,6 +2436,67 @@ async function exportConfig() {
   a.download='nauticpinnace-config.json';
   a.click();
 }
+// ---- OTA update over WiFi ----------------------------------------------------
+// XMLHttpRequest, not fetch: only XHR reports UPLOAD progress, and a 2.3 MB
+// image over a marginal boat link takes long enough that the difference
+// between "working" and "hung" is exactly that progress bar.
+function otaUpload(kind) {
+  const input = document.getElementById(kind === 'fw' ? 'ota-fw' : 'ota-fs');
+  const file  = input && input.files[0];
+  if (!file) { toast(t('OTA_NOFILE'), true); return; }
+  if (!confirm(t(kind === 'fw' ? 'OTA_CONFIRM_FW' : 'OTA_CONFIRM_FS'))) return;
+
+  const wrap = document.getElementById('ota-progress-wrap');
+  const bar  = document.getElementById('ota-bar');
+  const stat = document.getElementById('ota-status');
+  wrap.style.display = 'block';
+  bar.style.width = '0%';
+  stat.textContent = t('OTA_UPLOADING');
+
+  const fd = new FormData();
+  fd.append('update', file, file.name);
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', '/api/ota?target=' + kind);
+  xhr.upload.onprogress = e => {
+    if (!e.lengthComputable) return;
+    const pct = Math.round(e.loaded * 100 / e.total);
+    bar.style.width = pct + '%';
+    stat.textContent = t('OTA_UPLOADING') + ' ' + pct + '%';
+  };
+  xhr.onload = () => {
+    let ok = false;
+    try { ok = JSON.parse(xhr.responseText).ok === true; } catch (err) {}
+    if (xhr.status === 200 && ok) {
+      bar.style.width = '100%';
+      stat.textContent = t('OTA_WAIT');
+      toast(t('OTA_OK'));
+      setTimeout(otaWaitForDevice, 4000);   // it reboots on its own
+    } else {
+      stat.textContent = t('OTA_FAIL') + ' ' + (xhr.responseText || xhr.status);
+      toast(t('OTA_FAIL'), true);
+    }
+  };
+  xhr.onerror = () => { stat.textContent = t('OTA_FAIL'); toast(t('OTA_FAIL'), true); };
+  xhr.send(fd);
+}
+
+// Poll until the device answers again after its post-update reboot.
+async function otaWaitForDevice() {
+  const stat = document.getElementById('ota-status');
+  for (let i = 0; i < 40; i++) {
+    try {
+      const r = await fetch('/api/data', { cache: 'no-store' });
+      if (r.ok) {
+        stat.textContent = t('OTA_BACK');
+        setTimeout(() => location.reload(), 1200);
+        return;
+      }
+    } catch (err) {}
+    await new Promise(res => setTimeout(res, 1500));
+  }
+  stat.textContent = t('OTA_NORESP');
+}
+
 function importConfig(evt) {
   const file=evt.target.files[0]; if(!file) return;
   const reader=new FileReader();
@@ -2192,8 +2604,35 @@ function saveBootName() {
 applyI18n();
 checkLogoStatus();
 
+// ---- Firmware identity ------------------------------------------------------
+// GET /api/info rather than /api/config: the config document is what the
+// device WRITES BACK to config.json, so a version carried in it would be a
+// stored value rather than a statement about the running firmware. This asks
+// the firmware itself, every time the page loads.
+//
+// Failure is silent by design. The version line is informational and sits on
+// the update tab; an older firmware without this endpoint answers 404, and
+// leaving a dash there is better than an error banner on an otherwise
+// working page.
+async function loadInfo() {
+  try {
+    const r = await fetch('/api/info');
+    if (!r.ok) throw new Error(r.status);
+    const i = await r.json();
+    document.getElementById('fw-version').textContent = 'v' + i.version;
+    const bits = [];
+    if (i.board) bits.push(i.board);
+    if (i.slot)  bits.push(i.slot);
+    document.getElementById('fw-detail').textContent =
+      bits.length ? ' (' + bits.join(', ') + ')' : '';
+  } catch (e) {
+    document.getElementById('fw-version').textContent = '–';
+  }
+}
+
 // ---- Boot -------------------------------------------------------------------
 loadConfig();
+loadInfo();
 setInterval(pollLive, 1000);
 </script>
 </body>

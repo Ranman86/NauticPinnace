@@ -11,6 +11,8 @@
 #include "../src/display/DisplayManager.h"   // dispMgr: swipe navigation
 #include "../src/Entropy.h"
 #include "../src/display/UiConfig.h"         // UI_SWIPE_THRESHOLD, UI_SCREEN_W
+#include "../src/BoardConfig.h"              // UI7_RAIL_W / _CENTER_X / _CENTER_W / _SIDEBAR_X
+#include "../src/display/Theme.h"            // uiPortrait() - logical, post-rotation
 
 // Presented frames. sim_main.cpp's getTickFps() consumes this; without it the
 // perf overlay reported a permanent "0fps", which makes a merely slow simulator
@@ -163,8 +165,29 @@ void sim_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_p
     SDL_Rect rect = { x1, y1, w, h };
     SDL_UpdateTexture(s_texture, &rect, color_p, w * sizeof(lv_color_t));
 
-    // Blit to screen when the last strip is done
-    if (area->y2 >= s_height - 1) {
+    // Blit to screen when the last strip is done.
+    //
+    // The geometric "did we reach the bottom row" test is only valid while the
+    // display is UNROTATED. The simulator always takes LVGL's software
+    // rotation, and for 90/270 draw_buf_rotate() splits one logical strip into
+    // LV_DISP_ROT_MAX_BUF-sized chunks while computing area->y2 ONCE for the
+    // whole strip - so every chunk of a full-width strip reports y2 ==
+    // ver_res-1 and we would present ~150 times per frame. The renderer is
+    // PRESENTVSYNC, so each of those blocks: the portrait sim crawls to well
+    // under 1 fps and the perf overlay reports nonsense. For 180 the test is
+    // merely inverted (the last logical strip lands at the TOP of the panel),
+    // which presents a frame late.
+    //
+    // lv_disp_flush_is_last() is LVGL's own end-of-refresh flag and is correct
+    // in every orientation. Landscape deliberately keeps the old test so an
+    // unrotated device/sim renders exactly as before - there flush_is_last
+    // would present slightly MORE often (a partial redraw that never touches
+    // the bottom row is not presented at all today, which is why
+    // sim_hal_screenshot() has to force its own RenderCopy).
+    const bool lastStrip = (drv->rotated != LV_DISP_ROT_NONE)
+                               ? lv_disp_flush_is_last(drv)
+                               : (area->y2 >= s_height - 1);
+    if (lastStrip) {
         SDL_RenderCopy(s_renderer, s_texture, nullptr, nullptr);
         SDL_RenderPresent(s_renderer);
         g_sim_frames++;             // feeds getTickFps() -> perf overlay
@@ -184,16 +207,18 @@ static int  s_swipe_last_x  = 0, s_swipe_last_y  = 0;
 
 void swipeSuppress() { s_swipe_suppress = true; }
 
-static void sim_track_swipe(bool pressed) {
+// Takes LOGICAL (already rotated) coordinates - the guard below asks where on
+// the SCREEN the drag started, not where on the panel.
+static void sim_track_swipe(bool pressed, int mx, int my) {
     if (pressed) {
-        s_swipe_last_x = s_mx;
-        s_swipe_last_y = s_my;
+        s_swipe_last_x = mx;
+        s_swipe_last_y = my;
         if (!s_swipe_active) {
             s_swipe_active   = true;
             s_swipe_done     = false;
             s_swipe_suppress = false;    // a widget may claim this drag below
-            s_swipe_start_x  = s_mx;
-            s_swipe_start_y  = s_my;
+            s_swipe_start_x  = mx;
+            s_swipe_start_y  = my;
             dispMgr.requestShowNavArrows();
         }
         return;
@@ -204,9 +229,31 @@ static void sim_track_swipe(bool pressed) {
         const int adx = dx < 0 ? -dx : dx;
         const int ady = dy < 0 ? -dy : dy;
         // Same rules as the panel: far enough, more horizontal than vertical,
-        // and not started in the left/right sixth where the nav arrows sit.
+        // and not started on a control.
+#if defined(BOARD_PANEL_1024X600)
+        // Mirrors lvgl_touch_cb() in DisplaySetup_7B.cpp: a swipe only counts
+        // if it STARTS inside the instrument area, so drags on the nav rail or
+        // in the value sidebar cannot flip screens. UI_SCREEN_W is the PHYSICAL
+        // 1024 and would be plain wrong on a 600 px wide logical screen, while
+        // the sixths themselves belong to the overlay-arrow layout that these
+        // boards do not have at all.
+        //
+        // Which AXIS carries the rail depends on the orientation: landscape
+        // puts the three blocks side by side (guard on x), portrait stacks them
+        // (guard on y). The coordinates here are already logical.
+        const bool notOnButton =
+            uiPortrait()
+                ? (s_swipe_start_y > UI7_RAIL_W + 10 &&
+                   s_swipe_start_y < UI7_RAIL_W + UI7_CENTER_W - 10)
+                : (s_swipe_start_x > UI7_CENTER_X + 10 &&
+                   s_swipe_start_x < UI7_SIDEBAR_X - 10);
+#else
+        // 4"/480 simulator: that board really does have the floating arrows in
+        // the left/right sixth, and its panel is square, so physical ==
+        // logical in every rotation. Unchanged on purpose.
         const bool notOnButton = (s_swipe_start_x > UI_SCREEN_W / 6) &&
                                  (s_swipe_start_x < UI_SCREEN_W - UI_SCREEN_W / 6);
+#endif
         if (adx >= UI_SWIPE_THRESHOLD && adx > ady && notOnButton && !s_swipe_suppress) {
             s_swipe_done = true;
             if (dx < 0) dispMgr.nextScreen();   // swipe left  → next
@@ -226,10 +273,28 @@ void sim_mouse_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
         s_my = e.y;
         if (!e.motion) s_pressed = e.pressed;
     }
-    if (s_pressed) Entropy::feed((uint16_t)s_mx, (uint16_t)s_my);  // parity with the device
-    sim_track_swipe(s_pressed);
+    // SDL reports coordinates in the WINDOW, i.e. physical panel space - which
+    // is exactly what LVGL wants: it rotates pointer input ITSELF (see
+    // indev_pointer_proc) whenever `rotated` is set. data->point therefore
+    // stays RAW; rotating it here too would transform every click twice.
+    // The swipe tracker does need logical coordinates, so derive those with
+    // LVGL's own formula (hor/ver_res in the driver stay physical).
+    int lx = s_mx, ly = s_my;
+    {
+        lv_disp_t *d = lv_disp_get_default();
+        const int pw = d ? d->driver->hor_res : s_width;    // physical
+        const int ph = d ? d->driver->ver_res : s_height;
+        switch (d ? d->driver->rotated : LV_DISP_ROT_NONE) {
+            case LV_DISP_ROT_90:  lx = ph - 1 - s_my; ly = s_mx;          break;
+            case LV_DISP_ROT_180: lx = pw - 1 - s_mx; ly = ph - 1 - s_my; break;
+            case LV_DISP_ROT_270: lx = s_my;          ly = pw - 1 - s_mx; break;
+            default: break;
+        }
+    }
+    if (s_pressed) Entropy::feed((uint16_t)lx, (uint16_t)ly);  // parity with the device
+    sim_track_swipe(s_pressed, lx, ly);
 
-    data->point.x = (lv_coord_t)s_mx;
+    data->point.x = (lv_coord_t)s_mx;   // RAW - LVGL rotates this itself
     data->point.y = (lv_coord_t)s_my;
     data->state   = s_pressed ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
 

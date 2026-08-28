@@ -13,7 +13,7 @@ private:
     lv_obj_t  *_canvas   = nullptr;
     lv_color_t *_cbuf    = nullptr;
     lv_obj_t  *_statsLbl = nullptr;
-    static constexpr int CS = 400;
+    static constexpr int CS = UI_S(400);
 
     void drawWindRose();
 };

@@ -56,6 +56,14 @@ public:
     // still puts ACK bits on the wire. Call this BEFORE Open() to make
     // listen-only electrically passive too.
     static void SetHwListenOnly(bool v) { HwListenOnly = v; }
+
+    // Extension over the upstream interface: NMEA2000_CAN.h constructs the
+    // single instance during STATIC INITIALISATION, so the pins come from the
+    // compile-time defaults long before the config file on flash can be read.
+    // The values are used in exactly one place - CANOpen() builds the TWAI
+    // config from them - so overriding them any time before Open() is safe.
+    // Call it after the config is loaded; N2kHandler::begin() does.
+    void SetCANPins(gpio_num_t tx, gpio_num_t rx) { TxPin = tx; RxPin = rx; }
 };
 
 #endif  // _NMEA2000_ESP32_H_

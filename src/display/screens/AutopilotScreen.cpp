@@ -1,4 +1,5 @@
 #include "AutopilotScreen.h"
+#include "RenderYield.h"
 #include "../../PsramArena.h"
 #include "../UiConfig.h"
 #include "../CanvasDraw.h"
@@ -40,7 +41,7 @@ void AutopilotScreen::create(lv_obj_t *parent) {
     lv_obj_set_style_pad_all(container, 0, 0);
     lv_obj_clear_flag(container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Canvas for compass arc (top portion, full width, 160px tall)
+    // Canvas for compass arc (top portion, full width, UI_AP_COMPASS_H tall)
     size_t sz = LV_CANVAS_BUF_SIZE_TRUE_COLOR(CW, UI_AP_COMPASS_H);
     if (!_cbuf) _cbuf = (lv_color_t*)PsramArena::alloc(sz);   // reuse on live theme rebuild
     if (_cbuf) {
@@ -58,7 +59,7 @@ void AutopilotScreen::create(lv_obj_t *parent) {
     // ── HUGE target heading number ─────────────────────────────────────────
     _lblTarget = lv_label_create(container);
     lv_label_set_text(_lblTarget, "---°T");
-    lv_obj_set_style_text_font(_lblTarget, &lv_font_montserrat_48, 0);
+    lv_obj_set_style_text_font(_lblTarget, montserratBySize(UI_S(48)), 0);
     lv_obj_set_style_text_color(_lblTarget, C_TARGET, 0);
     lv_obj_align(_lblTarget, LV_ALIGN_TOP_MID, 0, UI_AP_TARGET_Y);
 
@@ -88,9 +89,9 @@ void AutopilotScreen::create(lv_obj_t *parent) {
         lv_obj_t *ll = lv_label_create(c); lv_label_set_text(ll, lbl);
         styleLabel(ll, FONT_SMALL, CLR_TEXT_DIM); lv_obj_align(ll, LV_ALIGN_TOP_MID, 0, 2);
         *vl = lv_label_create(c); lv_label_set_text(*vl, "--");
-        lv_obj_set_style_text_font(*vl, &lv_font_montserrat_40, 0);
+        lv_obj_set_style_text_font(*vl, montserratBySize(UI_S(40)), 0);
         lv_obj_set_style_text_color(*vl, col, 0);
-        lv_obj_align(*vl, LV_ALIGN_CENTER, 0, 4);
+        lv_obj_align(*vl, LV_ALIGN_CENTER, 0, UI_S(4));
     };
     // "HDG" is the standard abbreviation in both languages — not translated.
     card(gap,             "HDG",                &_lblHdgCard, CLR_TEXT);
@@ -102,13 +103,13 @@ void AutopilotScreen::create(lv_obj_t *parent) {
     // Use the UI_AP_DEVBAR_* constants (the size was hard-coded here, so the
     // theme-configurable apDevBarH never had any effect).
     lv_obj_t *devBarBg = lv_obj_create(container);
-    lv_obj_set_size(devBarBg, SCREEN_W - 16, UI_AP_DEVBAR_H);
-    lv_obj_set_pos(devBarBg, 8, UI_AP_DEVBAR_Y);
+    lv_obj_set_size(devBarBg, SCREEN_W - UI_S(16), UI_AP_DEVBAR_H);
+    lv_obj_set_pos(devBarBg, UI_S(8), UI_AP_DEVBAR_Y);
     lv_obj_set_style_bg_color(devBarBg, (uiTheme.apDevBar), 0);
     lv_obj_set_style_bg_opa(devBarBg, OPA_FULL, 0);
     lv_obj_set_style_border_color(devBarBg, CLR_BORDER, 0);
     lv_obj_set_style_border_width(devBarBg, 1, 0);
-    lv_obj_set_style_radius(devBarBg, 4, 0);
+    lv_obj_set_style_radius(devBarBg, UI_S(4), 0);
     lv_obj_clear_flag(devBarBg, LV_OBJ_FLAG_SCROLLABLE);
 }
 
@@ -118,14 +119,15 @@ void AutopilotScreen::create(lv_obj_t *parent) {
 void AutopilotScreen::drawCompassArc(float heading, float target) {
     if (!_canvas || !_cbuf) return;
 
-    // Clear
+    // Clear, in 8-row chunks with a yield offer after each; renderYield()
+    // decides how many of those offers are worth a tick (see RenderYield.h).
     {
         lv_color_t *p = _cbuf;
         for (int row = 0; row < UI_AP_COMPASS_H; row += 8) {
             int rows = (UI_AP_COMPASS_H - row < 8) ? UI_AP_COMPASS_H - row : 8;
             lv_color_t *end = p + (size_t)rows * CW;
             while (p < end) *p++ = CLR_BG;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();
         }
         lv_obj_invalidate(_canvas);
     }
@@ -188,9 +190,9 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
             // old ±4° base spanned ~84 px against a 9 px height (an unreadable
             // sliver once it is actually filled).
             lv_point_t b   = arcPt(tOff, R_outer + 2);
-            lv_point_t tip = { b.x, (lv_coord_t)(b.y - 15) };
-            lv_point_t bl  = { (lv_coord_t)(b.x - 10), b.y };
-            lv_point_t br  = { (lv_coord_t)(b.x + 10), b.y };
+            lv_point_t tip = { b.x, (lv_coord_t)(b.y - UI_S(15)) };
+            lv_point_t bl  = { (lv_coord_t)(b.x - UI_S(10)), b.y };
+            lv_point_t br  = { (lv_coord_t)(b.x + UI_S(10)), b.y };
             cdFillTri(_canvas, tip, bl, br, C_TARGET);
         }
     }
@@ -200,7 +202,7 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
     for (int offs = -(int)span; offs <= (int)span; offs += 5) {
         bool cardinal5 = (offs % 30 == 0);
         bool major      = (offs % 10 == 0);
-        float r1 = cardinal5 ? R_inner - 14 : major ? R_inner - 8 : R_inner - 4;
+        float r1 = cardinal5 ? R_inner - UI_S(14) : major ? R_inner - UI_S(8) : R_inner - UI_S(4);
         float r2 = R_inner - 1;
         ld.color = cardinal5 ? CLR_TEXT : major ? C_TICK_MJ : C_TICK_MN;
         ld.width = cardinal5 ? 3 : 1; ld.opa = OPA_FULL;
@@ -220,10 +222,10 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
             while (bear >= 360) bear -= 360.f;
             char tb[8]; snprintf(tb, sizeof(tb), "%d", (int)roundf(bear));
             td.font = FONT_SMALL; td.color = cardinal5 ? CLR_TEXT : C_TICK_MJ;
-            lv_point_t lp = arcPt((float)offs, r1 - 14);
-            lv_coord_t top = lp.y - 8, lineH = 18;
-            if (top >= 0 && top + lineH <= UI_AP_COMPASS_H && lp.x >= 16 && lp.x <= CW - 16)
-                lv_canvas_draw_text(_canvas, lp.x - 14, top, 32, &td, tb);
+            lv_point_t lp = arcPt((float)offs, r1 - UI_S(14));
+            lv_coord_t top = lp.y - UI_S(8), lineH = UI_S(18);
+            if (top >= 0 && top + lineH <= UI_AP_COMPASS_H && lp.x >= UI_S(16) && lp.x <= CW - UI_S(16))
+                lv_canvas_draw_text(_canvas, lp.x - UI_S(14), top, UI_S(32), &td, tb);
         }
     }
 
@@ -233,10 +235,10 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
     // left a wedge of the other unpainted.
     {
         // Pixel-sized for the same reason as the target marker above.
-        lv_point_t b   = arcPt(0.0f, R_inner + 14);
-        lv_point_t tip = { b.x, (lv_coord_t)(b.y + 18) };
-        lv_point_t bl  = { (lv_coord_t)(b.x - 13), b.y };
-        lv_point_t br  = { (lv_coord_t)(b.x + 13), b.y };
+        lv_point_t b   = arcPt(0.0f, R_inner + UI_S(14));
+        lv_point_t tip = { b.x, (lv_coord_t)(b.y + UI_S(18)) };
+        lv_point_t bl  = { (lv_coord_t)(b.x - UI_S(13)), b.y };
+        lv_point_t br  = { (lv_coord_t)(b.x + UI_S(13)), b.y };
         cdFillTri(_canvas, tip, bl, br, CLR_RED);
         ld.color = CLR_RED; ld.width = 2; ld.opa = OPA_FULL;
         lv_point_t _ta[2] = {tip, bl}; lv_canvas_draw_line(_canvas, _ta, 2, &ld);
@@ -248,8 +250,8 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
     if (!isnan(heading)) {
         char hbuf[8]; snprintf(hbuf, sizeof(hbuf), "%.0f", heading);
         td.font = FONT_MED; td.color = CLR_TEXT; td.opa = OPA_FULL;
-        lv_point_t lp = arcPt(0.0f, R_inner + 24);
-        lv_canvas_draw_text(_canvas, lp.x - 18, lp.y - 8, 40, &td, hbuf);
+        lv_point_t lp = arcPt(0.0f, R_inner + UI_S(24));
+        lv_canvas_draw_text(_canvas, lp.x - UI_S(18), lp.y - UI_S(8), UI_S(40), &td, hbuf);
     }
 
     lv_obj_invalidate(_canvas);

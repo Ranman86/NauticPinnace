@@ -1,4 +1,5 @@
 #include "WindPlotScreen.h"
+#include "RenderYield.h"
 #include "../../PsramArena.h"
 #include "../CanvasDraw.h"
 #include "../../i18n/I18n.h"
@@ -30,12 +31,13 @@ void WindPlotScreen::create(lv_obj_t *parent) {
     _statsLbl = lv_label_create(container);
     lv_label_set_text(_statsLbl, "");
     styleLabel(_statsLbl, FONT_SMALL, CLR_TEXT_DIM);
-    lv_obj_align(_statsLbl, LV_ALIGN_BOTTOM_MID, 0, -4);
+    lv_obj_align(_statsLbl, LV_ALIGN_BOTTOM_MID, 0, UI_S(-4));
 }
 
 void WindPlotScreen::drawWindRose() {
     if (!_canvas || !_cbuf) return;
-    // Yield-safe fill: prevents IWDT from WiFi-ISR SPI0 starvation (see WindScreen.cpp)
+    // Chunked fill so there is somewhere to yield mid-clear; renderYield()
+    // decides how many of those offers are worth a tick (see RenderYield.h).
     {
         const lv_color_t bgColor = CLR_BG;
         lv_color_t *p = _cbuf;
@@ -43,7 +45,7 @@ void WindPlotScreen::drawWindRose() {
             int rows = (CS - row < 8) ? CS - row : 8;
             lv_color_t *rowEnd = p + (size_t)rows * CS;
             while (p < rowEnd) *p++ = bgColor;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();
         }
         lv_obj_invalidate(_canvas);
     }
@@ -61,7 +63,7 @@ void WindPlotScreen::drawWindRose() {
     }
 
     int cx = CS/2, cy = CS/2;
-    int maxR = CS/2 - 20;
+    int maxR = CS/2 - UI_S(20);
 
     lv_draw_line_dsc_t ld; lv_draw_line_dsc_init(&ld);
     lv_draw_rect_dsc_t rd; lv_draw_rect_dsc_init(&rd);
@@ -89,11 +91,21 @@ void WindPlotScreen::drawWindRose() {
         lv_point_t p1={(lv_coord_t)cx,(lv_coord_t)cy};
         lv_point_t p2={(lv_coord_t)(cx+(int)(maxR*sinf(ar))),(lv_coord_t)(cy-(int)(maxR*cosf(ar)))};
         lv_point_t _l[2]={p1,p2}; lv_canvas_draw_line(_canvas,_l,2,&ld);
-        // Cardinal labels
-        int lx=(int)(cx+(maxR+10)*sinf(ar))-6;
-        int ly=(int)(cy-(maxR+10)*cosf(ar))-6;
+        // Cardinal labels. The 7B needs a wider box: the font pass bumps
+        // FONT_SMALL 14 -> 18 and the intercardinals ("NW"/"SO") no longer
+        // fit 20 px - they wrapped onto two lines. The 4" keeps its released
+        // 16 px box and offset untouched (pixel identity).
+#if defined(BOARD_PANEL_1024X600)
+        // 40 px: "NW" is the widest pair (two wide glyphs) and needs ~36 px
+        // at FONT_SMALL 18 - 34 was one wrap short of it.
+        const int cardBoxW = 40, cardBoxOffX = -18;
+#else
+        const int cardBoxW = 16, cardBoxOffX = -6;
+#endif
+        int lx=(int)(cx+(maxR+UI_S(10))*sinf(ar))+cardBoxOffX;
+        int ly=(int)(cy-(maxR+UI_S(10))*cosf(ar))+UI_S(-6);
         td.color = CLR_TEXT_DIM;
-        lv_canvas_draw_text(_canvas, (lv_coord_t)lx, (lv_coord_t)ly, 16, &td, cards[i]);
+        lv_canvas_draw_text(_canvas, (lv_coord_t)lx, (lv_coord_t)ly, cardBoxW, &td, cards[i]);
     }
 
     if (count < 2) { lv_obj_invalidate(_canvas); return; }
@@ -121,7 +133,7 @@ void WindPlotScreen::drawWindRose() {
     for (int s=0;s<SECTORS;s++) {
         if (sectorCnt[s]==0) continue;
         float ratio = (float)sectorCnt[s] / maxCnt;
-        int ri = (int)(ratio * (maxR - 15)) + 5;
+        int ri = (int)(ratio * (maxR - UI_S(15))) + UI_S(5);
         float avgTws = sectorCnt[s]>0 ? sectorSum[s]/sectorCnt[s] : 0;
 
         // Colour by wind speed
@@ -153,7 +165,7 @@ void WindPlotScreen::drawWindRose() {
     // Centre dot
     rd.bg_color = CLR_TEXT; rd.bg_opa = OPA_FULL; rd.radius = LV_RADIUS_CIRCLE;
     lv_canvas_draw_rect(_canvas,
-        (lv_coord_t)(cx-4), (lv_coord_t)(cy-4), 8, 8, &rd);
+        (lv_coord_t)(cx-UI_S(4)), (lv_coord_t)(cy-UI_S(4)), UI_S(8), UI_S(8), &rd);
 
     lv_obj_invalidate(_canvas);
 

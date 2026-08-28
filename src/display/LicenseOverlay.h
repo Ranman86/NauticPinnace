@@ -25,12 +25,27 @@ public:
     void requestOpenFirstRun() { _pendingFirstRun = true; }
     void update();
 
+#if defined(PERF_LICENSE_SCROLL)
+    // MEASUREMENT BUILD ONLY (-DPERF_LICENSE_SCROLL). Opens this overlay once
+    // and then scrolls it up and down by itself, so the heartbeat's rend/draw/
+    // flush figures describe real scroll frames rather than a page standing
+    // still. The complaint being measured is "scrolling is very slow", and a
+    // static overlay costs almost nothing - only the scroll does.
+    // Never compiled into a shipping build.
+    void perfScrollTick();
+    // Attaches the per-object draw stopwatch to one object; see the definition.
+    static void perfProbe(lv_obj_t *o, int slot);
+#endif
+
 private:
     void build(bool firstRun);
     static void cbAccept(lv_event_t *e);
     static void cbClose(lv_event_t *e);
 
     lv_obj_t *_root = nullptr;
+#if defined(PERF_LICENSE_SCROLL)
+    lv_obj_t *_box = nullptr;   // the scrollable text box, see perfScrollTick()
+#endif
     bool _open = false;
     bool _pendingFirstRun = false;
 };

@@ -60,6 +60,11 @@ void *PsramArena::alloc(size_t bytes)
 
     void *p = s_base + s_offset;
     s_offset += aligned;
+#ifdef SIMULATOR
+    // PC only: per-allocation trace for sizing the device arena.
+    Serial.printf("[Arena] alloc %u  (used %u / %u)\n",
+                  (unsigned)bytes, (unsigned)s_offset, (unsigned)s_size);
+#endif
     return p;
 }
 

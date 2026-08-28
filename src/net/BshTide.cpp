@@ -1,13 +1,49 @@
 #include "BshTide.h"
 #include <Arduino.h>
+#include <esp_idf_version.h>
+#if ESP_IDF_VERSION_MAJOR >= 5
+#include "freertos/idf_additions.h"   // xTaskCreatePinnedToCoreWithCaps
+#endif
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>
+#include <esp_heap_caps.h>
 #include <time.h>
 #include <math.h>
 #include "../nmea/DataModel.h"
 #include "../SunCalc.h"
+
+// ── JSON pools -> PSRAM ──────────────────────────────────────────────────────
+// The BSH body is huge: 433 KB for the query below (measured, limit=6), and
+// what survives the filter is still 6 stations x ~23 HW/NW events x 4 fields,
+// i.e. ~15-18 KB of ArduinoJson pool. Every pool block is <= 4 KB and therefore
+// below SPIRAM_MALLOC_ALWAYSINTERNAL, so the DEFAULT allocator takes ALL of it
+// from internal DRAM - while the TLS session is open and while the WiFi RX and
+// lwIP buffers, which platformio.ini deliberately keeps internal, need that
+// same DRAM. That is what killed this fetch: the RX path starved mid-body, the
+// stream went >15 s without a byte, ArduinoJson reported IncompleteInput on a
+// request that had already returned 200, and whichever task lost the next
+// allocation took the device down with it. Same failure and same cure as the
+// config JSON (Config.cpp). No DRAM fallback on purpose - it would reinstate
+// exactly the spike this removes; a failed PSRAM block surfaces as NoMemory.
+// IDF 5 only: the 4" stays on its proven DRAM path (its IDF 4.4 carries the
+// documented OPI-PSRAM coherency bug).
+#if ESP_IDF_VERSION_MAJOR >= 5
+struct BshPsramAllocator final : ArduinoJson::Allocator {
+    void *allocate(size_t n) override {
+        return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+    void deallocate(void *p) override { heap_caps_free(p); }
+    void *reallocate(void *p, size_t n) override {
+        return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    }
+};
+static BshPsramAllocator s_bshJsonPsram;
+#define BSH_JSON_DOC(name) JsonDocument name(&s_bshJsonPsram)
+#else
+#define BSH_JSON_DOC(name) JsonDocument name
+#endif
 
 // ── Configuration ────────────────────────────────────────────────────────────
 static const char *BSH_URL_BASE =
@@ -82,8 +118,13 @@ static void translit(const char *in, char *out, size_t cap) {
             if (r) { while (*r && o + 1 < cap) out[o++] = *r++; }
             i += 2; continue;
         }
-        if (c < 0x80) out[o++] = (char)c;                   // plain ASCII
-        i += (c < 0x80) ? 1 : (c < 0xE0 ? 2 : (c < 0xF0 ? 3 : 4));
+        if (c < 0x80) { out[o++] = (char)c; i++; continue; } // plain ASCII
+        // Skip an unmapped multi-byte sequence, but never step OVER the
+        // terminator: on a truncated UTF-8 tail (or a lone trailing 0xC3) the
+        // blind "i += 2/3/4" landed past the NUL and the loop then kept reading
+        // off the end of the string.
+        size_t skip = (c < 0xE0) ? 2 : (c < 0xF0 ? 3 : 4);
+        while (skip-- && in[i]) i++;
     }
     out[o] = 0;
 }
@@ -120,7 +161,10 @@ static bool fetchBsh() {
     }
 
     // Filter: keep only what we need; the huge per-station 'curve' is skipped.
-    JsonDocument filter;
+    // It can only be skipped, not avoided: the service rejects both ?properties=
+    // and ?skipGeometry= with 400 (verified against the live API), so the whole
+    // 433 KB body still has to travel through the parser.
+    BSH_JSON_DOC(filter);
     filter["features"][0]["geometry"]["coordinates"] = true;
     filter["features"][0]["properties"]["gauge_label"] = true;
     filter["features"][0]["properties"]["chartdatum_relative_to_gaugezero"] = true;
@@ -129,45 +173,86 @@ static bool fetchBsh() {
     filter["features"][0]["properties"]["high_water_low_water"][0]["forecast_value"] = true;
     filter["features"][0]["properties"]["high_water_low_water"][0]["tidal_prediction_value"] = true;
 
-    JsonDocument doc;
+    BSH_JSON_DOC(doc);
     DeserializationError err =
         deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter));
     http.end();
-    if (err) { Serial.printf("[BSH] JSON err: %s\n", err.c_str()); return false; }
+    // A partial body is NEVER consumed. IncompleteInput means the stream died
+    // mid-document (server closed early, or 15 s without a byte), which leaves
+    // 'doc' holding a truncated tree - short arrays, missing members, a station
+    // whose event list simply stops. Publishing that would put a wrong "next
+    // tide" on the clock. Keep the previous forecast instead; the ClockScreen
+    // ages it out by itself after 12 h. The heap figure is the diagnostic: this
+    // parse used to starve internal DRAM, and that is what produced the stall.
+    if (err) {
+        Serial.printf("[BSH] JSON err: %s (internal heap free %u B)\n", err.c_str(),
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        return false;
+    }
 
     JsonArray feats = doc["features"].as<JsonArray>();
     if (feats.isNull() || feats.size() == 0) { Serial.println("[BSH] no stations in bbox"); return false; }
 
-    // Nearest station (equirectangular squared distance).
+    // Nearest USABLE station (equirectangular squared distance). Usability is
+    // part of the ranking, not a check on the winner: several gauges carry no
+    // chart datum at all (Meldorf and Neuwerk send null), and electing one of
+    // those only to give up afterwards would hide a complete gauge a few
+    // kilometres away.
     JsonObject best; double bestD = 1e30; const float D2R = 0.01745329f;
+    int chartDatum = 0;                                   // cm, gauge zero -> chart datum
     for (JsonObject f : feats) {
         JsonArray c = f["geometry"]["coordinates"];
         if (c.isNull() || c.size() < 2) continue;
+        JsonObject pr = f["properties"];
+        // The datum arrives as a JSON FLOAT (313.0) and sometimes as null. It
+        // must be read as a float: ArduinoJson's is<int>() is false for a float
+        // variant, so the old "| 0" default won on EVERY station and every
+        // height was published uncorrected - 302 cm too high at Cuxhaven.
+        if (!pr["chartdatum_relative_to_gaugezero"].is<float>()) continue;
+        JsonArray evs = pr["high_water_low_water"].as<JsonArray>();
+        if (evs.isNull() || evs.size() == 0) continue;
         double flon = c[0].as<double>(), flat = c[1].as<double>();
         double dx = (flon - lon) * cos(lat * D2R), dy = (flat - lat);
         double dd = dx * dx + dy * dy;
-        if (dd < bestD) { bestD = dd; best = f; }
+        if (dd < bestD) {
+            bestD = dd; best = f;
+            chartDatum = (int)lroundf(pr["chartdatum_relative_to_gaugezero"].as<float>());
+        }
     }
     if (best.isNull()) { Serial.println("[BSH] no usable station"); return false; }
 
     const char *label = best["properties"]["gauge_label"] | "";
-    int chartDatum    = best["properties"]["chartdatum_relative_to_gaugezero"] | 0;  // cm
     JsonArray evs     = best["properties"]["high_water_low_water"].as<JsonArray>();
 
     uint32_t nowUtc = (uint32_t)time(nullptr);
     DataModel::TideExtreme tmp[DataModel::MAX_TIDE_FC];
-    int n = 0;
+    int n = 0; uint32_t lastU = 0;
     for (JsonObject e : evs) {
         if (n >= DataModel::MAX_TIDE_FC) break;
         uint32_t u = parseBshTime(e["event_timestamp"] | (const char *)nullptr);
         if (!u || u + 1800 < nowUtc) continue;            // skip events >30 min past
+        if (u <= lastU) continue;                         // the ClockScreen takes the
+                                          // FIRST future entry as "next tide", so the
+                                          // published list has to be strictly ascending
         const char *ev = e["event"] | "";
-        int fv = e["forecast_value"] | 0;                 // cm above gauge zero
-        if (fv == 0) fv = atoi(e["tidal_prediction_value"] | "0");  // beyond the
-                                          // official horizon: use the astronomical value
+        // forecast_value exists only inside the official forecast horizon; past
+        // it the API sends the astronomical tidal_prediction_value, and as a
+        // STRING. Test for presence rather than treating 0 as "absent" - 0 cm is
+        // a legal reading, the water standing exactly at gauge zero.
+        int fv = 0;
+        if (e["forecast_value"].is<float>())
+            fv = (int)lroundf(e["forecast_value"].as<float>());       // cm above gauge zero
+        else if (e["tidal_prediction_value"].is<const char *>())
+            fv = atoi(e["tidal_prediction_value"].as<const char *>());
+        else if (e["tidal_prediction_value"].is<float>())
+            fv = (int)lroundf(e["tidal_prediction_value"].as<float>());
+        else continue;                                    // no height at all
+        long cm = (long)fv - chartDatum;
+        if (cm < -3000 || cm > 3000) continue;            // +/-30 m is not a gauge reading
         tmp[n].unixUtc = u;
-        tmp[n].cmCD    = (int16_t)(fv - chartDatum);      // cm above chart datum
+        tmp[n].cmCD    = (int16_t)cm;                     // cm above chart datum
         tmp[n].isHigh  = (ev[0] == 'H' || ev[0] == 'h');
+        lastU = u;
         n++;
     }
     if (n == 0) { Serial.println("[BSH] station has no upcoming events"); return false; }
@@ -202,6 +287,12 @@ static void bshTask(void *) {
                 if (syncTimeFromSntp()) synced = true;
             }
             fetchBsh();
+            // The 12 KB stack is sized for the TLS handshake and lives in PSRAM;
+            // print what was left so a future mbedTLS/ArduinoJson change cannot
+            // quietly eat the margin without anyone seeing it.
+            Serial.printf("[BSH] stack low-water %u B, internal heap free %u B\n",
+                          (unsigned)uxTaskGetStackHighWaterMark(nullptr),
+                          (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
             iter++;
         } else {
             Serial.println("[BSH] WiFi not connected, retry later");
@@ -211,6 +302,23 @@ static void bshTask(void *) {
 }
 
 void bshTideBegin() {
+#if ESP_IDF_VERSION_MAJOR >= 5
+    // 12 KB of stack for a task that does one HTTPS fetch every 30 minutes is
+    // the single largest firmware-owned DRAM block. On IDF 5 the stack can
+    // live in PSRAM (sdkconfig already has SPIRAM_ALLOW_STACK_EXTERNAL_MEMORY
+    // and FREERTOS_TASK_CREATE_ALLOW_EXT_MEM enabled): legal because this
+    // task never writes flash and runs nothing ISR-ish - it fetches, parses,
+    // and fills the DataModel. TLS itself is PSRAM-backed anyway (mbedTLS
+    // EXTERNAL_MEM_ALLOC).
+    if (xTaskCreatePinnedToCoreWithCaps(bshTask, "BSH", 12288, nullptr, 1,
+                                        nullptr, 1,
+                                        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+            != pdPASS) {
+        // PSRAM exhausted? Fall back rather than silently losing the feature.
+        xTaskCreatePinnedToCore(bshTask, "BSH", 12288, nullptr, 1, nullptr, 1);
+    }
+#else
     xTaskCreatePinnedToCore(bshTask, "BSH", 12288, nullptr, 1, nullptr, 1);
+#endif
     Serial.println("[setup] BSH tide task started");
 }

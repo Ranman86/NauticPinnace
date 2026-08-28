@@ -1,4 +1,5 @@
 #include "AnchorScreen.h"
+#include "RenderYield.h"
 #include "../Theme.h"
 #include "../UiConfig.h"
 #include "../../nmea/DataModel.h"
@@ -11,8 +12,8 @@ static constexpr float R2D = 57.29578f;
 
 static constexpr float CXC      = AnchorScreen::CS * 0.5f;   // canvas centre
 static constexpr float CYC      = AnchorScreen::CS * 0.5f;
-static constexpr float RING_PX  = 132.f;   // screen radius of the alarm circle
-static constexpr float MAXBOAT  = 200.f;   // clamp boat marker inside the canvas
+static constexpr float RING_PX  = 132.f * UI_SF;   // screen radius of the alarm circle
+static constexpr float MAXBOAT  = 200.f * UI_SF;   // clamp boat marker inside the canvas
 
 static inline float clampf(float v, float lo, float hi) {
     return v < lo ? lo : (v > hi ? hi : v);
@@ -68,11 +69,11 @@ static void fillTri(lv_obj_t *cv, float ax,float ay,float bx,float by,float cx,f
 static void drawAnchorGlyph(lv_obj_t *cv, float x, float y, lv_color_t col) {
     lv_draw_arc_dsc_t a; lv_draw_arc_dsc_init(&a);
     a.color = col; a.width = 2; a.opa = LV_OPA_COVER;
-    lv_canvas_draw_arc(cv, (lv_coord_t)x, (lv_coord_t)(y-12), 4, 0, 360, &a);  // ring (top)
-    cline(cv, x, y-8, x, y+12, col, 2);                  // stem
-    cline(cv, x-9, y-3, x+9, y-3, col, 2);               // stock (crossbar)
-    cline(cv, x, y+12, x-9, y+5, col, 2);                // left fluke
-    cline(cv, x, y+12, x+9, y+5, col, 2);                // right fluke
+    lv_canvas_draw_arc(cv, (lv_coord_t)x, (lv_coord_t)(y - UI_S(12)), UI_S(4), 0, 360, &a);  // ring (top)
+    cline(cv, x, y - UI_S(8),  x, y + UI_S(12), col, 2);                          // stem
+    cline(cv, x - UI_S(9), y - UI_S(3), x + UI_S(9), y - UI_S(3), col, 2);        // stock (crossbar)
+    cline(cv, x, y + UI_S(12), x - UI_S(9), y + UI_S(5), col, 2);                 // left fluke
+    cline(cv, x, y + UI_S(12), x + UI_S(9), y + UI_S(5), col, 2);                 // right fluke
 }
 
 // ── Lifecycle ────────────────────────────────────────────────────────────────
@@ -91,17 +92,25 @@ void AnchorScreen::create(lv_obj_t *parent) {
     if (_cbuf) {
         _canvas = lv_canvas_create(container);
         lv_canvas_set_buffer(_canvas, _cbuf, CS, CS, LV_IMG_CF_TRUE_COLOR);
-        lv_obj_set_pos(_canvas, (SCREEN_W - CS) / 2, 2);
+        lv_obj_set_pos(_canvas, (SCREEN_W - CS) / 2, UI_S(2));
     }
+
+    // Breadcrumb rings, same reuse idiom as _cbuf above: allocated once and
+    // kept across theme rebuilds, so the swing track survives a live restyle
+    // instead of being re-allocated (the arena never frees) and re-zeroed.
+    // The arena hands back zeroed memory, which matches _trkIdx = 0 /
+    // _trkFull = false - nothing is read until update() has written it.
+    if (!_trkN) _trkN = (float *)PsramArena::alloc(TRACK_N * sizeof(float));
+    if (!_trkE) _trkE = (float *)PsramArena::alloc(TRACK_N * sizeof(float));
 
     // ── On-screen controls (bottom band, clear of the edge nav arrows) ───────
     auto mkBtn = [&](lv_obj_t *&out, const char *txt, int x, int w, lv_color_t bg,
                      lv_color_t fg, lv_event_cb_t cb) -> lv_obj_t * {
         lv_obj_t *b = lv_btn_create(container);
-        lv_obj_set_size(b, w, 46);
-        lv_obj_set_pos(b, x, 428);
+        lv_obj_set_size(b, w, UI_S(46));
+        lv_obj_set_pos(b, x, SCREEN_H - UI_S(52));   // band bottom 6 px above the panel edge
         lv_obj_set_style_bg_color(b, bg, 0);
-        lv_obj_set_style_radius(b, 8, 0);
+        lv_obj_set_style_radius(b, UI_S(8), 0);
         lv_obj_set_style_border_width(b, 0, 0);
         lv_obj_add_event_cb(b, cb, LV_EVENT_CLICKED, this);
         lv_obj_t *l = lv_label_create(b);
@@ -112,19 +121,21 @@ void AnchorScreen::create(lv_obj_t *parent) {
         out = b;
         return l;
     };
-    mkBtn(_btnSet,   T(STR_ANCH_SET_BTN), 64, 150, CLR_ACCENT, CLR_ON_ACCENT, cbSet);
+    mkBtn(_btnSet,   T(STR_ANCH_SET_BTN), UI_S(64), UI_S(150), CLR_ACCENT, CLR_ON_ACCENT, cbSet);
     // Was U+2212 (−, "minus sign") which the font does not contain, so the button
     // showed an empty box. LV_SYMBOL_* glyphs ARE in the font; use the matching pair.
-    mkBtn(_btnMinus, LV_SYMBOL_MINUS, 222, 46, CLR_SURFACE, CLR_TEXT, cbMinus);
-    mkBtn(_btnPlus,  LV_SYMBOL_PLUS,  274, 46, CLR_SURFACE, CLR_TEXT, cbPlus);
+    mkBtn(_btnMinus, LV_SYMBOL_MINUS, UI_S(222), UI_S(46), CLR_SURFACE, CLR_TEXT, cbMinus);
+    mkBtn(_btnPlus,  LV_SYMBOL_PLUS,  UI_S(274), UI_S(46), CLR_SURFACE, CLR_TEXT, cbPlus);
     _btnAlarmLbl =
-    mkBtn(_btnAlarm, "Alarm",        330, 110, CLR_SURFACE, CLR_TEXT, cbAlarm);
+    mkBtn(_btnAlarm, "Alarm",        UI_S(330), UI_S(110), CLR_SURFACE, CLR_TEXT, cbAlarm);
 }
 
 void AnchorScreen::resetForRebuild() {
     _canvas = nullptr;
     _btnSet = _btnMinus = _btnPlus = _btnAlarm = _btnAlarmLbl = nullptr;
-    // _cbuf intentionally kept (PsramArena buffer reused; never freed).
+    // _cbuf and _trkN/_trkE intentionally kept (PsramArena buffers reused;
+    // the arena never frees, and keeping the track preserves the swing history
+    // across a live theme rebuild).
 }
 
 void AnchorScreen::onShow() {
@@ -141,7 +152,12 @@ void AnchorScreen::refreshAlarmBtn() {
 
 // ── Per-frame update ─────────────────────────────────────────────────────────
 void AnchorScreen::update() {
-    if (!_canvas || !_cbuf) return;
+    // _trkN/_trkE joined this guard when they moved into the PSRAM arena: both
+    // the sampler below and the breadcrumb loop in draw() index them without a
+    // further check, so an exhausted arena must stop us here rather than
+    // dereference a null pointer. draw() is only ever called from this
+    // function, so this one guard covers it.
+    if (!_canvas || !_cbuf || !_trkN || !_trkE) return;
 
     float curLat, curLon, cog; uint32_t gpsAge;
     {
@@ -171,7 +187,8 @@ void AnchorScreen::update() {
 }
 
 void AnchorScreen::draw() {
-    // Yield-safe background fill (8-row chunks → release SPI0 for the WiFi ISR).
+    // Background fill in 8-row chunks, offering a yield after each; renderYield()
+    // decides how many of those offers are worth a tick (see RenderYield.h).
     {
         const lv_color_t bg = CLR_BG;
         lv_color_t *p = _cbuf;
@@ -179,7 +196,7 @@ void AnchorScreen::draw() {
             int rows = (CS - row < 8) ? CS - row : 8;
             lv_color_t *end = p + (size_t)rows * CS;
             while (p < end) *p++ = bg;
-            vTaskDelay(pdMS_TO_TICKS(1));
+            renderYield();
         }
     }
 
@@ -220,18 +237,18 @@ void AnchorScreen::draw() {
     // ── Range rings ──────────────────────────────────────────────────────────
     cring(_canvas, RING_PX * 0.5f, CLR_TEXT_DIM, 1, LV_OPA_40);   // inner half-radius
     cring(_canvas, RING_PX,        alarming ? CLR_RED : CLR_ORANGE,
-          alarming ? 4 : 3, LV_OPA_COVER);                        // alarm circle
+          alarming ? UI_S(4) : 3, LV_OPA_COVER);                  // alarm circle
     {   // radius label on the alarm ring (bottom)
         char rb[16]; snprintf(rb, sizeof(rb), "%d m", (int)(radius + 0.5f));
-        ctext(_canvas, CXC - 30, CYC + RING_PX + 2, 60, FONT_TINY,
+        ctext(_canvas, CXC - UI_S(30), CYC + RING_PX + 2, UI_S(60), FONT_TINY,
               alarming ? CLR_RED : CLR_ORANGE, LV_TEXT_ALIGN_CENTER, rb);
     }
 
     // North marker — rotates with the view so it always points to true north.
     {
-        float nx = CXC + (RING_PX + 22.f) * sinf(-rotDeg * D2R);
-        float ny = CYC - (RING_PX + 22.f) * cosf(-rotDeg * D2R);
-        ctext(_canvas, nx - 8, ny - 8, 16, FONT_SMALL, CLR_TEXT, LV_TEXT_ALIGN_CENTER, "N");
+        float nx = CXC + (RING_PX + 22.f * UI_SF) * sinf(-rotDeg * D2R);
+        float ny = CYC - (RING_PX + 22.f * UI_SF) * cosf(-rotDeg * D2R);
+        ctext(_canvas, nx - UI_S(8), ny - UI_S(8), UI_S(16), FONT_SMALL, CLR_TEXT, LV_TEXT_ALIGN_CENTER, "N");
     }
 
     // ── Breadcrumb track ─────────────────────────────────────────────────────
@@ -240,8 +257,8 @@ void AnchorScreen::draw() {
     for (int k = 0; k < n; k++) {
         int i = (start + k) % TRACK_N;
         float x, y; projE(_trkE[i], _trkN[i], x, y);
-        if (x > 4 && x < CS-4 && y > 4 && y < CS-4)
-            cdot(_canvas, x, y, 1.5f, CLR_WIND, LV_OPA_50);
+        if (x > UI_S(4) && x < CS - UI_S(4) && y > UI_S(4) && y < CS - UI_S(4))
+            cdot(_canvas, x, y, 1.5f * UI_SF, CLR_WIND, LV_OPA_50);
     }
 
     // ── Anchor at centre ─────────────────────────────────────────────────────
@@ -257,33 +274,33 @@ void AnchorScreen::draw() {
         // boat triangle pointing along COG, in the rotated view frame
         float h = (isnan(cog) ? 0.f : cog) - rotDeg;
         float ar = h * D2R;
-        float tipx = bx + 11.f * sinf(ar),       tipy = by - 11.f * cosf(ar);
+        float tipx = bx + 11.f * UI_SF * sinf(ar),       tipy = by - 11.f * UI_SF * cosf(ar);
         float lar = (h + 140.f) * D2R, rar = (h - 140.f) * D2R;
-        float lx = bx + 8.f * sinf(lar), ly = by - 8.f * cosf(lar);
-        float rx = bx + 8.f * sinf(rar), ry = by - 8.f * cosf(rar);
+        float lx = bx + 8.f * UI_SF * sinf(lar), ly = by - 8.f * UI_SF * cosf(lar);
+        float rx = bx + 8.f * UI_SF * sinf(rar), ry = by - 8.f * UI_SF * cosf(rar);
         lv_color_t bc = alarming ? CLR_RED : CLR_GREEN;
         fillTri(_canvas, tipx, tipy, lx, ly, rx, ry, bc, LV_OPA_COVER);
     }
 
     // ── Corner readouts ──────────────────────────────────────────────────────
     char buf[24];
-    // Top-left: distance from anchor (kept below the 20 px demo banner)
-    ctext(_canvas, 8, 22, 120, FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_LEFT,
+    // Top-left: distance from anchor (kept below the demo banner)
+    ctext(_canvas, UI_S(8), UI_S(22), UI_S(120), FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_LEFT,
           T(STR_ANCH_DISTANCE));
     if (isnan(distM)) snprintf(buf, sizeof(buf), "--");
     else              snprintf(buf, sizeof(buf), "%d m", (int)(distM + 0.5f));
-    ctext(_canvas, 8, 38, 150, FONT_XL, alarming ? CLR_RED : CLR_TEXT, LV_TEXT_ALIGN_LEFT, buf);
+    ctext(_canvas, UI_S(8), UI_S(38), UI_S(150), FONT_XL, alarming ? CLR_RED : CLR_TEXT, LV_TEXT_ALIGN_LEFT, buf);
     // Top-right: bearing
-    ctext(_canvas, CS - 128, 22, 120, FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_RIGHT,
+    ctext(_canvas, CS - UI_S(128), UI_S(22), UI_S(120), FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_RIGHT,
           T(STR_ANCH_BEARING));
     if (isnan(brg)) snprintf(buf, sizeof(buf), "--");
     else            snprintf(buf, sizeof(buf), "%03d\xc2\xb0", (int)(brg + 0.5f) % 360);
-    ctext(_canvas, CS - 128, 38, 120, FONT_XL, CLR_TEXT, LV_TEXT_ALIGN_RIGHT, buf);
+    ctext(_canvas, CS - UI_S(128), UI_S(38), UI_S(120), FONT_XL, CLR_TEXT, LV_TEXT_ALIGN_RIGHT, buf);
     // Bottom-left: max drift
-    ctext(_canvas, 8, CS - 44, 120, FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_LEFT, "MAX");
+    ctext(_canvas, UI_S(8), CS - UI_S(44), UI_S(120), FONT_SMALL, CLR_TEXT_DIM, LV_TEXT_ALIGN_LEFT, "MAX");
     if (_maxDist <= 0.f) snprintf(buf, sizeof(buf), "--");
     else                 snprintf(buf, sizeof(buf), "%d m", (int)(_maxDist + 0.5f));
-    ctext(_canvas, 8, CS - 28, 120, FONT_SMALL, CLR_TEXT, LV_TEXT_ALIGN_LEFT, buf);
+    ctext(_canvas, UI_S(8), CS - UI_S(28), UI_S(120), FONT_SMALL, CLR_TEXT, LV_TEXT_ALIGN_LEFT, buf);
 
     // Centre status text when not armed / no fix / dragging.
     const char *msg = nullptr; lv_color_t mc = CLR_TEXT_DIM;
@@ -291,7 +308,7 @@ void AnchorScreen::draw() {
     else if (!gpsOk)     { msg = T(STR_ANCH_NO_GPS);          mc = CLR_ORANGE; }
     else if (alarming)   { msg = T(STR_ALARM_ANCHOR_DRAG);    mc = CLR_RED; }
     if (msg)
-        ctext(_canvas, CXC - 110, CYC + RING_PX * 0.5f + 8, 220, FONT_SMALL,
+        ctext(_canvas, CXC - UI_S(110), CYC + RING_PX * 0.5f + UI_S(8), UI_S(220), FONT_SMALL,
               mc, LV_TEXT_ALIGN_CENTER, msg);
 
     lv_obj_invalidate(_canvas);

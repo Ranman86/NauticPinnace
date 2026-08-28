@@ -1,4 +1,20 @@
 <!DOCTYPE html>
+<!--
+  TESTING THIS PAGE LOCALLY: serve it, do not open the file.
+
+  Double-clicking gives "Failed to download manifest", and the page is not at
+  fault. ESP Web Tools fetches the manifest with fetch(), and a fetch() from a
+  file:// URL is blocked as a cross-origin request - there is no origin to be
+  same as. WebSerial would refuse as well: it needs a secure context, which
+  file:// is not, so even a loaded manifest could not flash anything.
+
+  From the repo root:
+      cd docs && python -m http.server 8765
+      then open http://127.0.0.1:8765/flash.html
+
+  localhost counts as a secure context, so both the manifest and WebSerial
+  work there. On GitHub Pages it is https and the question never arises.
+-->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -21,20 +37,55 @@
 firmware straight from the browser — no toolchain needed.</p>
 
 <div class="card warn">
-<strong>Requirements:</strong> Chrome or Edge (WebSerial), a
-<strong>Waveshare ESP32-S3-Touch-LCD-4 Rev&nbsp;4</strong> connected via USB-C.
-Flashing erases the on-device configuration. Read the safety notes in the
+<strong>Requirements:</strong> Chrome or Edge (WebSerial), one of the three
+supported Waveshare boards connected via USB-C. Flashing erases the on-device
+configuration. Read the safety notes in the
 <a href="https://github.com/Ranman86/NauticPinnace#readme">README</a> first —
 this is uncertified DIY firmware, use at your own risk.
 </div>
 
+<div class="card warn">
+<strong>Pick your board carefully.</strong> All three are ESP32-S3 and look
+identical over USB, so the browser cannot choose for you. The wrong firmware
+leaves the screen dark, because its panel driver does not match the hardware.
+That is not fatal — flashing the right one fixes it — but there is no warning
+before it happens.
+</div>
+
 <div class="card">
   <p>1. Plug in the display via USB-C.<br>
-     2. Click, pick the <code>USB Serial Device</code> port, wait about a minute.</p>
-  <esp-web-install-button manifest="flash/manifest.json"></esp-web-install-button>
+     2. Click the button for <em>your</em> board, pick the
+     <code>USB Serial Device</code> port, wait about a minute.</p>
+
+  <table style="width:100%;border-collapse:collapse">
+    <tr>
+      <td style="padding:10px 0"><strong>4-inch</strong><br>
+        <span style="opacity:.7">ESP32-S3-Touch-LCD-4 Rev&nbsp;4 · 480 × 480</span></td>
+      <td style="text-align:right">
+        <esp-web-install-button manifest="flash/4/manifest.json"></esp-web-install-button></td>
+    </tr>
+    <tr>
+      <td style="padding:10px 0"><strong>7-inch</strong><br>
+        <span style="opacity:.7">ESP32-S3-Touch-LCD-7B · 1024 × 600</span></td>
+      <td style="text-align:right">
+        <esp-web-install-button manifest="flash/7b/manifest.json"></esp-web-install-button></td>
+    </tr>
+    <tr>
+      <td style="padding:10px 0"><strong>5-inch</strong><br>
+        <span style="opacity:.7">ESP32-S3-Touch-LCD-5B · 1024 × 600</span></td>
+      <td style="text-align:right">
+        <esp-web-install-button manifest="flash/5b/manifest.json"></esp-web-install-button></td>
+    </tr>
+  </table>
+
   <p style="font-size:.85em;opacity:.75">If no port shows up: a board in a
   crashed state may need a manual bootloader entry — hold <code>BOOT</code>,
-  tap <code>RESET</code>, release <code>BOOT</code> (buttons on the left edge).</p>
+  tap <code>RESET</code>, release <code>BOOT</code> (buttons on the left edge).
+  The <strong>7-inch</strong> additionally needs the
+  <a href="https://www.wch-ic.com/downloads/CH343SER_EXE.html">WCH CH343 driver</a>:
+  it talks through a USB bridge rather than the ESP32's own USB, and without
+  the driver Windows gives it no port at all. The 4-inch and 5-inch need
+  nothing.</p>
 </div>
 
 <p>After flashing, the display boots in English, asks for your language and

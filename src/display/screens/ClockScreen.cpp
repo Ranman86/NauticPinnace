@@ -1,7 +1,13 @@
 #include "ClockScreen.h"
+#include "RenderYield.h"
+#include "../../PsramArena.h"
 #include "../Theme.h"
 #include "../../SunCalc.h"
-#include "WorldMask.h"
+#if defined(BOARD_PANEL_1024X600)
+#include "WorldMask600.h"   // 600x250 mask, same macro/function names
+#else
+#include "WorldMask.h"      // 480x200 mask
+#endif
 #include <math.h>
 #include <stdio.h>
 
@@ -28,6 +34,9 @@ static void mdot(lv_obj_t *cv, float x, float y, float r, lv_color_t col) {
 }
 
 void ClockScreen::create(lv_obj_t *parent) {
+    // The map draw copies the mask 1:1 — canvas and mask sizes must match.
+    static_assert(MW == WORLD_MASK_W && MH == WORLD_MASK_H,
+                  "map canvas size must equal the included world-mask size");
     container = lv_obj_create(parent);
     lv_obj_set_size(container, SCREEN_W, SCREEN_H);
     lv_obj_set_pos(container, 0, 0);
@@ -54,25 +63,25 @@ void ClockScreen::create(lv_obj_t *parent) {
     lv_label_set_text(_clock, "--:--:--");
     lv_obj_set_style_text_font(_clock, FONT_HUGE, 0);
     lv_obj_set_style_text_color(_clock, CLR_TEXT, 0);
-    lv_obj_align(_clock, LV_ALIGN_TOP_MID, 0, 198);
+    lv_obj_align(_clock, LV_ALIGN_TOP_MID, 0, MH - 2);   // tucked 2 px under the map edge
 
     _date = lv_label_create(container);
     lv_label_set_text(_date, "");
     lv_obj_set_style_text_font(_date, FONT_MED, 0);
     lv_obj_set_style_text_color(_date, CLR_TEXT_DIM, 0);
-    lv_obj_align(_date, LV_ALIGN_TOP_MID, 0, 256);
+    lv_obj_align(_date, LV_ALIGN_TOP_MID, 0, UI_S(256));
 
     _sunLine = lv_label_create(container);
     lv_label_set_text(_sunLine, "");
     lv_obj_set_style_text_font(_sunLine, FONT_MED, 0);
     lv_obj_set_style_text_color(_sunLine, CLR_TEXT, 0);
-    lv_obj_align(_sunLine, LV_ALIGN_TOP_MID, 0, 280);
+    lv_obj_align(_sunLine, LV_ALIGN_TOP_MID, 0, UI_S(280));
 
     _moonLine = lv_label_create(container);
     lv_label_set_text(_moonLine, "");
     lv_obj_set_style_text_font(_moonLine, FONT_MED, 0);
     lv_obj_set_style_text_color(_moonLine, CLR_TEXT_DIM, 0);
-    lv_obj_align(_moonLine, LV_ALIGN_TOP_MID, 0, 302);
+    lv_obj_align(_moonLine, LV_ALIGN_TOP_MID, 0, UI_S(302));
 
     // ── Tide estimate (uncalibrated) ──
     size_t tsz = LV_CANVAS_BUF_SIZE_TRUE_COLOR(TW, TH);
@@ -80,7 +89,7 @@ void ClockScreen::create(lv_obj_t *parent) {
     if (_tcbuf) {
         _tideCanvas = lv_canvas_create(container);
         lv_canvas_set_buffer(_tideCanvas, _tcbuf, TW, TH, LV_IMG_CF_TRUE_COLOR);
-        lv_obj_align(_tideCanvas, LV_ALIGN_TOP_MID, 0, 326);
+        lv_obj_align(_tideCanvas, LV_ALIGN_TOP_MID, 0, UI_S(326));
         lv_canvas_fill_bg(_tideCanvas, CLR_BG, LV_OPA_COVER);   // see _canvas above
         lv_obj_add_flag(_tideCanvas, LV_OBJ_FLAG_HIDDEN);       // shown only with a real curve
     }
@@ -90,19 +99,19 @@ void ClockScreen::create(lv_obj_t *parent) {
     lv_label_set_text(_tideBig, "");
     lv_obj_set_style_text_font(_tideBig, FONT_XL, 0);
     lv_obj_set_style_text_color(_tideBig, CLR_TEXT, 0);
-    lv_obj_align(_tideBig, LV_ALIGN_TOP_MID, 0, 378);
+    lv_obj_align(_tideBig, LV_ALIGN_TOP_MID, 0, UI_S(378));
 
     _tideLine = lv_label_create(container);
     lv_label_set_text(_tideLine, "");
     lv_obj_set_style_text_font(_tideLine, FONT_SMALL, 0);
     lv_obj_set_style_text_color(_tideLine, CLR_TEXT_DIM, 0);
-    lv_obj_align(_tideLine, LV_ALIGN_TOP_MID, 0, 418);
+    lv_obj_align(_tideLine, LV_ALIGN_TOP_MID, 0, UI_S(418));
 
     _tideNote = lv_label_create(container);
     lv_label_set_text(_tideNote, T(STR_CLOCK_TIDE_EST_NOTE));
     lv_obj_set_style_text_font(_tideNote, FONT_TINY, 0);
     lv_obj_set_style_text_color(_tideNote, CLR_TEXT_DIM, 0);
-    lv_obj_align(_tideNote, LV_ALIGN_TOP_MID, 0, 434);
+    lv_obj_align(_tideNote, LV_ALIGN_TOP_MID, 0, UI_S(434));
 }
 
 static void hm(char *buf, size_t n, float hours) {
@@ -308,7 +317,18 @@ void ClockScreen::drawMap(float lat, float lon, float decDeg, float sunLonDeg,
 
     // 1. Terminator latitude -> canvas-y per column (the day/night boundary).
     const float decR = decDeg * D2R;
-    static float yT[MW];
+    // Draw-time scratch, CPU-only on the UI task - lives in the PSRAM arena
+    // instead of a static DRAM array (1.9 KB of internal RAM freed).
+    static float *yT = (float *)PsramArena::alloc(MW * sizeof(float));
+    // There is deliberately NO internal-RAM fallback array here. It would have
+    // to be reserved in .bss on every board and every boot (2.4 KB on the 600
+    // grid, 1.9 KB on the 480 one) just to cover the one case where the arena
+    // is already exhausted - i.e. exactly when internal RAM is scarcest. So we
+    // simply skip the redraw instead. The caller only reaches drawMap() with a
+    // valid arena-backed canvas (see the "_canvas && _cbuf" guard in update()),
+    // so the worst outcome is a map whose terminator stops moving, never a
+    // crash and never an empty screen.
+    if (!yT) return;
     for (int x = 0; x < MW; x++) {
         float lonp = (float)x/MW*360.f - 180.f;
         float Hh   = (lonp - sunLonDeg) * D2R;
@@ -329,7 +349,7 @@ void ClockScreen::drawMap(float lat, float lon, float decDeg, float sunLonDeg,
                 row[x] = night ? SEAn : SEAd;
             }
         }
-        if ((y & 15) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+        if ((y & 15) == 0) renderYield();   // see RenderYield.h
     }
 
     // 3. Faint graticule (equator + prime meridian) + terminator line.
@@ -340,19 +360,20 @@ void ClockScreen::drawMap(float lat, float lon, float decDeg, float sunLonDeg,
 
     // 5. Subsolar point (sun).
     { float sx=(sunLonDeg+180.f)/360.f*MW, sy=(90.f-decDeg)/180.f*MH;
-      mdot(_canvas, sx, sy, 4, CLR_YELLOW); }
+      mdot(_canvas, sx, sy, 4.f*UI_SF, CLR_YELLOW); }
 
     // 6. Boat position.
     if (gpsOk) {
         float bx=(lon+180.f)/360.f*MW, by=(90.f-lat)/180.f*MH;
-        mline(_canvas, bx-6, by, bx+6, by, CLR_RED, 1, LV_OPA_COVER);
-        mline(_canvas, bx, by-6, bx, by+6, CLR_RED, 1, LV_OPA_COVER);
-        mdot(_canvas, bx, by, 3, CLR_RED);
+        const float arm = 6.f*UI_SF;
+        mline(_canvas, bx-arm, by, bx+arm, by, CLR_RED, 1, LV_OPA_COVER);
+        mline(_canvas, bx, by-arm, bx, by+arm, CLR_RED, 1, LV_OPA_COVER);
+        mdot(_canvas, bx, by, 3.f*UI_SF, CLR_RED);
     }
 
     // 7. Moon phase disc (top-right).
     {
-        const float cx=MW-34, cy=30, r=20;
+        const float cx=MW-UI_S(34), cy=UI_S(30), r=UI_S(20);
         const lv_color_t LIT=(uiTheme.text), DRK=(uiTheme.surface);
         lv_draw_line_dsc_t d; lv_draw_line_dsc_init(&d); d.width=1; d.opa=LV_OPA_COVER;
         for (float dy=-r; dy<=r; dy+=1.f) {
@@ -383,7 +404,7 @@ void ClockScreen::drawTide(long utcDays, double utcSec, float lon) {
 
     const float WIN = 13.f, LEAD = 2.f;          // hours: shown window, "now" offset
     const int   yMid = TH / 2;
-    const float amp  = (float)(TH / 2) - 5.f;
+    const float amp  = (float)(TH / 2) - 5.f*UI_SF;
 
     { lv_color_t *p=_tcbuf, *e=_tcbuf+(size_t)TW*TH; while(p<e)*p++=BG; }
 
@@ -402,7 +423,7 @@ void ClockScreen::drawTide(long utcDays, double utcSec, float lon) {
         { lv_point_t pc[2]={{(lv_coord_t)x,(lv_coord_t)y},{(lv_coord_t)x,(lv_coord_t)(TH-1)}}; lv_canvas_draw_line(_tideCanvas,pc,2,&wl); }
         if (prevY >= 0) { wl.color=LINEC; lv_point_t pl[2]={{(lv_coord_t)(x-1),(lv_coord_t)prevY},{(lv_coord_t)x,(lv_coord_t)y}}; lv_canvas_draw_line(_tideCanvas,pl,2,&wl); }
         prevY = y;
-        if ((x & 127) == 0) vTaskDelay(pdMS_TO_TICKS(1));
+        if ((x & 127) == 0) renderYield();   // see RenderYield.h
     }
     // Mean-level axis.
     { lv_draw_line_dsc_t a; lv_draw_line_dsc_init(&a); a.color=AXIS; a.width=1; a.opa=LV_OPA_40;

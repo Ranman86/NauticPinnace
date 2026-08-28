@@ -57,6 +57,8 @@
     X(FLD_FUEL,             "Kraftstoff",               "Fuel")                   \
     X(FLD_RUDDER,           "Ruder",                    "Rudder")                 \
     X(FLD_BATTV,            "Batt V",                   "Batt V")                 \
+    X(FLD_CPU,              "CPU",                      "CPU")                    \
+    X(FLD_RAM,              "RAM frei",                 "RAM free")               \
     X(FLD_LAT,              "Breite",                   "Latitude")               \
     X(FLD_LON,              "Länge",                    "Longitude")              \
     X(FLD_APTARGET,         "AP Ziel",                  "AP target")

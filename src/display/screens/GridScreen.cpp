@@ -1,4 +1,5 @@
 #include "GridScreen.h"
+#include "RenderYield.h"
 #include "../../i18n/I18n.h"
 #include <string.h>
 
@@ -30,7 +31,7 @@ void GridScreen::onShow() {
 struct GCellRect { int x, y, w, h; bool big; };
 
 static int gridLayoutRects(const GridConfig &gc, GCellRect *r, int maxN) {
-    const int W = SCREEN_W, H = SCREEN_H - NAV_BAR_H, m = 4, g = 4;
+    const int W = SCREEN_W, H = SCREEN_H - NAV_BAR_H, m = UI_S(4), g = UI_S(4);
     const int innerW = W - 2 * m;
     const char *L = gc.layout;
     auto isL = [&](const char *s) { return strcmp(L, s) == 0; };
@@ -78,8 +79,11 @@ void GridScreen::buildGrid() {
     Serial.flush();
 
     for (int idx = 0; idx < _count; idx++) {
-        // Yield every cell so the WiFi beacon ISR gets a SPI0 window (IWDT safety).
-        vTaskDelay(pdMS_TO_TICKS(2));
+        // Offer a yield per cell. The 4-inch board sleeps 2 ms every time, which
+        // is what it has always done; on the panel boards renderYield() takes at
+        // most one of these per 20 ms, so building a 9-cell grid no longer costs
+        // 18 ms of pure sleep. See RenderYield.h for why the sleeps were there.
+        renderYield(2);
         const GridCell &cfg = gc.cells[idx];
         Cell &cell = _cells[idx];
         cell.container = lv_obj_create(container);
@@ -99,13 +103,13 @@ void GridScreen::buildGrid() {
         // glyph set of the big font is sufficient.
         int hh = rects[idx].h;
         const lv_font_t *vFont = rects[idx].big ? FONT_DEPTH_XL :
-                                 (hh > 100) ? FONT_HUGE :
-                                 (hh > 75)  ? FONT_XXL  :
-                                 (hh > 55)  ? FONT_XL   : FONT_LARGE;
+                                 (hh > UI_S(100)) ? FONT_HUGE :
+                                 (hh > UI_S(75))  ? FONT_XXL  :
+                                 (hh > UI_S(55))  ? FONT_XL   : FONT_LARGE;
         cell.lblValue = lv_label_create(cell.container);
         lv_label_set_text(cell.lblValue, "--");
         styleLabel(cell.lblValue, vFont, CLR_TEXT);
-        lv_obj_align(cell.lblValue, LV_ALIGN_CENTER, 0, 4);
+        lv_obj_align(cell.lblValue, LV_ALIGN_CENTER, 0, UI_S(4));
 
         cell.lblUnit = lv_label_create(cell.container);
         lv_label_set_text(cell.lblUnit, cfg.unit);

@@ -1,6 +1,6 @@
 {
- "name": "NauticPinnace",
- "version": "v1.0.0",
+ "name": "NauticPinnace 5-inch",
+ "version": "v1.1.0",
  "new_install_prompt_erase": true,
  "builds": [
   {

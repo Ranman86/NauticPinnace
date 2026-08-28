@@ -21,8 +21,15 @@ public:
     void resetForRebuild() override;
 
 private:
-    static constexpr int MW = 480, MH = 200;   // world-map canvas size
-    static constexpr int TW = 452, TH = 48;    // tide-curve canvas size
+    // World-map canvas size — must equal WORLD_MASK_W/H of the per-board mask
+    // header included in the .cpp (WorldMask600.h on the 7B, WorldMask.h else);
+    // a static_assert in create() enforces it. The mask is drawn 1:1.
+#if defined(BOARD_PANEL_1024X600)
+    static constexpr int MW = 600, MH = 250;
+#else
+    static constexpr int MW = 480, MH = 200;
+#endif
+    static constexpr int TW = UI_S(452), TH = UI_S(48);   // tide-curve canvas size
 
     lv_obj_t   *_canvas     = nullptr;
     lv_color_t *_cbuf       = nullptr;

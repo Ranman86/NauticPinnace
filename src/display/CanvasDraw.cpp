@@ -1,6 +1,13 @@
 #include "CanvasDraw.h"
-#include <Arduino.h>    // vTaskDelay / pdMS_TO_TICKS (sim: sim/arduino_stubs.h)
+#include "screens/RenderYield.h"   // renderYield() - the shared draw-loop yield
 #include <math.h>
+
+// The one wall-clock timestamp behind renderYield(). It lives here rather than
+// in the header so that every screen's fill loops and the scanline fill below
+// share a single yield budget across the whole repaint - see RenderYield.h.
+#if defined(BOARD_PANEL_1024X600)
+uint32_t g_renderYieldLastMs = 0;
+#endif
 
 // ---- Filled annular sector ---------------------------------------------------
 void cdFillRing(lv_obj_t *cv, float cx, float cy, float rInner, float rOuter,
@@ -74,7 +81,7 @@ void cdFillPoly(lv_obj_t *cv, const lv_point_t *pts, int n, lv_color_t col) {
             lv_color_t *p = buf + (size_t)y * W + x0;
             for (int x = x0; x <= x1; x++) *p++ = col;
         }
-        if ((y & 31) == 0) vTaskDelay(pdMS_TO_TICKS(1));   // yield: no yield point inside LVGL draws
+        if ((y & 31) == 0) renderYield();   // yield: no yield point inside LVGL draws
     }
     lv_obj_invalidate(cv);
 }

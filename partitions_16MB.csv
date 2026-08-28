@@ -1,6 +1,26 @@
 # Name,   Type, SubType, Offset,   Size,     Flags
+# 16 MB layout, OTA-ready and coredump-enabled.
+#
+# The two app slots are deliberately the SAME size: an OTA update writes the
+# new image into the inactive slot, so a smaller second slot would silently
+# cap how big the firmware may ever grow. 4.94 MB each against a current
+# firmware of ~2.35 MB leaves ample room. No OTA code exists yet (nothing
+# includes Update.h / esp_ota_*) - the layout is simply ready for it.
+#
+# The coredump partition is what makes a panic readable: the Arduino libs are
+# built with coredump-to-flash enabled, so WITHOUT it every boot logged
+# "No core dump partition found!" and every crash died with "Elf write init
+# failed". Read a dump back with:
+#   esptool read-flash 0x9F0000 0x20000 core.bin
+#   espcoredump.py info_corefile -c core.bin firmware.elf
+#
+# littlefs keeps its offset AND size across this change, so an existing
+# filesystem (config.json, WebUI, polar table) survives untouched. Keep it
+# that way: shrinking or moving it invalidates the filesystem and the device
+# comes up with factory defaults.
 nvs,      data, nvs,     0x9000,   0x5000,
 otadata,  data, ota,     0xe000,   0x2000,
-app0,     app,  ota_0,   0x10000,  0x500000,
-app1,     app,  ota_1,   0x510000, 0x500000,
+app0,     app,  ota_0,   0x10000,  0x4F0000,
+app1,     app,  ota_1,   0x500000, 0x4F0000,
+coredump, data, coredump,0x9F0000, 0x20000,
 littlefs, data, spiffs,  0xA10000, 0x5F0000,
