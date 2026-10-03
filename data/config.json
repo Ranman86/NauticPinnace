@@ -90,6 +90,9 @@
     "can_tx": -1,
     "can_rx": -1
   },
+  "tide": {
+    "bsh_fetch": true
+  },
   "engine": {
     "rpm_idle": 700,
     "rpm_cruise": 2200,
@@ -152,6 +155,7 @@
     "butterfly": false,
     "nogo_deg": 35,
     "windlines_app": true,
+    "wind_trace": 0,
     "headsail_pct": 100
   },
   "grids": [

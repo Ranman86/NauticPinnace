@@ -1,6 +1,7 @@
 #include "GridScreen.h"
 #include "RenderYield.h"
 #include "../../i18n/I18n.h"
+#include "../CoordFormat.h"
 #include <string.h>
 
 // Maps config key names to DataModel fields (shared helper).
@@ -102,10 +103,23 @@ void GridScreen::buildGrid() {
         // others scale to their height. Grid values are numeric, so the limited
         // glyph set of the big font is sufficient.
         int hh = rects[idx].h;
-        const lv_font_t *vFont = rects[idx].big ? FONT_DEPTH_XL :
+        // A coordinate in degrees/minutes is neither numeric nor short: the
+        // hero font has no degree sign and the height rung has no room for
+        // 14 characters. Such a cell takes the Montserrat ladder and steps
+        // down until its widest possible string fits the card.
+        const bool coordCell = isCoordKey(cfg.pgn) &&
+                               appConfig.cfg.coordFormat != COORD_DECIMAL;
+        const lv_font_t *vFont = (rects[idx].big && !coordCell) ? FONT_DEPTH_XL :
                                  (hh > UI_S(100)) ? FONT_HUGE :
                                  (hh > UI_S(75))  ? FONT_XXL  :
                                  (hh > UI_S(55))  ? FONT_XL   : FONT_LARGE;
+        if (coordCell) {
+            char sample[24];
+            coordWidestSample(sample, sizeof(sample), appConfig.cfg.coordFormat,
+                              cfg.decimals);
+            vFont = uiFitValueFont(vFont, sample,
+                                   coordFitWidth(rects[idx].w, uiSz.cardPad));
+        }
         cell.lblValue = lv_label_create(cell.container);
         lv_label_set_text(cell.lblValue, "--");
         styleLabel(cell.lblValue, vFont, CLR_TEXT);
@@ -125,8 +139,12 @@ void GridScreen::update() {
         if (!_cells[i].container) continue;
         const GridCell &cfg = gc.cells[i];
         float val = getFieldValue(cfg.pgn);
-        char buf[20];
-        fmtVal(buf, sizeof(buf), val, cfg.decimals);
+        char buf[24];
+        if (appConfig.cfg.coordFormat != COORD_DECIMAL && isCoordKey(cfg.pgn))
+            fmtCoord(buf, sizeof(buf), val, strcmp(cfg.pgn, "lat") == 0,
+                     appConfig.cfg.coordFormat, cfg.decimals);
+        else
+            fmtVal(buf, sizeof(buf), val, cfg.decimals);
         lv_label_set_text(_cells[i].lblValue, buf);
         // Stale data dim
         lv_color_t col = isnan(val) ? CLR_TEXT_DIM : CLR_TEXT;

@@ -12,8 +12,8 @@
  * The OFL treats a conversion to another format as a Modified Version,
  * so this file is itself Font Software and stays under the OFL. It may
  * be redistributed only together with this notice and the licence text
- * (see THIRD-PARTY-NOTICES.md), and not under the reserved name
- * "Montserrat".
+ * (LICENSES/OFL-1.1-Montserrat.txt). Montserrat declares no Reserved
+ * Font Name; this font carries its own name anyway.
  * ---------------------------------------------------------------------
  */
 #ifdef LV_LVGL_H_INCLUDE_SIMPLE

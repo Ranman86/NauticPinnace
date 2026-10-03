@@ -35,6 +35,7 @@ private:
     lv_obj_t   *_btnPlus  = nullptr;
     lv_obj_t   *_btnAlarm = nullptr;        // toggles cfg.anchorAlarmOn
     lv_obj_t   *_btnAlarmLbl = nullptr;
+    lv_obj_t   *_btnSetLbl   = nullptr;     // "set" / "lift" - see refreshSetBtn()
 
     // Breadcrumb track: boat offsets from the anchor in metres (North, East).
     // The two 240-sample rings used to be members, i.e. ~1.9 KB of internal
@@ -50,8 +51,23 @@ private:
     uint32_t _lastTrkMs = 0;
     float    _maxDist = 0.f;                // largest drift seen this session [m]
 
+    // What the two buttons were last drawn for. The anchor state can change
+    // without anyone touching this screen - NauticPi sets or lifts the anchor
+    // and DisplayManager adopts it - and a button whose label says "set" while
+    // the code behind it lifts is worse than no button at all. Compared rather
+    // than refreshed every frame: lv_label_set_text copies the string each
+    // time, and this runs at the frame rate.
+    bool     _btnSetShown   = false;
+    bool     _btnAlarmShown = false;
+
     void draw();
     void refreshAlarmBtn();                 // label/colour for the alarm toggle
+    // The set button does double duty. There is no room for a fifth button in
+    // the bottom band, and "lift" is only ever wanted when an anchor is down,
+    // so the one button carries both. Without it this device could receive a
+    // lifted anchor from NauticPi but never send one.
+    void refreshSetBtn();
+    void syncButtons();                     // re-label when the state moved
 
     static void cbSet(lv_event_t *e);
     static void cbMinus(lv_event_t *e);

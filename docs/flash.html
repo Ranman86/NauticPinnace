@@ -54,8 +54,9 @@ before it happens.
 
 <div class="card">
   <p>1. Plug in the display via USB-C.<br>
-     2. Click the button for <em>your</em> board, pick the
-     <code>USB Serial Device</code> port, wait about a minute.</p>
+     2. Click the button for <em>your</em> board, pick its serial port
+     (<code>USB Serial Device</code> for the 4-inch and 5-inch, the CH343 port
+     for the 7-inch), wait about a minute.</p>
 
   <table style="width:100%;border-collapse:collapse">
     <tr>
@@ -78,6 +79,13 @@ before it happens.
     </tr>
   </table>
 
+  <p style="font-size:.85em;opacity:.75"><strong>Licences:</strong> the
+  firmware contains third-party software. Its
+  <a href="flash/THIRD-PARTY-NOTICES.md">third-party notices</a> and the
+  <a href="flash/LICENSES/">licence texts</a> come with these images; the
+  source of the LGPL libraries in the versions linked is attached to every
+  <a href="https://github.com/Ranman86/NauticPinnace/releases">release</a>.</p>
+
   <p style="font-size:.85em;opacity:.75">If no port shows up: a board in a
   crashed state may need a manual bootloader entry — hold <code>BOOT</code>,
   tap <code>RESET</code>, release <code>BOOT</code> (buttons on the left edge).
@@ -88,9 +96,11 @@ before it happens.
   nothing.</p>
 </div>
 
-<p>After flashing, the display boots in English, asks for your language and
-shows a demo of all screens. Full setup instructions are in the
-<a href="https://github.com/Ranman86/NauticPinnace#readme">README</a>.</p>
+<p>After flashing, the display boots in English, asks for your language,
+shows the licence screen and then reads live data from the NMEA 2000 bus.
+Demo mode, which runs every screen on synthetic data, is off by default and
+can be switched on in the web configuration. Full setup instructions are in
+the <a href="https://github.com/Ranman86/NauticPinnace#readme">README</a>.</p>
 
 <script type="module"
   src="https://unpkg.com/esp-web-tools@10/dist/web/install-button.js?module">

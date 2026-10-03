@@ -11,6 +11,52 @@ is actually running.
 Entries are marked with the boards they apply to. Unmarked entries apply to all
 three.
 
+## [1.2.0] - 2026-10-03
+
+### Added
+
+- Latitude and longitude can now be shown in degrees and minutes (48°07.407'N, what a chart plotter writes) or in degrees, minutes and seconds (48°07'24.4"N) instead of decimal degrees - a new "Coordinate format" setting on the Display tab, which applies to the two coordinate fields wherever they appear in a data grid or in the sidebar. A field's decimals then count for the last part, minutes or seconds. Default stays decimal, so an existing configuration looks exactly as before. Asked for in GitHub issue #3.
+
+- The Wind & Trim instrument can show the last minute of wind speed as a curve running from the centre of the rose out to the wind pointer - the strip chart of a wind plot laid along the pointer, newest sample at the rose, older ones migrating inward, wind strength across. Four settings in the sail section of the web interface: off, true wind only, apparent wind only, both. Off by default.
+
+- Trial: the maritime icons of the OpenBridge Icon Pack (CC BY 4.0) as an alternative to the built-in Font Awesome glyphs - the same icon for the same meaning as NauticPi (anchor, wind, depth, engine, the media controls, the alarm triangle ...), on the panel and in the web configuration. Switched with the new icon selector in the web configuration's header (`ui.icons`, `classic` by default), live and without a restart; `classic` draws exactly what the firmware drew before. The icons are rasterised at build time into small LVGL fonts by `tools/gen_icons.py` from the mapping shared with NauticPi. Everything belonging to the trial, and how to remove it again, is listed in `ICONS-TRIAL.md`.
+
+- The anchor watch now keeps in step with NauticPi over the NMEA 2000 bus. Setting, lifting, moving, arming or clearing the anchor alarm on either device has it the same way on the other about a second later, in both directions, over the proprietary PGN 131035 (manufacturer 2046, fast packet). Both sides decide who wins from the message alone: newer revision wins, and on the same second the lower node number - so a device whose clock lags still carries its own change through. The state is broadcast on every local change plus a ten-second heartbeat, which is what brings a device that was just switched on into agreement. An adopted state re-evaluates the drag alarm at once rather than waiting for the next cycle.
+
+- The anchor screen gained a "lift anchor" action - the set button turns into it while an anchor is down - and shows the time the anchor fell. Until now an anchor could be set but never cleared.
+
+- The daily BSH tide download can be switched off in the web interface (Devices tab); the tide screen then falls back to the tide data on the NMEA 2000 bus, if a sender offers any. Time synchronisation over WiFi is unaffected by the switch.
+
+- After a restart the device returns to the instrument that was showing when it was switched off, instead of always starting on the first one. Configuration and licence screens are excluded: they never count as "the last screen".
+
+- **(Tooling)** The release package now carries all three boards instead of the 4-inch alone: one ZIP with a folder per board (`4/`, `7b/`, `5b/`, each with its flash images, the merged full-flash image and a manifest) and the flashing tool, licences and instructions once at the top. `flash.bat` and `flash.sh` take the board as their first argument (`flash.bat 7b COM5`) or list the three and ask - the wrong firmware leaves the screen dark without warning, so they never guess. FLASHING.md covers the 7B's USB driver and a fallback for the 5B should a transfer stall.
+
+### Changed
+
+- The media screen (formerly named after the stereo's brand) is now called "Media" ("Medien" in German), on its tile, in its title and in the documentation; the brand name no longer appears in the project's sources and documentation. It controls the stereo exactly as before - only the project's own naming changed. Saved configurations are unaffected, since screens are stored by number; the screen type the web API reports is now `media`.
+
+### Fixed
+
+- The WiFi hotspot's name as printed on the configuration screen, as encoded in the QR code and as broadcast by the radio could differ from one another: the MAC address the name is derived from was read into an uninitialised buffer whenever the network interface was not yet up, and each of the three read it at a different moment. All three now derive the name from the chip's permanent MAC.
+
+- In demo mode the wind-history sampler stopped recording five seconds after boot, because the demo data never refreshed the wind timestamp. (Wind trace only; no released screen was affected.)
+
+- With demo mode off and no stereo on the bus (or in listen-only mode), tapping next or previous on the media screen filled in a title and artist from the demo playlist, and play/pause and the mute buttons changed their icons for a stereo nobody had heard. The demo playlist now runs only while the demo does; without a stereo the controls leave the screen as it is. Switching demo mode off at runtime on a device that booted on the bus now also clears the demo values, as it already did on a device that booted in demo mode.
+
+- The licence notices now cover everything the firmware links, read again from the linker maps of all three boards: `LICENSES/` gains the BSD-3-Clause texts of lwIP, wpa_supplicant, littlefs and the TLSF memory allocator, one MIT text carrying the copyright lines of FreeRTOS, the Xtensa HAL, esp_littlefs, cJSON and the code LVGL bundles, and the newlib C-library notices. FreeRTOS is now credited under its actual licence (MIT, Amazon) instead of Apache-2.0, the binary-only WiFi and PHY libraries under Apache-2.0 instead of an unnamed Espressif licence, and the font notices no longer claim a reserved font name that Montserrat's licence does not declare. The browser flasher page links the notices and licence texts next to its install buttons.
+
+- The source code of the LGPL libraries in exactly the versions each board links - the Arduino-ESP32 core (2.0.17 on the 4-inch, 3.3.11 on the 7B and 5B), AsyncTCP and ESPAsyncWebServer - is now attached to every GitHub release as `src-*.zip`, and THIRD-PARTY-NOTICES.md names the exact upstream tags and commits and the build directory each board's object files land in for relinking.
+
+- The licence screen on the device now names what that board actually links: its own core and library versions, the full copyright lines of the two web-server libraries (four holders and LGPL-3.0-or-later on the 7B and 5B), the ESP-IDF components underneath, and LovyanGFX on the 4-inch only. It says where the full texts are (THIRD-PARTY-NOTICES.md and LICENSES/ in the GitHub repository), and the OpenBridge icons are credited under a heading of their own instead of under the fonts.
+
+- The flashing instructions and the README no longer say that a freshly flashed device starts in demo mode: out of the box it reads the NMEA 2000 bus, as it has since v1.1.0, and the demo can be switched on in the web configuration.
+
+- The firmware-only USB update in the release package's FLASHING.md now writes `boot_app0.bin` along with the firmware. On a board that had been updated over WiFi, the command given until now wrote the new firmware into the app slot the board was no longer starting from, so the old firmware kept running as if nothing had happened. The instructions also name the web interface's Update tab as the route without a cable, and that a firmware-only update keeps the web interface already on the board.
+
+- **(Tooling)** The `esptool.exe` in the Windows release package now comes with the notices and licence texts of everything bundled inside it - Python runtime, OpenSSL, libffi, bzip2, xz, zlib, pyserial, intelhex, the PyInstaller bootloader and the Microsoft runtime - in `esptool-4.8.1/notices/`, and with the source of pyserial and intelhex next to the esptool source.
+
+- **(Tooling)** The release tools refuse stale or unsuitable images instead of packaging them: an image that carries paths from the build machine's user profile or leftover old names, a `data/` folder holding credentials, or a build older than the sources stops the run - for the release package and the web flasher alike, on all three boards. `platformio.ini` now pins every library to the exact version the notices name.
+
 ## [1.1.0] - 2026-08-27
 
 Two more displays, and a great deal of work behind the picture.

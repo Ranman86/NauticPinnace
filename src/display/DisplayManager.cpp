@@ -1,4 +1,6 @@
 #include "DisplayManager.h"
+#include "Icons.h"   // OpenBridge icon trial
+#include "../nmea/AnchorSyncNode.h"
 #include "SideBar.h"
 #include "Theme.h"
 #include "../i18n/I18n.h"
@@ -182,6 +184,13 @@ void DisplayManager::showScreen(int idx) {
     // lazily in onShow(). See uiDisableLabelScroll() in Theme.h for what this
     // costs when it is NOT done - it was the single biggest item in the frame.
     uiDisableLabelScroll(_mainScreen);
+    // Note it, do not write it - the flash write happens later, from update().
+    // Overlays never reach this function: the settings, licence, language and
+    // home pages live on lv_layer_top() and leave _cur alone, so a restart
+    // while one of them is open comes back to the INSTRUMENT behind it, never
+    // into a menu.
+    _lastScreenPending = _cur;
+    _lastScreenAtMs    = millis();
     _forceUpdate = true;
     // Bring overlay arrows to top so they stay visible over screen content
     if (_btnPrev) lv_obj_move_foreground(_btnPrev);
@@ -309,8 +318,32 @@ void DisplayManager::reloadThemeLive() {
         lv_obj_set_style_bg_color(_perfOverlay, uiTheme.perfBg, 0);
     }
 
+    refreshTrialChrome();   // OpenBridge icon trial
     showScreen(_cur);   // unhide current, onShow(), bring chrome to foreground
     Serial.println("[theme] live reload done"); Serial.flush();
+}
+
+// OpenBridge icon trial: the floating buttons and the demo banner are built once and
+// survive a live reload, so a change of ui.icons would leave their old symbols
+// standing. Relabel them here - the banner only when its symbol actually changed,
+// so a live LANGUAGE change leaves it in the boot language exactly as before the
+// trial (the banner has never followed one; changing that is not this trial's job).
+void DisplayManager::refreshTrialChrome() {
+    struct { lv_obj_t *btn; NpIcon icon; } btns[] = {
+        { _btnPrev, NP_ICON_PREV }, { _btnNext, NP_ICON_NEXT }, { _btnSettings, NP_ICON_SETTINGS },
+    };
+    for (auto &b : btns) {
+        lv_obj_t *lbl = b.btn ? lv_obj_get_child(b.btn, 0) : nullptr;
+        if (lbl) lv_label_set_text(lbl, npSym(b.icon));
+    }
+    lv_obj_t *bannerLbl = _demoBanner ? lv_obj_get_child(_demoBanner, 0) : nullptr;
+    const char *sym = npSym(NP_ICON_DEMO);
+    if (bannerLbl && strncmp(lv_label_get_text(bannerLbl), sym, strlen(sym)) != 0) {
+        char banner[96];
+        snprintf(banner, sizeof(banner), "%s  %s  %s", npSym(NP_ICON_DEMO),
+                 T(STR_BANNER_DEMO_MODE), npSym(NP_ICON_DEMO));
+        lv_label_set_text(bannerLbl, banner);
+    }
 }
 
 void DisplayManager::nextScreen() {
@@ -340,9 +373,31 @@ void DisplayManager::update() {
     // LVGL-safe loop context rather than the async TCP task.
     if (_screenCfgPending) { _screenCfgPending = false; applyScreenConfig();
                              sideBar.applyConfig();
+                             // A data grid rebuilds its cells only in onShow(),
+                             // so a saved change to the grid ON DISPLAY - a cell's
+                             // field, its decimals, the coordinate format - stayed
+                             // invisible until the next page flip, while update()
+                             // already wrote the new text into the old label: a
+                             // coordinate in the digits-only hero font came out as
+                             // placeholder boxes. The sidebar has always rebuilt
+                             // on every save; the visible grid now does the same.
+                             if (_cur >= GRID_ID_BASE && _screens[_cur] &&
+                                 _screens[_cur]->container) {
+                                 _screens[_cur]->onShow();
+                                 uiDisableLabelScroll(_mainScreen);   // fresh labels
+                             }
                              // Rebuilt sidebar cells are the newest siblings and
                              // would otherwise render over the perf overlay.
                              if (_perfOverlay) lv_obj_move_foreground(_perfOverlay); }
+    // An anchor state adopted from the bus is applied HERE, not on the bus
+    // task: it writes the config to LittleFS and touches the alarm, both of
+    // which belong to this loop. Re-evaluate the alarm at once - an anchor
+    // armed on the other device must not lie here unwatched until the next
+    // cycle.
+    if (AnchorSyncNode::applyPending()) {
+        evaluateAnchorAlarm();
+        if (_cur == SCR_ANCHOR && _screens[_cur]) _screens[_cur]->update();
+    }
     // Reload polar table if the web handler just saved new data.
     if (_polarReloadPending) { _polarReloadPending = false; gPolar().load(appConfig.cfg.polarFile); }
     // Live theme re-apply (colours/sizes/fonts) — rebuilds the UI without a reboot.
@@ -416,6 +471,16 @@ void DisplayManager::update() {
     // Apply any pending nav-arrow show request first (safe: called outside lv_timer_handler)
     applyNavArrowsPending();
 
+    // Wind trace sampler. Deliberately OUTSIDE the modalOpen guard and not tied
+    // to the wind screen being visible: the curve is a history, and it would be
+    // a poor one if it grew a minute-long hole every time somebody opened the
+    // settings or looked at the depth page. Costs one comparison per tick and
+    // does nothing until WIND_TRACE_MS is up.
+    {
+        auto lk = data.lock();
+        data.pushWindTraceDue(millis());
+    }
+
     // This brace measures the CANVAS PAINT of the current screen and nothing
     // else - it is the "CPU%" of the perf overlay. It is a different event from
     // the overlay's "fps", which counts finished LVGL display refreshes; the
@@ -453,6 +518,11 @@ void DisplayManager::update() {
     // to keep running while the user is standing in a menu.
     evaluateAnchorAlarm();
     evaluateAutoTheme();
+    // Deferred flash write for "remember the screen". Runs on every tick but
+    // does nothing until the delay is up, and is deliberately outside the
+    // modalOpen guard: switching screens from the home launcher has to be
+    // remembered too, and the launcher is a modal.
+    persistLastScreenDue();
 #if defined(BOARD_PANEL_1024X600)
     // Everything this function did EXCEPT the instrument paint. Unsigned
     // subtraction of two values taken in this same call, so it cannot go
@@ -536,7 +606,7 @@ void DisplayManager::evaluateAnchorAlarm() {
         char b[40];
         // LV_SYMBOL_* glyphs exist in the Montserrat build; U+2693 (⚓) does NOT
         // and rendered as an empty box. See the font-coverage note below.
-        snprintf(b, sizeof(b), LV_SYMBOL_WARNING " %s  %d m",
+        snprintf(b, sizeof(b), "%s %s  %d m", npSym(NP_ICON_WARNING),   // OpenBridge icon trial
                  T(STR_ALARM_ANCHOR_DRAG), (int)(distM + 0.5f));
         lv_label_set_text(_alarmLbl, b);
         _alarmBlink++;
@@ -583,6 +653,57 @@ void DisplayManager::handleButtons() {
 
 const char *DisplayManager::currentTitle() const {
     return _screens[_cur] ? _screens[_cur]->title() : "";
+}
+
+// ── Remember the screen across a restart ─────────────────────────────────────
+// See the declaration for why this is NVS and why it is delayed.
+#if !defined(SIMULATOR)
+#include <Preferences.h>
+static const char *LASTSCR_NS  = "ui";
+static const char *LASTSCR_KEY = "lastscr";
+// Long enough that swiping from one end of the carousel to the other is one
+// write rather than twenty, short enough that pulling the breaker a few
+// seconds after settling on a screen still remembers it.
+static const uint32_t LASTSCR_DELAY_MS = 5000;
+#endif
+
+void DisplayManager::persistLastScreenDue() {
+#if !defined(SIMULATOR)
+    if (_lastScreenPending < 0) return;
+    if (millis() - _lastScreenAtMs < LASTSCR_DELAY_MS) return;
+    const int id = _lastScreenPending;
+    _lastScreenPending = -1;
+
+    Preferences p;
+    if (!p.begin(LASTSCR_NS, false)) return;
+    // Read before writing: NVS skips an identical value itself, but the check
+    // is free here and keeps the log honest about what actually moved.
+    if (p.getInt(LASTSCR_KEY, -1) != id) p.putInt(LASTSCR_KEY, id);
+    p.end();
+#endif
+}
+
+void DisplayManager::restoreLastScreen() {
+    int id = -1;
+#if !defined(SIMULATOR)
+    Preferences p;
+    if (p.begin(LASTSCR_NS, true)) {         // read-only; absent on first boot
+        id = p.getInt(LASTSCR_KEY, -1);
+        p.end();
+    }
+#endif
+    // Validated against the CURRENT navigation order, not just the array
+    // bounds: a screen that was on display can since have been switched off in
+    // the web interface, and a data grid can have been deleted outright. Then
+    // the stored id names a screen that is no longer reachable, and falling
+    // back to the first one is the only sensible answer.
+    if (id >= 0 && navPosOf(id) >= 0) {
+        Serial.printf("[ui] restoring last screen %d\n", id);
+        showScreen(id);
+        return;
+    }
+    if (id >= 0) Serial.printf("[ui] last screen %d is no longer enabled\n", id);
+    showScreen(_navLen > 0 ? _navOrder[0] : 0);
 }
 
 #if defined(BOARD_PANEL_1024X600)
@@ -769,8 +890,9 @@ void DisplayManager::buildOverlayNav(lv_obj_t *parent) {
         return btn;
     };
 
-    _btnPrev = makeFloatBtn(LV_ALIGN_LEFT_MID,  LV_SYMBOL_LEFT,  cbPrev, UI_NAV_BTN_W, UI_NAV_BTN_H, 0);
-    _btnNext = makeFloatBtn(LV_ALIGN_RIGHT_MID, LV_SYMBOL_RIGHT, cbNext, UI_NAV_BTN_W, UI_NAV_BTN_H, 0);
+    // OpenBridge icon trial: symbols via npSym(); relabelled in refreshTrialChrome().
+    _btnPrev = makeFloatBtn(LV_ALIGN_LEFT_MID,  npSym(NP_ICON_PREV), cbPrev, UI_NAV_BTN_W, UI_NAV_BTN_H, 0);
+    _btnNext = makeFloatBtn(LV_ALIGN_RIGHT_MID, npSym(NP_ICON_NEXT), cbNext, UI_NAV_BTN_W, UI_NAV_BTN_H, 0);
     // PRESSED too, so cbPrev/cbNext can sample whether the arrow was actually
     // visible when the tap began (see cbPrev).
     lv_obj_add_event_cb(_btnPrev, cbPrev, LV_EVENT_PRESSED, nullptr);
@@ -778,7 +900,7 @@ void DisplayManager::buildOverlayNav(lv_obj_t *parent) {
     // Settings gear: top-centre, smaller, offset below the demo banner.
     // (makeFloatBtn wires CLICKED; add PRESSED too so cbSettings can sample the
     // gear's visibility at the moment the tap begins — see cbSettings.)
-    _btnSettings = makeFloatBtn(LV_ALIGN_TOP_MID, LV_SYMBOL_SETTINGS, cbSettings, 64, 40, 22);
+    _btnSettings = makeFloatBtn(LV_ALIGN_TOP_MID, npSym(NP_ICON_SETTINGS), cbSettings, 64, 40, 22);   // OpenBridge icon trial
     lv_obj_add_event_cb(_btnSettings, cbSettings, LV_EVENT_PRESSED, nullptr);
 
     // Swipe gestures on the full screen (register GESTURE event on parent)
@@ -1030,8 +1152,8 @@ void DisplayManager::activate() {
     // dash IS available now via the latin_suppl fallback, but the banner text
     // itself lives in the string table.
     char banner[96];
-    snprintf(banner, sizeof(banner), LV_SYMBOL_WARNING "  %s  " LV_SYMBOL_WARNING,
-             T(STR_BANNER_DEMO_MODE));
+    snprintf(banner, sizeof(banner), "%s  %s  %s", npSym(NP_ICON_DEMO),   // OpenBridge icon trial
+             T(STR_BANNER_DEMO_MODE), npSym(NP_ICON_DEMO));
     lv_label_set_text(bannerLbl, banner);
     lv_obj_set_style_text_color(bannerLbl, (uiTheme.demoText), 0);
     lv_obj_set_style_text_font(bannerLbl, FONT_TINY, 0);
@@ -1071,6 +1193,6 @@ void DisplayManager::activate() {
     lv_scr_load(_mainScreen);
     Serial.println("[ACT] 10: scr_load done"); Serial.flush();
     applyScreenConfig();                          // builds _navOrder from appConfig
-    showScreen(_navLen > 0 ? _navOrder[0] : 0);
+    restoreLastScreen();                          // last one used, or the first
     Serial.println("[ACT] 11: showScreen done"); Serial.flush();
 }

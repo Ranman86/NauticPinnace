@@ -22,7 +22,7 @@
 // this short - "1.1.0" or "1.1.0-rc1" fit, a git hash does not.
 // ============================================================================
 
-#define FW_VERSION      "1.1.0"
+#define FW_VERSION      "1.2.0"
 
 // Model version reported alongside it on the bus. This describes the HARDWARE
 // generation, not the software, and therefore moves only when a new board

@@ -244,6 +244,34 @@ public:
     static constexpr int DEPTH_HIST  = 300;
     static constexpr int SPEED_HIST  = 120;
 
+    // Short boat-relative wind trace, for the two history curves drawn inside
+    // the wind instrument. A SEPARATE ring from windHistory on purpose:
+    //
+    //  * Different quantity. windHistory keeps TWD, the COMPASS direction, for
+    //    the wind-history page. The instrument needs the BOAT-relative angle -
+    //    and it cannot be derived after the fact, because computing TWA from a
+    //    stored TWD and the CURRENT heading swings the whole historical curve
+    //    round every time the boat turns. A tack would look like a 90 degree
+    //    wind shift.
+    //  * Different length. This one is about a minute; the history page spans
+    //    minutes.
+    //  * Different stack cost. WindPlotScreen copies the whole windHistory onto
+    //    the stack (4.3 KB of the loop task's 8 KB), so growing WindSample
+    //    would grow that copy. This ring is small enough to copy safely.
+    //
+    // No timestamp per sample: the push runs on a fixed timer, so the index IS
+    // the time axis. A gap in the data is stored as NaN, which breaks the drawn
+    // line rather than inventing a straight segment across it.
+    static constexpr int      WIND_TRACE    = 120;   // at 2 Hz => 60 s
+    static constexpr uint32_t WIND_TRACE_MS = 500;   // fixed push interval
+    // Silence longer than this is a hole in the curve, not a steady wind.
+    static constexpr uint32_t WIND_TRACE_STALE_MS = 5000;
+    struct WindTracePoint { float twa, tws, awa, aws; };
+    WindTracePoint *windTrace   = nullptr;           // WIND_TRACE entries
+    int   windTraceIdx  = 0;
+    bool  windTraceFull = false;
+    uint32_t lastWindTraceMs = 0;
+
     // The rings live in the PSRAM arena, only the indices stay here.
     WindSample *windHistory = nullptr;   // WIND_HIST entries
     int        windHistIdx  = 0;
@@ -299,6 +327,7 @@ public:
 
         aisTargets   = (AisTarget  *)allocBuf(sizeof(AisTarget)  * MAX_AIS,    "aisTargets");
         windHistory  = (WindSample *)allocBuf(sizeof(WindSample) * WIND_HIST,  "windHistory");
+        windTrace    = (WindTracePoint *)allocBuf(sizeof(WindTracePoint) * WIND_TRACE, "windTrace");
         depthHistory = (float      *)allocBuf(sizeof(float)      * DEPTH_HIST, "depthHistory");
         speedHistory = (float      *)allocBuf(sizeof(float)      * SPEED_HIST, "speedHistory");
         heaveHistVal = (float      *)allocBuf(sizeof(float)      * HEAVE_HIST, "heaveHistVal");
@@ -432,12 +461,17 @@ public:
         // pointers, so sizeof() would be 4 and each memset would clear one
         // sample instead of the whole buffer — while still looking correct.
         if (windHistory)  memset(windHistory,  0, sizeof(WindSample) * WIND_HIST);
+        // NaN, not zero: an all-zero trace would draw a curve pinned at 0 kn
+        // instead of drawing nothing at all.
+        if (windTrace) for (int i = 0; i < WIND_TRACE; i++)
+            windTrace[i] = { NAN, NAN, NAN, NAN };
         if (depthHistory) memset(depthHistory, 0, sizeof(float)      * DEPTH_HIST);
         if (speedHistory) memset(speedHistory, 0, sizeof(float)      * SPEED_HIST);
         if (heaveHistVal) memset(heaveHistVal, 0, sizeof(float)      * HEAVE_HIST);
         if (heaveHistMs)  memset(heaveHistMs,  0, sizeof(uint32_t)   * HEAVE_HIST);
         if (pressHistVal) memset(pressHistVal, 0, sizeof(float)      * PRESS_HIST);
         windHistIdx  = 0; windHistFull  = false;
+        windTraceIdx = 0; windTraceFull = false; lastWindTraceMs = 0;
         depthHistIdx = 0; depthHistFull = false;
         speedHistIdx = 0;
         heaveHistIdx = 0; heaveHistFull = false;
@@ -470,6 +504,36 @@ public:
         windHistory[windHistIdx] = { twd_deg, tws_kn, (uint32_t)millis() };
         windHistIdx = (windHistIdx + 1) % WIND_HIST;
         if (windHistIdx == 0) windHistFull = true;
+    }
+
+    // Boat-relative wind trace, sampled on a CLOCK rather than on arrival.
+    //
+    // pushWindSample() above runs on every wind PGN, so how much time its 360
+    // entries span depends on the sensor: six minutes at 1 Hz, ninety seconds
+    // at 4 Hz. That is fine for a statistics page but useless for a curve that
+    // is meant to say "the last minute" on every boat. This one is driven by
+    // the display tick and stores a point every WIND_TRACE_MS regardless of how
+    // fast the bus talks.
+    //
+    // Stale data becomes NaN rather than a repeat of the last value: a wind
+    // sensor that stopped should leave a GAP in the curve, not a straight line
+    // pretending the wind held steady.
+    // The ONLY gate is the age of the last wind PGN. Do not add a test on twa
+    // here: whether each quantity is known is already carried by the value
+    // itself - twa is NaN on a masthead unit that only reports apparent wind,
+    // and gating the whole point on it blanked the apparent curve too, on
+    // exactly the installation that needs it most.
+    void pushWindTraceDue(uint32_t nowMs) {
+        if (!windTrace) return;
+        if (lastWindTraceMs && (nowMs - lastWindTraceMs) < WIND_TRACE_MS) return;
+        lastWindTraceMs = nowMs;
+        const bool fresh = lastWindUpdate &&
+                           (nowMs - lastWindUpdate) < WIND_TRACE_STALE_MS;
+        windTrace[windTraceIdx] = fresh
+            ? WindTracePoint{ twa, tws, awa, aws }
+            : WindTracePoint{ NAN, NAN, NAN, NAN };
+        windTraceIdx = (windTraceIdx + 1) % WIND_TRACE;
+        if (windTraceIdx == 0) windTraceFull = true;
     }
 
     void pushDepthSample(float d) {

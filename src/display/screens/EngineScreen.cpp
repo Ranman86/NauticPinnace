@@ -1,4 +1,5 @@
 #include "EngineScreen.h"
+#include "../Icons.h"   // OpenBridge icon trial
 #include "../../config/Config.h"
 #include "../../i18n/I18n.h"
 #include "../UiConfig.h"
@@ -108,7 +109,7 @@ void EngineScreen::update() {
     lv_color_t arcCol = CLR_GREEN;
     String status = "";
     if (!isnan(rpm)) {
-        if (rpm > ec.rpmMaxCont) { arcCol = CLR_RED;    status = String(LV_SYMBOL_WARNING " ") + T(STR_ENG_OVER_REV); }
+        if (rpm > ec.rpmMaxCont) { arcCol = CLR_RED;    status = String(npSym(NP_ICON_WARNING)) + " " + T(STR_ENG_OVER_REV); }   // OpenBridge icon trial
         else if (rpm > ec.rpmCruise)  { arcCol = CLR_YELLOW; }
         else if (rpm < ec.rpmIdle + 100) { arcCol = CLR_TEXT_DIM; }
         else { arcCol = CLR_GREEN; }

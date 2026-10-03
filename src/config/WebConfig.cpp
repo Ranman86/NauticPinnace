@@ -1,4 +1,5 @@
 #include "WebConfig.h"
+#include "../nmea/AnchorSyncNode.h"
 #include "Config.h"
 #include "../i18n/I18n.h"
 #include "../nmea/DataModel.h"
@@ -36,6 +37,14 @@ void WebConfig::begin(bool apMode, const char *ssid, const char *password) {
     //   that adds latency and drops TCP segments, which is what made large HTTP
     //   responses (the UI page) stall and the async server appear "wedged".
     WiFi.persistent(false);
+
+    // The hotspot name, logged on EVERY boot rather than only when the AP is
+    // actually started. Two reasons: in station mode there was previously no
+    // way to find out what this device's hotspot would be called without
+    // reaching the settings screen, and printing it here - before any
+    // WiFi.mode() call - proves the name no longer depends on the WiFi state.
+    // Password deliberately not logged; serial output ends up in bug reports.
+    Serial.printf("[wifi] hotspot name: %s\n", wifiApSsid().c_str());
 
     if (apMode || strlen(ssid) == 0) {
         WiFi.mode(WIFI_AP);
@@ -751,13 +760,44 @@ void WebConfig::handlePostConfig(AsyncWebServerRequest *req, uint8_t *body, size
     postBodyFree(req);
 
     const Lang langBefore = i18nLang();
+    const uint8_t iconSetBefore = appConfig.cfg.iconSet;   // OpenBridge icon trial
     const bool demoBefore = appConfig.cfg.demoMode;
+    // The web form is the fifth place the anchor state can change (the other
+    // four are the buttons on the anchor screen). Compared rather than always
+    // stamped: every save from every tab comes through here, and stamping a
+    // revision on a brightness change would let this device win an arbitration
+    // it has no business winning.
+    const bool     ancAlarmBefore  = appConfig.cfg.anchorAlarmOn;
+    const float    ancRadiusBefore = appConfig.cfg.anchorRadius;
+    const bool     ancSetBefore    = appConfig.cfg.anchorSet;
+    const float    ancLatBefore    = appConfig.cfg.anchorLat;
+    const float    ancLonBefore    = appConfig.cfg.anchorLon;
+    const uint32_t ancSetUtcBefore = appConfig.cfg.anchorSetUtc;
     if (!appConfig.fromJson(json)) {
         req->send(400, "application/json", "{\"error\":\"Invalid JSON\"}");
         return;
     }
     json = String();          // release the body BEFORE save() builds its own
                               // JsonDocument + output String
+    // Position and set time are compared too: /api/import comes through this
+    // same handler and can move the anchor without touching set/radius/alarm.
+    // Unstamped, that position would never be broadcast AND could never be
+    // corrected by the peer - its heartbeat carries the revision we already
+    // hold - so the two devices would watch different spots indefinitely, each
+    // convinced it was in sync. NaN != NaN, hence the isnan pair.
+    auto latLonMoved = [](float a, float b) {
+        if (isnan(a) && isnan(b)) return false;
+        if (isnan(a) != isnan(b)) return true;
+        return a != b;
+    };
+    if (appConfig.cfg.anchorAlarmOn != ancAlarmBefore  ||
+        appConfig.cfg.anchorSet     != ancSetBefore    ||
+        appConfig.cfg.anchorRadius  != ancRadiusBefore ||
+        appConfig.cfg.anchorSetUtc  != ancSetUtcBefore ||
+        latLonMoved(appConfig.cfg.anchorLat, ancLatBefore) ||
+        latLonMoved(appConfig.cfg.anchorLon, ancLonBefore)) {
+        AnchorSyncNode::noteLocalChange();
+    }
     appConfig.save();
     // Apply hardware settings immediately (no restart needed)
     setBrightness(appConfig.cfg.brightness);
@@ -766,6 +806,8 @@ void WebConfig::handlePostConfig(AsyncWebServerRequest *req, uint8_t *body, size
     // Screen labels are set when a screen is built, so a language change
     // only shows up after a rebuild — the same path the theme uses.
     if (i18nLang() != langBefore) dispMgr.requestThemeReload();
+    // OpenBridge icon trial: same live rebuild for a new icon set (see Icons.h).
+    else if (appConfig.cfg.iconSet != iconSetBefore) dispMgr.requestThemeReload();
     // Leaving demo mode is a no-op unless something is actually reading the
     // bus. setup() creates EITHER the demo task OR the NMEA 2000 task, and
     // only at boot, so a device that booted in demo mode has no bus reader:

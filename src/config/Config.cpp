@@ -216,6 +216,8 @@ String Config::toJson() const {
     doc["wifi"]["ap_pass"]  = cfg.apPass;
     doc["license_ok"]       = cfg.licenseAccepted;
     doc["ui"]["lang"]       = cfg.lang;
+    // OpenBridge icon trial
+    doc["ui"]["icons"]      = (cfg.iconSet == ICON_SET_OPENBRIDGE) ? "openbridge" : "classic";
     doc["boot"]["title"]    = cfg.bootTitle;
     doc["boot"]["name"]     = cfg.bootName;
 
@@ -232,6 +234,10 @@ String Config::toJson() const {
     doc["nmea2000"]["can_tx"] = cfg.canTxPin;
     doc["nmea2000"]["can_rx"] = cfg.canRxPin;
     doc["nmea2000"]["listen_only"] = cfg.n2kListenOnly;
+
+    // Own group: this is neither a bus nor a display setting, and grouping it
+    // with the gauge data keeps room for a station override later.
+    doc["tide"]["bsh_fetch"] = cfg.tideBshFetch;
 
     doc["engine"]["rpm_idle"]     = cfg.engine.rpmIdle;
     doc["engine"]["rpm_cruise"]   = cfg.engine.rpmCruise;
@@ -253,6 +259,7 @@ String Config::toJson() const {
     doc["depth"]["alarm"] = cfg.depthAlarm;
     doc["depth"]["unit"]  = cfg.depthUnit;
     doc["display"]["rotation"] = cfg.displayRotation;
+    doc["display"]["coord_fmt"] = cfg.coordFormat;
 
     doc["ais"]["range"]     = cfg.aisRange;
     doc["ais"]["alarm"]     = cfg.aisAlarm;
@@ -285,6 +292,9 @@ String Config::toJson() const {
     doc["anchor"]["radius"] = cfg.anchorRadius;
     doc["anchor"]["alarm"]  = cfg.anchorAlarmOn;
     doc["anchor"]["north_up"] = cfg.anchorNorthUp;
+    doc["anchor"]["set_utc"]  = cfg.anchorSetUtc;
+    doc["anchor"]["rev_utc"]  = cfg.anchorRevUtc;
+    doc["anchor"]["rev_node"] = cfg.anchorRevNode;
 
     {   // tank user config (only configured entries)
         JsonArray jt = doc["tankcfg"].to<JsonArray>();
@@ -323,6 +333,7 @@ String Config::toJson() const {
     doc["sail"]["butterfly"]      = cfg.allowButterfly;
     doc["sail"]["nogo_deg"]       = cfg.noGoAngle;
     doc["sail"]["windlines_app"]  = cfg.windLinesApparent;
+    doc["sail"]["wind_trace"]     = cfg.windTraceMode;
     doc["sail"]["compass_north_up"] = cfg.compassNorthUp;
     doc["sail"]["headsail_pct"]   = cfg.headsailSizePct;
 
@@ -410,6 +421,11 @@ bool Config::fromJson(const String &json) {
     if (doc["wifi"]["ap_pass"].is<const char*>()) strlcpy(cfg.apPass, doc["wifi"]["ap_pass"], sizeof(cfg.apPass));
     cfg.licenseAccepted = doc["license_ok"] | cfg.licenseAccepted;
     if (doc["ui"]["lang"].is<const char*>()) strlcpy(cfg.lang, doc["ui"]["lang"], sizeof(cfg.lang));
+    // OpenBridge icon trial: anything but "openbridge" is classic, so an unknown value
+    // can never leave the panel without symbols.
+    if (doc["ui"]["icons"].is<const char*>())
+        cfg.iconSet = (strcmp(doc["ui"]["icons"].as<const char*>(), "openbridge") == 0)
+                      ? ICON_SET_OPENBRIDGE : ICON_SET_CLASSIC;
     if (doc["boot"]["title"].is<const char*>())
         strlcpy(cfg.bootTitle, doc["boot"]["title"], sizeof(cfg.bootTitle));
     if (doc["boot"]["name"].is<const char*>())
@@ -462,6 +478,7 @@ bool Config::fromJson(const String &json) {
         cfg.canRxPin = -1;
     }
     cfg.n2kListenOnly = doc["nmea2000"]["listen_only"] | cfg.n2kListenOnly;
+    cfg.tideBshFetch  = doc["tide"]["bsh_fetch"]       | cfg.tideBshFetch;
 
     cfg.engine.rpmIdle    = doc["engine"]["rpm_idle"]     | cfg.engine.rpmIdle;
     cfg.engine.rpmCruise  = doc["engine"]["rpm_cruise"]   | cfg.engine.rpmCruise;
@@ -491,6 +508,8 @@ bool Config::fromJson(const String &json) {
         uint16_t r = doc["display"]["rotation"] | cfg.displayRotation;
         cfg.displayRotation = (r == 90 || r == 180 || r == 270) ? r : 0;
     }
+    cfg.coordFormat = doc["display"]["coord_fmt"] | cfg.coordFormat;
+    if (cfg.coordFormat > 2) cfg.coordFormat = 0;      // unknown value = decimal
     cfg.aisTcpaAlarm = doc["ais"]["tcpa"]      | cfg.aisTcpaAlarm;
 
     // Sensor calibration + N2K source pinning (partial patches merge).
@@ -519,6 +538,9 @@ bool Config::fromJson(const String &json) {
     cfg.anchorRadius  = doc["anchor"]["radius"] | cfg.anchorRadius;
     cfg.anchorAlarmOn = doc["anchor"]["alarm"]  | cfg.anchorAlarmOn;
     cfg.anchorNorthUp = doc["anchor"]["north_up"] | cfg.anchorNorthUp;
+    cfg.anchorSetUtc  = doc["anchor"]["set_utc"]  | cfg.anchorSetUtc;
+    cfg.anchorRevUtc  = doc["anchor"]["rev_utc"]  | cfg.anchorRevUtc;
+    cfg.anchorRevNode = doc["anchor"]["rev_node"] | cfg.anchorRevNode;
 
     if (doc["tankcfg"].is<JsonArrayConst>()) {
         for (int i = 0; i < 6; i++) cfg.tankCfg[i] = TankCfg{};
@@ -565,6 +587,8 @@ bool Config::fromJson(const String &json) {
     cfg.allowButterfly    = doc["sail"]["butterfly"]     | cfg.allowButterfly;
     cfg.noGoAngle         = doc["sail"]["nogo_deg"]      | cfg.noGoAngle;
     cfg.windLinesApparent = doc["sail"]["windlines_app"] | cfg.windLinesApparent;
+    cfg.windTraceMode     = doc["sail"]["wind_trace"]    | cfg.windTraceMode;
+    if (cfg.windTraceMode > 3) cfg.windTraceMode = 0;   // unknown value = off
     // Missing key keeps the current value, so the WebUI's sail editor - which
     // posts only the keys it knows - cannot reset the card orientation the user
     // last picked on the panel.
@@ -657,6 +681,8 @@ bool Config::fromJson(const String &json) {
     return true;
 }
 
-// Stub – implement with a proprietary N2K PGN (e.g. 130900)
+// Stub - an unrelated idea for pushing the whole config over the bus; never
+// built. The example PGN it used to name was 130900, which now reads like the
+// anchor sync and is not: that one lives in AnchorSync.h and has since moved.
 void Config::sendViaN2k()                                   {}
 bool Config::receiveViaN2k(const uint8_t *d, size_t len)   { return false; }

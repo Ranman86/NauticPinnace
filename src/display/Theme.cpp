@@ -1,6 +1,7 @@
 #include "Theme.h"
 #include "../config/Config.h"
 #include "fonts/latin_suppl.h"   // umlaut fallback fonts (see linkFallbackFonts)
+#include "fonts/ob_icons.h"      // OpenBridge icon trial: icon fonts (see linkFallbackFonts)
 #include <Arduino.h>
 #include <string.h>
 
@@ -57,11 +58,37 @@ static constexpr int FONT_PAIR_N = sizeof(s_fontPairs) / sizeof(s_fontPairs[0]);
 static lv_font_t s_fontWithFallback[FONT_PAIR_N];
 static bool      s_fontsLinked = false;
 
+// OpenBridge icon trial: the OpenBridge icons sit in the Private Use Area of their
+// own fonts, one per pixel size a font role uses on this board. Each chain becomes
+// Montserrat -> latin_suppl -> nearest icon font, so every label in every role can
+// show them. latin_suppl is const as well, hence a second set of RAM copies (one
+// lv_font_t each). Linked in BOTH icon sets: classic never asks for a PUA code
+// point, so it draws exactly as before; the glyphs simply sit unused.
+#define OB_FONT_ROW(px) { px, &ob_icons_##px },
+static const struct { int sz; const lv_font_t *font; } s_obFonts[] = { OB_ICON_SIZES(OB_FONT_ROW) };
+#undef OB_FONT_ROW
+static lv_font_t s_supplWithFallback[FONT_PAIR_N];
+
+// The largest icon font NOT larger than the Montserrat size in front of it. LVGL
+// draws a fallback glyph on the MAIN font's baseline and the label clips to the
+// main font's line box, so a larger icon font would lose its top rows (a role set
+// to 10 px behind a 12 px icon font: 1-2 px cut off). The generator gives every
+// board an icon font at its smallest Montserrat, so the fallback below never fires.
+static const lv_font_t *nearestObFont(int sz) {
+    const lv_font_t *best = nullptr;
+    int bestSz = 0;
+    for (const auto &f : s_obFonts)
+        if (f.sz <= sz && f.sz > bestSz) { bestSz = f.sz; best = f.font; }
+    return best ? best : s_obFonts[0].font;
+}
+
 static void linkFallbackFonts() {
     if (s_fontsLinked) return;
     for (int i = 0; i < FONT_PAIR_N; i++) {
-        s_fontWithFallback[i]          = *s_fontPairs[i].base;   // copy, then
-        s_fontWithFallback[i].fallback = s_fontPairs[i].suppl;   // add the link
+        s_supplWithFallback[i]          = *s_fontPairs[i].suppl;              // OpenBridge icon trial
+        s_supplWithFallback[i].fallback = nearestObFont(s_fontPairs[i].sz);
+        s_fontWithFallback[i]           = *s_fontPairs[i].base;   // copy, then
+        s_fontWithFallback[i].fallback  = &s_supplWithFallback[i]; // add the link
     }
     s_fontsLinked = true;
 }
@@ -148,4 +175,20 @@ void uiDisableLabelScroll(lv_obj_t *root) {
         lv_obj_clear_flag(root, LV_OBJ_FLAG_SCROLLABLE);
     const uint32_t n = lv_obj_get_child_cnt(root);
     for (uint32_t i = 0; i < n; i++) uiDisableLabelScroll(lv_obj_get_child(root, i));
+}
+
+const lv_font_t *uiFitValueFont(const lv_font_t *preferred, const char *sample,
+                                lv_coord_t availW) {
+    const lv_font_t *ladder[] = { FONT_HUGE, FONT_XXL, FONT_XL,
+                                  FONT_LARGE, FONT_MED, FONT_SMALL };
+    const int n = (int)(sizeof(ladder) / sizeof(ladder[0]));
+    int i = 0;
+    while (i < n - 1 && ladder[i] != preferred) i++;
+    if (ladder[i] != preferred) i = 0;          // not on the ladder: start big
+    const uint32_t len = (uint32_t)strlen(sample);
+    for (; i < n; i++) {
+        if (lv_txt_get_width(sample, len, ladder[i], 0, LV_TEXT_FLAG_NONE) <= availW)
+            return ladder[i];
+    }
+    return ladder[n - 1];                       // nothing fits: smallest, clipped
 }

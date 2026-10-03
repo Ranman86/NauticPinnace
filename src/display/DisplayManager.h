@@ -96,8 +96,28 @@ private:
     bool        _rebootPending = false;
     uint32_t    _rebootAtMs    = 0;
     void applyScreenConfig();          // rebuild _navOrder (call from LVGL-safe ctx)
-    void reloadThemeLive();            // re-theme + rebuild screens in place (no reboot)
+    void reloadThemeLive();
+    void refreshTrialChrome();      // OpenBridge icon trial: relabel persistent chrome            // re-theme + rebuild screens in place (no reboot)
     int  navPosOf(int id) const;       // position of screen id in _navOrder, or -1
+
+    // ---- Remember the screen across a restart -------------------------------
+    // A boat display should come back to what you were watching. Power on a
+    // boat is not a controlled shutdown - the breaker goes and that is that -
+    // so this cannot be written "on exit"; it has to be stored as it changes.
+    //
+    // NVS, not config.json: config.json means rewriting the whole file on the
+    // LittleFS partition, and doing that on every swipe would be both slow and
+    // hard on the flash. NVS is built for small values, wear-levels them, and
+    // survives a "pio run -t uploadfs" - which replaces the whole filesystem.
+    //
+    // Written with a delay, never straight from the swipe: paging through the
+    // carousel would otherwise put one flash write behind every screen. The
+    // write lands once the user has settled, and the flash hit does not land in
+    // the middle of a gesture.
+    void restoreLastScreen();          // pick the boot screen; call after applyScreenConfig()
+    void persistLastScreenDue();       // called every update(); writes when due
+    int         _lastScreenPending = -1;   // screen id waiting to be stored, -1 = nothing
+    uint32_t    _lastScreenAtMs    = 0;    // when it became pending
     lv_obj_t   *_mainScreen  = nullptr;
     lv_obj_t   *_demoBanner  = nullptr;
     uint8_t     _demoBlink   = 0;

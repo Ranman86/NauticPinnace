@@ -9,8 +9,24 @@
 #      – or – PlatformIO IDE → Environment toolbar → "Custom" → deploy
 
 from shutil import which
-import sys, os, gzip
+import sys, os, gzip, zlib
 Import("env")  # SCons environment injected by PlatformIO
+
+# ---- Windows console encoding -----------------------------------------------
+# esptool 5.x draws its progress bar with block characters (U+2588 "█",
+# U+2591 "░"). On Windows, Python encodes a redirected stdout as cp1252 by
+# default, which has no code point for either - so esptool dies mid-transfer
+# with
+#     UnicodeEncodeError: 'charmap' codec can't encode characters ...
+# and the upload looks like a hang: the chip is detected, the stub loads, the
+# flash size is read, and then nothing. Measured here: eight minutes with no
+# progress, against 49 seconds once this is set.
+#
+# It is set for the whole process, not just the build, because the failure is
+# in the UPLOAD step - and it is set unconditionally: a UTF-8 stdout is correct
+# everywhere, and on Linux and macOS it is already the default, so this changes
+# nothing there.
+os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 
 # ---- ccache -----------------------------------------------------------------
 def _find_ccache():
@@ -69,10 +85,11 @@ def _prefix_maps(env):
 # machinery, where an argument containing our space-in-path project dir gets
 # split and every file dies with "invalid argument ... to '-ffile-prefix-map'"
 # - the exact failure IDF's own -fmacro-prefix-map produced there before it
-# was disabled via CONFIG_COMPILER_HIDE_PATHS_MACROS=n. Path privacy matters
-# for the RELEASED 4" images; the 7B is not published yet, and once it is,
-# releasing requires either a space-free project path or list-form handling
-# in the hybrid pass.
+# was disabled via CONFIG_COMPILER_HIDE_PATHS_MACROS=n. The 7B and 5B images
+# are published too (web flasher, since v1.1.0), so for them the build paths
+# have to be kept out by other means: tools/gen_web_flasher.py runs their
+# release builds through neutral_build_env(), and tools/release_checks.py
+# refuses any image that still contains the account name.
 _is_hybrid = bool(env.GetProjectConfig().get(
     "env:" + env["PIOENV"], "custom_sdkconfig", ""))
 _maps = [] if _is_hybrid else _prefix_maps(env)
@@ -89,20 +106,33 @@ elif _is_hybrid:
 # signal, same page). gzip cuts it to roughly a quarter, which matters a lot on
 # a boat where the phone is three bulkheads away from the display.
 #
-# Regenerated on every pio run whenever index.html is newer, so the .gz can
-# never go stale against the source - that staleness is exactly why this is a
-# build step and not a checked-in artefact. Both files land in the LittleFS
-# image; the plain index.html stays as the fallback WebConfig serves when the
-# .gz is missing (and as what serveStatic hands out for direct file access).
+# Checked on every pio run, so the .gz can never go stale against the source -
+# that staleness is exactly why this is a build step and not a checked-in
+# artefact. Both files land in the LittleFS image; the plain index.html stays
+# as the fallback WebConfig serves when the .gz is missing (and as what
+# serveStatic hands out for direct file access). The device serves the .gz
+# first, so a stale one ships old text that no grep of index.html can see.
+#
+# Decided by CONTENT, not by modification time: a checkout, a stash pop or a
+# restored file can leave an outdated .gz with the newer timestamp, and the
+# old rule ("skip if the .gz is newer") then kept it. The .gz is rewritten
+# only when its decompressed bytes differ from index.html - which also leaves
+# it alone when a different zlib (newer Pythons ship zlib-ng) would compress
+# the same input to different bytes.
 def _gzip_webui():
     src = os.path.join(env.subst("$PROJECT_DIR"), "data", "index.html")
     dst = src + ".gz"
     if not os.path.isfile(src):
         return
-    if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(src):
-        return
     with open(src, "rb") as fh:
         raw = fh.read()
+    if os.path.isfile(dst):
+        try:
+            with gzip.open(dst, "rb") as fh:
+                if fh.read() == raw:
+                    return
+        except (OSError, EOFError, zlib.error):
+            pass            # unreadable or not gzip at all: regenerate it
     # mtime=0 keeps the output byte-identical for identical input, so the file
     # does not churn in git on every build.
     with gzip.GzipFile(dst, "wb", compresslevel=9, mtime=0) as fh:

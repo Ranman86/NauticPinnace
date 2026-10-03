@@ -180,6 +180,10 @@ void DemoDataSource::tick() {
         data.awa  = awa;
         data.aws  = aws;
         data.twd  = twd;
+        // Demo wind is wind: stamp it like N2kHandler::onWind does, or every
+        // freshness test downstream sees a sensor that died five seconds after
+        // boot. Nothing else in the tree reads lastWindUpdate.
+        data.lastWindUpdate = now;
         data.stw  = stw;
         data.sog  = sog;
         data.cog  = cog;

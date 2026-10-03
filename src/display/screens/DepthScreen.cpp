@@ -7,6 +7,7 @@
 //   This replaces the old 48 px + pixel-doubling trick (which looked blocky).
 
 #include "DepthScreen.h"
+#include "../Icons.h"   // OpenBridge icon trial
 #include "RenderYield.h"
 #include "../../PsramArena.h"
 #include "../../config/Config.h"
@@ -260,7 +261,7 @@ void DepthScreen::update()
         char ab[40];
         float ad = useImp ? appConfig.cfg.depthAlarm*FT_PER_M
                           : appConfig.cfg.depthAlarm;
-        snprintf(ab, sizeof(ab), LV_SYMBOL_WARNING " %s < %.1f%s",
+        snprintf(ab, sizeof(ab), "%s %s < %.1f%s", npSym(NP_ICON_WARNING),   // OpenBridge icon trial
                  T(STR_DEPTH_SHALLOW), ad, unit);
         lv_label_set_text(_lblAlarm, ab);
     } else {

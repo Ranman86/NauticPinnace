@@ -1,4 +1,5 @@
 #include "N2kHandler.h"
+#include "AnchorSyncNode.h"
 #include "DemoData.h"
 #include "MediaN2k.h"
 #include "../BoardConfig.h"
@@ -119,6 +120,13 @@ void N2kHandler::begin() {
     NMEA2000.EnableForward(false);
     NMEA2000.Open();
     Serial.printf("[n2k] mode: %s\n", listenOnly ? "LISTEN-ONLY (silent)" : "listen+node");
+    if (listenOnly)
+        Serial.println(
+            "[n2k] Hinweis: Listen-Only sendet KEINE Bestaetigungsbits. Haengen nur "
+            "zwei Geraete am Bus (etwa ein Simulator und dieses Geraet), kommt der "
+            "Sender nie durch und hier bleibt n2kRx=0 - ohne einen einzigen "
+            "Fehlerzaehler, was wie 'nichts angeschlossen' aussieht. Am Pruefstand "
+            "muss Listen-Only AUS sein; am echten Bus mit weiteren Knoten nicht.");
 
     if (!listenOnly) {
         // Media control (manufacturer 419): route TX through this node, mark the bus live.
@@ -128,15 +136,43 @@ void N2kHandler::begin() {
         Media::n2kActive = true;
         Media::requestStatus();   // ask any radio on the bus for its state + sources
     }
+    // Anchor sync with NauticPi. The PGN sits in 130816..131071, which this
+    // library treats as proprietary fast packet unconditionally - on TX via
+    // IsFastPacketPGN() and on RX via CheckKnownMessage(), which sets the
+    // fast-packet flag before returning "unknown". ForwardMode is 0, so
+    // unknown PGNs reach the message handler anyway.
+    //
+    // DO NOT "FIX" THIS WITH SetFastPacketMessages(). No registration is needed,
+    // and that particular call would do real damage: it occupies list slot 0,
+    // and the library's built-in table of standard fast packets is consulted
+    // ONLY while slot 0 is empty (NMEA2000.cpp:1633). Registering the anchor PGN
+    // that way would silently reduce AIS (129038/129039/129794/129809/129810)
+    // and GNSS (129029) to chopped-up 8-byte single frames. If a future change
+    // ever sets SetHandleOnlyKnownMessages(true), the right answer is
+    // ExtendFastPacketMessages() - which keeps only ONE list pointer, so a
+    // second call replaces the first.
+    AnchorSyncNode::begin(!listenOnly);
 }
 
 void N2kHandler::loop() {
+    // Demo mode switched on and off again at runtime on a device that booted on
+    // the bus: wipe the model once on the way out, as main.cpp's demoTask does.
+    // Without it the demo values stayed - a frozen demo track on the media
+    // screen with demo mode off - until the bus happened to overwrite each one,
+    // and the media fields never are without a radio.
+    static bool wasDemo = false;
     if (appConfig.cfg.demoMode) {
         // Demo mode: inject synthetic data instead of reading the CAN bus.
         // demoData.tick() is internally rate-limited to ~5 Hz.
         demoData.tick();
+        wasDemo = true;
     } else {
+        if (wasDemo) {
+            { auto lk = data.lock(); data.clearValues(); }
+            wasDemo = false;
+        }
         NMEA2000.ParseMessages();
+        AnchorSyncNode::loop();   // anchor heartbeat + pending broadcast
     }
 }
 
@@ -183,6 +219,7 @@ void N2kHandler::handleMsg(const tN2kMsg &msg) {
         case 128275: onDistanceLog(msg);  break;   // distance log (total + trip)
         case 130312: onTempExt(msg);      break;   // temperature (extended)
         case 130820: Media::handlePGN130820(msg); break;   // stereo status (mfg 419)
+        case ANCHOR_SYNC_PGN: AnchorSyncNode::onMessage(msg); break;   // anchor state
         default: break;
     }
 }

@@ -2,6 +2,7 @@
 // HomeOverlay.cpp - see HomeOverlay.h. Entire implementation is 7B-only.
 // ============================================================================
 #include "HomeOverlay.h"
+#include "Icons.h"   // OpenBridge icon trial
 
 HomeOverlay homeOverlay;
 
@@ -44,29 +45,30 @@ static const lv_font_t *tileLabelFont(const char *txt, lv_coord_t avail) {
     return FONT_TINY;   // nothing fits: the smallest is still the least bad
 }
 
-// One built-in LVGL symbol per screen - the closest match the FontAwesome
-// subset offers. Rendered big and accent-colored, like the line icons on the
-// NauticPi MFD start page.
+// One symbol per screen, rendered big and accent-coloured like the line icons
+// on the NauticPi MFD start page. OpenBridge icon trial: the glyph comes from
+// npSym(), so the classic set keeps the Font Awesome picks that used to sit here
+// (wind = refresh, anchor = download arrow, weather = eye ... - see Icons.cpp).
 static const char *screenSymbol(int id) {
     switch (id) {
-        case SCR_WIND:      return LV_SYMBOL_REFRESH;       // swirling air
-        case SCR_SPEED:     return LV_SYMBOL_CHARGE;
-        case SCR_DEPTH:     return LV_SYMBOL_DOWN;
-        case SCR_ENGINE:    return LV_SYMBOL_POWER;
-        case SCR_RUDDER:    return LV_SYMBOL_SHUFFLE;       // crossing courses
-        case SCR_AIS:       return LV_SYMBOL_GPS;
-        case SCR_WINDPLOT:  return LV_SYMBOL_LIST;          // history rows
-        case SCR_AUTOPILOT: return LV_SYMBOL_PLAY;          // engaged
-        case SCR_MEDIA:     return LV_SYMBOL_AUDIO;
-        case SCR_ATTITUDE:  return LV_SYMBOL_LOOP;          // heel/roll
-        case SCR_ANCHOR:    return LV_SYMBOL_DOWNLOAD;      // drop the hook
-        case SCR_TANK:      return LV_SYMBOL_TINT;
-        case SCR_BATTERY:   return LV_SYMBOL_BATTERY_FULL;
-        case SCR_WEATHER:   return LV_SYMBOL_EYE_OPEN;      // watching conditions
-        case SCR_CLOCK:     return LV_SYMBOL_BELL;          // alarm clock
-        case SCR_VMG:       return LV_SYMBOL_UP;            // performance
-        case SCR_ROUTE:     return LV_SYMBOL_NEXT;          // next waypoint
-        default:            return LV_SYMBOL_KEYBOARD;      // data grids
+        case SCR_WIND:      return npSym(NP_ICON_WIND);
+        case SCR_SPEED:     return npSym(NP_ICON_SPEED);
+        case SCR_DEPTH:     return npSym(NP_ICON_DEPTH);
+        case SCR_ENGINE:    return npSym(NP_ICON_ENGINE);
+        case SCR_RUDDER:    return npSym(NP_ICON_RUDDER);
+        case SCR_AIS:       return npSym(NP_ICON_AIS);
+        case SCR_WINDPLOT:  return npSym(NP_ICON_WINDPLOT);
+        case SCR_AUTOPILOT: return npSym(NP_ICON_AUTOPILOT);
+        case SCR_MEDIA:     return npSym(NP_ICON_MEDIA);
+        case SCR_ATTITUDE:  return npSym(NP_ICON_ATTITUDE);
+        case SCR_ANCHOR:    return npSym(NP_ICON_ANCHOR);
+        case SCR_TANK:      return npSym(NP_ICON_TANK);
+        case SCR_BATTERY:   return npSym(NP_ICON_BATTERY);
+        case SCR_WEATHER:   return npSym(NP_ICON_WEATHER);
+        case SCR_CLOCK:     return npSym(NP_ICON_CLOCK);
+        case SCR_VMG:       return npSym(NP_ICON_VMG);
+        case SCR_ROUTE:     return npSym(NP_ICON_ROUTE);
+        default:            return npSym(NP_ICON_GRID);       // data grids
     }
 }
 
@@ -147,7 +149,7 @@ void HomeOverlay::open() {
     lv_obj_set_style_border_width(closeBtn, 0, 0);
     lv_obj_set_style_shadow_width(closeBtn, 0, 0);
     lv_obj_t *cl = lv_label_create(closeBtn);
-    lv_label_set_text(cl, LV_SYMBOL_CLOSE);
+    lv_label_set_text(cl, npSym(NP_ICON_CLOSE));                // OpenBridge icon trial
     lv_obj_set_style_text_color(cl, CLR_TEXT, 0);
     lv_obj_set_style_text_font(cl, FONT_MED, 0);
     lv_obj_center(cl);
@@ -229,7 +231,7 @@ void HomeOverlay::open() {
         // rebuild was not perceptibly faster. Kept, and worth knowing before
         // anyone proposes pre-rendering them into images: it would buy nothing.
         lv_obj_t *ico = lv_label_create(tile);
-        lv_label_set_text(ico, isCfg ? LV_SYMBOL_SETTINGS : screenSymbol(id));
+        lv_label_set_text(ico, isCfg ? npSym(NP_ICON_SETTINGS) : screenSymbol(id));   // OpenBridge icon trial
         lv_obj_set_style_text_font(ico, (th >= 130) ? FONT_HUGE : FONT_XXL, 0);
         lv_obj_set_style_text_color(ico, CLR_ACCENT, 0);
         lv_obj_align(ico, LV_ALIGN_TOP_MID, 0, th / 6);

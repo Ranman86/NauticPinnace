@@ -14,6 +14,8 @@
     X(AIS_UNKNOWN,          "Unbekannt",            "Unknown")              \
     /* ── AnchorScreen ────────────────────────────────────────────────────── */ \
     X(ANCH_SET_BTN,         "Anker setzen",         "Set anchor")           \
+    X(ANCH_LIFT_BTN,        "Anker lichten",        "Lift anchor")          \
+    X(ANCH_SINCE,           "SEIT",                 "SINCE")                \
     X(ANCH_ALARM_ON,        "Alarm AN",             "Alarm ON")             \
     X(ANCH_ALARM_OFF,       "Alarm AUS",            "Alarm OFF")            \
     X(ANCH_DISTANCE,        "ABSTAND",              "DISTANCE")             \

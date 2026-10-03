@@ -97,8 +97,8 @@ def emit_c(ttf, size, chars, symbol, generator):
         L.append(" * The OFL treats a conversion to another format as a Modified Version,")
         L.append(" * so this file is itself Font Software and stays under the OFL. It may")
         L.append(" * be redistributed only together with this notice and the licence text")
-        L.append(" * (see THIRD-PARTY-NOTICES.md), and not under the reserved name")
-        L.append(" * \"Montserrat\".")
+        L.append(" * (LICENSES/OFL-1.1-Montserrat.txt). Montserrat declares no Reserved")
+        L.append(" * Font Name; this font carries its own name anyway.")
         L.append(" * ---------------------------------------------------------------------")
     else:
         L.append(" * NOTE: check the source font's licence before redistributing this file;")

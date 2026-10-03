@@ -188,3 +188,12 @@ static inline void styleLabel(lv_obj_t *lbl, const lv_font_t *font, lv_color_t c
 // drag meant for the container it sits in.
 void uiDisableLabelScroll(lv_obj_t *root);
 
+// Largest font on the value ladder (HUGE > XXL > XL > LARGE > MED > SMALL),
+// starting at `preferred`, at which `sample` still fits into availW pixels.
+// The grid and sidebar cells pick their value font by cell height on the
+// assumption that a value is ~6 digits wide; a coordinate written in degrees
+// and minutes is 14 characters and would run straight through the card edge.
+// Measured once when the cell is built, never per frame.
+const lv_font_t *uiFitValueFont(const lv_font_t *preferred, const char *sample,
+                                lv_coord_t availW);
+

@@ -47,9 +47,13 @@ enclosure/
 #     test fixtures (secure_boot.key, ca_key.pem, client.key, priv_key.pem in
 #     six qemu_test folders), harmless in themselves, but GitHub Push
 #     Protection can refuse the push over them, mid-release.
-#   * 54 third-party LICENSE files would land under this repository's name
-#     while THIRD-PARTY-NOTICES.md lists none of them — correctly so, since
-#     none of it is linked into any firmware here.
+#   * 54 third-party LICENSE files would land under this repository's name.
+#     Three of these components ARE linked into the 7B / 5B firmware -
+#     joltwallet littlefs, network_provisioning and cJSON, through the
+#     prebuilt libraries of the Arduino 3.3.11 core - and are credited in
+#     THIRD-PARTY-NOTICES.md section 2.1, with their texts in LICENSES/. The
+#     rest is not linked. The notices travel with the binaries; the source
+#     tree does not need to.
 managed_components/
 
 # arduino-lib-builder scaffolding, same story.
@@ -62,3 +66,10 @@ managed_components/
 # building from the project root drops a fresh 900 KB bitmap here every run.
 # Generated, never committed in v1.0.0, and nothing reads it back.
 boot_shot.bmp
+
+# OpenBridge icon trial: the Figma export tools/gen_icons.py reads lives
+# outside the repository on purpose - it contains the OpenBridge logos, which
+# this project neither uses nor redistributes (see ICONS-TRIAL.md). Should a
+# copy ever land here, it must not be committed.
+*figma-export*.json
+Provenance/

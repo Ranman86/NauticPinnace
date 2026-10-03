@@ -43,6 +43,14 @@ try { if ([Console]::IsInputRedirected) { $IsInteractive = $false } } catch { }
 # Which boards have already been through Test-Prerequisites in this run.
 $script:PreflightDone = @{}
 
+# esptool 5.x draws its progress bar with the block characters U+2588 and
+# U+2591, which cp1252 - the default encoding for a redirected stdout on
+# Windows - cannot represent. Without this the upload dies mid-transfer with a
+# UnicodeEncodeError and looks exactly like a hang: chip detected, stub loaded,
+# then silence. Set here as well as in extra_script.py, because the bring-up
+# environments and the simulator do not load that script.
+if (-not $env:PYTHONIOENCODING) { $env:PYTHONIOENCODING = "utf-8" }
+
 # ── THE BOARDS ───────────────────────────────────────────────────────────────
 # Everything the tool needs to know per target. Usb is how the board shows up
 # on USB (see Get-SerialPortInfo); Sim is the simulator env that matches this

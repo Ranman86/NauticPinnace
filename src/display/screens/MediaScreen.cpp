@@ -1,4 +1,5 @@
 #include "MediaScreen.h"
+#include "../Icons.h"   // OpenBridge icon trial
 #include "../Theme.h"
 #include "../../config/Config.h"  // n2kListenOnly
 #include "../../i18n/I18n.h"
@@ -54,7 +55,8 @@ static void mkVolRow(lv_obj_t *parent, const char *name, int y, int zone,
     lv_obj_set_style_text_font(lbl, FONT_MED, 0);
     lv_obj_set_style_text_color(lbl, master ? CLR_TEXT : CLR_TEXT_DIM, 0);
 
-    lv_obj_t *mb = mkBtn(parent, LV_SYMBOL_VOLUME_MAX, UI_S(84), y - UI_S(10), UI_S(42), UI_S(40), muteCb, false, FONT_MED, ud);
+    // OpenBridge icon trial: volume symbol via npSym().
+    lv_obj_t *mb = mkBtn(parent, npSym(NP_ICON_VOLUME), UI_S(84), y - UI_S(10), UI_S(42), UI_S(40), muteCb, false, FONT_MED, ud);
     *muteIconOut = lv_obj_get_child(mb, 0);
 
     // The knob is 24 px wide (12 px track + 6 px pad each side) and is centred on
@@ -140,10 +142,11 @@ void MediaScreen::create(lv_obj_t *parent) {
     lv_label_set_text(_metaLabel, "");
 
     // ---- transport ----
-    mkBtn(container, LV_SYMBOL_PREV, UI_S(140), UI_S(134), UI_S(60), UI_S(48), cbPrev, false, FONT_LARGE);
-    lv_obj_t *play = mkBtn(container, LV_SYMBOL_PLAY, UI_S(210), UI_S(130), UI_S(68), UI_S(56), cbPlay, true, FONT_LARGE);
+    // OpenBridge icon trial: transport and volume symbols via npSym().
+    mkBtn(container, npSym(NP_ICON_MEDIA_PREV), UI_S(140), UI_S(134), UI_S(60), UI_S(48), cbPrev, false, FONT_LARGE);
+    lv_obj_t *play = mkBtn(container, npSym(NP_ICON_MEDIA_PLAY), UI_S(210), UI_S(130), UI_S(68), UI_S(56), cbPlay, true, FONT_LARGE);
     _playIcon = lv_obj_get_child(play, 0);
-    mkBtn(container, LV_SYMBOL_NEXT, UI_S(288), UI_S(134), UI_S(60), UI_S(48), cbNext, false, FONT_LARGE);
+    mkBtn(container, npSym(NP_ICON_MEDIA_NEXT), UI_S(288), UI_S(134), UI_S(60), UI_S(48), cbNext, false, FONT_LARGE);
 
     _timeLabel = lv_label_create(container);
     lv_obj_set_width(_timeLabel, UI_S(460));
@@ -252,7 +255,7 @@ void MediaScreen::syncFromData() {
     lv_label_set_text(_timeLabel, tbuf);
 
     if (play != _lastPlay && _playIcon) {
-        lv_label_set_text(_playIcon, (play == 1) ? LV_SYMBOL_PAUSE : LV_SYMBOL_PLAY);
+        lv_label_set_text(_playIcon, npSym((play == 1) ? NP_ICON_MEDIA_PAUSE : NP_ICON_MEDIA_PLAY));   // OpenBridge icon trial
         _lastPlay = play;
     }
 
@@ -260,14 +263,14 @@ void MediaScreen::syncFromData() {
     bool any = (zm[0] || zm[1] || zm[2]);
     for (int i = 0; i < 3; i++) {
         if (zm[i] != _lastZoneMute[i] && _zoneMuteIcon[i]) {
-            lv_label_set_text(_zoneMuteIcon[i], zm[i] ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+            lv_label_set_text(_zoneMuteIcon[i], npSym(zm[i] ? NP_ICON_MUTE : NP_ICON_VOLUME));   // OpenBridge icon trial
             lv_obj_set_style_text_color(_zoneMuteIcon[i], zm[i] ? CLR_RED : CLR_TEXT, 0);
             _lastZoneMute[i] = zm[i];
         }
     }
     int mAll = any ? 1 : 0;
     if (mAll != _lastMasterMute && _masterMuteIcon) {
-        lv_label_set_text(_masterMuteIcon, mAll ? LV_SYMBOL_MUTE : LV_SYMBOL_VOLUME_MAX);
+        lv_label_set_text(_masterMuteIcon, npSym(mAll ? NP_ICON_MUTE : NP_ICON_VOLUME));   // OpenBridge icon trial
         lv_obj_set_style_text_color(_masterMuteIcon, mAll ? CLR_RED : CLR_TEXT, 0);
         _lastMasterMute = mAll;
     }

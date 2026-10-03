@@ -61,4 +61,10 @@
     X(FLD_RAM,              "RAM frei",                 "RAM free")               \
     X(FLD_LAT,              "Breite",                   "Latitude")               \
     X(FLD_LON,              "Länge",                    "Longitude")              \
+    /* Hemisphere letters behind a coordinate (CoordFormat.h). German charts   */ \
+    /* write east as "O" (Ost); the other three are the same in both.          */ \
+    X(HEMI_N,               "N",                        "N")                      \
+    X(HEMI_S,               "S",                        "S")                      \
+    X(HEMI_E,               "O",                        "E")                      \
+    X(HEMI_W,               "W",                        "W")                      \
     X(FLD_APTARGET,         "AP Ziel",                  "AP target")

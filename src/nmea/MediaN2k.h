@@ -7,17 +7,21 @@ class tN2kMsg;   // fwd decl (defined in <N2kMsg.h>)
 // Media – NMEA 2000 media control for a marine stereo that speaks the
 // proprietary protocol of NMEA manufacturer code 419.
 //
-// Control functions update the DataModel optimistically (so the UI reacts
-// immediately) and, when the CAN bus is live (n2kActive), transmit the matching
-// proprietary command (PGN 126720, manufacturer 419). Incoming status (PGN 130820)
-// is parsed into the DataModel.
+// No brand names, here or anywhere in the project: the module and the screen are
+// named for what they do, and the protocol is identified the way the bus
+// identifies it - by manufacturer code 419 and its two PGNs. That is also what a
+// maintainer searches for in canboat's PGN catalogue.
 //
-// NOTE: the N2K task is currently DISABLED (see main.cpp), so n2kActive stays
-// false and nothing is transmitted — the screen runs on demo data. Enable the
-// N2K task + set Media::n2kActive=true to go live. The command opcodes
-// are best-effort per the canboat/SignalK reverse-engineering and should be
-// verified against the actual radio (they are isolated as named constants in
-// MediaN2k.cpp for easy tweaking).
+// Control functions update the DataModel optimistically (so the UI reacts
+// immediately) - but only while there is something to control: the running demo
+// stereo, or a radio heard on the bus. When the CAN bus is live (n2kActive, not
+// in listen-only) and the demo is not running, they also transmit the matching
+// proprietary command (PGN 126720). With neither, a control changes nothing.
+// Incoming status (PGN 130820, manufacturer 419) is parsed into the DataModel.
+//
+// The command opcodes are best-effort per the canboat/SignalK reverse-engineering
+// and should be verified against the actual radio (they are isolated as named
+// constants in MediaN2k.cpp for easy tweaking).
 // ============================================================
 namespace Media {
     extern bool    n2kActive;       // true once the CAN bus + N2K task are running

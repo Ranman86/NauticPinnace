@@ -2,6 +2,7 @@
 // SideBar.cpp - see SideBar.h. Entire implementation is 7B-only.
 // ============================================================================
 #include "SideBar.h"
+#include "Icons.h"   // OpenBridge icon trial
 
 SideBar sideBar;   // single global, like dispMgr
 
@@ -12,6 +13,7 @@ SideBar sideBar;   // single global, like dispMgr
 #include "../config/Config.h"
 #include "../nmea/DataModel.h"     // dmFieldByKey()
 #include "../i18n/I18n.h"          // i18nFieldName()
+#include "CoordFormat.h"           // fmtCoord(), isCoordKey()
 #include <math.h>
 #include <string.h>
 #include <stdio.h>
@@ -156,19 +158,20 @@ void SideBar::buildRail() {
         lv_obj_align(logoWave, LV_ALIGN_LEFT_MID, x, 0);
         x += logoW + gap;
 
-        _btnHome = makeRailBtn(_rail, LV_SYMBOL_HOME,     cbHome,   btnH, wNav);
+        // OpenBridge icon trial: rail symbols come from npSym(), here and below.
+        _btnHome = makeRailBtn(_rail, npSym(NP_ICON_HOME),     cbHome,   btnH, wNav);
         lv_obj_align(_btnHome, LV_ALIGN_LEFT_MID, x, 0);
         x += wNav + gap;
 
-        _btnPrev = makeRailBtn(_rail, LV_SYMBOL_LEFT,     cbPrev7,  btnH, wBig);
+        _btnPrev = makeRailBtn(_rail, npSym(NP_ICON_PREV),     cbPrev7,  btnH, wBig);
         lv_obj_align(_btnPrev, LV_ALIGN_LEFT_MID, x, 0);
         x += wBig + gap;
 
-        _btnNext = makeRailBtn(_rail, LV_SYMBOL_RIGHT,    cbNext7,  btnH, wBig);
+        _btnNext = makeRailBtn(_rail, npSym(NP_ICON_NEXT),     cbNext7,  btnH, wBig);
         lv_obj_align(_btnNext, LV_ALIGN_LEFT_MID, x, 0);
         x += wBig + gap;
 
-        _btnCfg  = makeRailBtn(_rail, LV_SYMBOL_SETTINGS, cbConfig, btnH, wNav);
+        _btnCfg  = makeRailBtn(_rail, npSym(NP_ICON_SETTINGS), cbConfig, btnH, wNav);
         lv_obj_align(_btnCfg, LV_ALIGN_LEFT_MID, x, 0);
         return;
     }
@@ -181,16 +184,17 @@ void SideBar::buildRail() {
     lv_obj_align(logoPi,   LV_ALIGN_TOP_MID, 0, 2);
     lv_obj_align(logoWave, LV_ALIGN_TOP_MID, 0, 2);
 
-    _btnHome = makeRailBtn(_rail, LV_SYMBOL_HOME,     cbHome);
+    // OpenBridge icon trial: rail symbols come from npSym().
+    _btnHome = makeRailBtn(_rail, npSym(NP_ICON_HOME),     cbHome);
     lv_obj_align(_btnHome, LV_ALIGN_TOP_MID, 0, 45);
 
-    _btnPrev = makeRailBtn(_rail, LV_SYMBOL_LEFT,     cbPrev7, 120);
+    _btnPrev = makeRailBtn(_rail, npSym(NP_ICON_PREV),     cbPrev7, 120);
     lv_obj_align(_btnPrev, LV_ALIGN_CENTER, 0, -66);
 
-    _btnNext = makeRailBtn(_rail, LV_SYMBOL_RIGHT,    cbNext7, 120);
+    _btnNext = makeRailBtn(_rail, npSym(NP_ICON_NEXT),     cbNext7, 120);
     lv_obj_align(_btnNext, LV_ALIGN_CENTER, 0, 66);
 
-    _btnCfg  = makeRailBtn(_rail, LV_SYMBOL_SETTINGS, cbConfig);
+    _btnCfg  = makeRailBtn(_rail, npSym(NP_ICON_SETTINGS), cbConfig);
     lv_obj_align(_btnCfg, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
 
@@ -233,7 +237,17 @@ void SideBar::makeCell(int i, int x, int y, int w, int h) {
 
     c.lblValue = lv_label_create(c.container);
     lv_label_set_text(c.lblValue, "--");
-    styleLabel(c.lblValue, cellValueFont(w, h), CLR_TEXT);
+    const lv_font_t *vFont = cellValueFont(w, h);
+    // Coordinates in degrees/minutes are 14 characters, not 6: step the font
+    // down until the widest string the notation can produce fits the card.
+    // Same rule as GridScreen. See CoordFormat.h.
+    if (isCoordKey(cfg.pgn) && appConfig.cfg.coordFormat != COORD_DECIMAL) {
+        char sample[24];
+        coordWidestSample(sample, sizeof(sample), appConfig.cfg.coordFormat,
+                          cfg.decimals);
+        vFont = uiFitValueFont(vFont, sample, coordFitWidth(w, uiSz.cardPad));
+    }
+    styleLabel(c.lblValue, vFont, CLR_TEXT);
     lv_obj_align(c.lblValue, LV_ALIGN_CENTER, 0, 4);
 
     c.lblUnit = lv_label_create(c.container);
@@ -337,7 +351,10 @@ void SideBar::updateValues() {
         // this must NOT run while already holding data.lock()).
         const float v = dmFieldByKey(cfg.pgn);
         char buf[24];
-        if (isnan(v)) snprintf(buf, sizeof(buf), "--");
+        if (appConfig.cfg.coordFormat != COORD_DECIMAL && isCoordKey(cfg.pgn))
+            fmtCoord(buf, sizeof(buf), v, strcmp(cfg.pgn, "lat") == 0,
+                     appConfig.cfg.coordFormat, cfg.decimals);
+        else if (isnan(v)) snprintf(buf, sizeof(buf), "--");
         else {
             char fmt[12];
             snprintf(fmt, sizeof(fmt), "%%.%df", cfg.decimals);

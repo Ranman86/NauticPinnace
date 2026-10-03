@@ -122,8 +122,11 @@ private:
 
     // ── Boat sub-elements ─────────────────────────────────────
     void drawKeel();
-    void drawRudder(float rudderDeg, float ss);
-void drawSpinnaker(const SailState &sail);
+    // Ruderblatt am Heck. Die Gradzahl daneben ist entfallen - sie stand
+    // doppelt im Bild, der Bogen unten (drawRudderArc) zeigt den Wert.
+    // Geblieben ist das Blatt als schnell erfassbare Richtungsanzeige.
+    void drawRudder(float rudderDeg);
+    void drawSpinnaker(const SailState &sail);
     void drawCodeZero(const SailState &sail);
     void drawSheetLines(const SailState &sail,
                         float clewX, float clewY);
@@ -136,6 +139,55 @@ void drawSpinnaker(const SailState &sail);
     // canvas. See the comment on the definition for why this does not go
     // through lv_canvas_draw_line.
     void spanH(int y, int x0, int x1, lv_color_t col, lv_opa_t opa);
+
+    // Gegenstueck zu spanH() fuer 1 px breite Linien, direkt in _cbuf.
+    // Gemessen auf dem 7B: die 13 Stroemungslinien kosteten ueber cline()
+    // (= lv_canvas_draw_line) 50,9 ms von 77 ms der BOAT-Phase, also rund 4 ms
+    // PRO LINIE - derselbe malloc/free-plus-invalidate-Zoll, den der Kommentar
+    // bei spanH() fuer Flaechen beschreibt.
+    // Kantenglaettung nach Xiaolin Wu: die Linien liegen bei 40 % Deckkraft
+    // hinter dem Boot, eine harte Treppe waere dort sofort sichtbar.
+    // w = Strichbreite. Bis 1,5 px laeuft die Wu-Variante (ein Pixelpaar je
+    // Schritt), darueber ein Streifen senkrecht zur Richtung mit weichen
+    // Raendern - so bleiben auch 2-3 px breite Rumpf- und Riggleinien glatt.
+    void linePx(float x0, float y0, float x1, float y1,
+                lv_color_t col, lv_opa_t opa, float w = 1.f);
+
+    // ---- Wind history traces ------------------------------------------------
+    // The last ~60 s of apparent and true wind as two thin curves: angle around
+    // the rose, wind speed as radius. Fed from DataModel::windTrace, which is
+    // sampled on a fixed clock and stores BOAT-RELATIVE angles - see the long
+    // note there for why a compass-referenced history cannot be used here.
+    //
+    // Drawn between the boat and the compass rose. The outer limit is NOT
+    // R_INNER: the rose's N/O/S/W letters already occupy the band from about
+    // R_INNER-29*UI_SF outwards, so a curve reaching R_INNER would run straight
+    // through them.
+    // Out to the inner rim, so the newest end sits directly under the arrow
+    // it belongs to. It crosses the compass-rose letters on the way; that is
+    // the accepted price for the curve visibly ARRIVING at its pointer.
+    static constexpr float R_TRACE_MAX = R_INNER * 0.99f;
+    // Half-width of the strip across the pointer axis. Deliberately small:
+    // the trace is context under the live pointers, not a second gauge.
+    static constexpr float W_TRACE     = R_INNER * 0.30f;
+    void drawWindTrace(float nTwa, float nAwa);
+
+    // Kantengeglaetteter Kreisring der Breite w um den Radius r.
+    // Ersetzt ein volles lv_canvas_draw_arc(0..360): das wertet eine
+    // LVGL-Radiusmaske ueber die GANZE 600x600-Bounding-Box aus, fuer ein Band
+    // von zwei bis drei Pixeln. Am Geraet gemessen kosteten die beiden
+    // Randkreise zusammen 25,2 ms - die Haelfte der Overlay-Phase.
+    // Hier wird nur das Band selbst beruehrt (rund 8500 Pixel je Ring), die
+    // Deckkraft an den Kanten aus dem Abstand zum Sollradius gebildet.
+    void ringAA(float cx, float cy, float r, float w,
+                lv_color_t col, lv_opa_t opa);
+
+    // Gefuellte, kantengeglaettete Scheibe. Fuer kleine Punkte (Drehpunkte,
+    // Marker) - dort faellt eine Treppe am staerksten auf, weil der Umriss
+    // fast nur aus Kante besteht. NICHT ueber ringAA() nachbauen: dessen
+    // Deckung kommt aus dem Abstand zum Sollradius, in der Mitte einer
+    // Scheibe waere sie deshalb halb durchsichtig.
+    void discAA(float cx, float cy, float r, lv_color_t col, lv_opa_t opa);
 
     // Filled ring between rInner and rOuter, scanline by scanline through
     // spanH(). Replaces a full-circle lv_canvas_draw_arc(), which evaluates an

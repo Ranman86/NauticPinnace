@@ -1,6 +1,10 @@
 #pragma once
+
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+
+// OpenBridge icon trial: values of AppConfig::iconSet.
+enum : uint8_t { ICON_SET_CLASSIC = 0, ICON_SET_OPENBRIDGE = 1 };
 
 // ============================================================
 // Config – persistent JSON configuration stored in LittleFS.
@@ -143,6 +147,11 @@ struct AppConfig {
     // on first run (LanguageOverlay), before the licences are shown.
     char     lang[4]          = "en";
 
+    // Icon set - OpenBridge icon trial (see Icons.h, ICONS-TRIAL.md). ui.icons in
+    // config.json: "classic" (default, the Font Awesome glyphs as before) or
+    // "openbridge". Classic draws exactly what the firmware drew before.
+    uint8_t  iconSet          = 0;      // ICON_SET_CLASSIC / ICON_SET_OPENBRIDGE
+
     // Boot screen: title line and the optional boat name underneath it.
     // Both are shown by BootScreen; empty title falls back to the project name.
     char     bootTitle[24]    = "NauticPinnace";
@@ -171,6 +180,22 @@ struct AppConfig {
     // control) — for other people's boats, charter, or workshop appointments.
     // Takes effect on the next start because the mode is set in NMEA2000.Open().
     bool     n2kListenOnly    = false;
+    // Fetch the BSH tide forecast over the internet (gdi.bsh.de). Off means no
+    // HTTPS request is made at all, and the tide display falls back to PGN
+    // 130320 from the bus, or to the built-in astronomical estimate when no
+    // tide station is on the bus either.
+    //
+    // Worth switching off for: a boat outside German waters, where the nearest
+    // BSH gauge is meaningless; a metered or absent internet connection; or an
+    // installation that already has a tide station on the bus and does not want
+    // a second opinion. On the 1024x600 boards it also frees the TLS handshake's
+    // transient ~40 KB, which is the tightest moment in this firmware's memory
+    // budget.
+    //
+    // This does NOT switch off the clock: the same background task also runs
+    // SNTP, which is the only time source a device without GPS on the bus has.
+    // See BshTide.cpp - only the fetch is gated, never the sync.
+    bool     tideBshFetch     = true;
     // Hotspot password: randomly generated ONCE per device (see Entropy.h) —
     // replaces the old "MdPw"+MAC scheme that was derivable from the MAC.
     // Empty = regenerated on the next start (this way an existing device also
@@ -211,6 +236,14 @@ struct AppConfig {
     // the middle, data sidebar at the bottom - all three keep their exact
     // sizes (88 / 600 / 336 add up to 1024 either way).
     uint16_t displayRotation = 0;
+
+    // How latitude/longitude cells in the data grids and the sidebar are
+    // written: 0 = decimal degrees (48.12345), 1 = degrees + decimal minutes
+    // (48°07.407'N - what chart plotters show), 2 = degrees, minutes, seconds
+    // (48°07'24.4"N). A cell's "decimals" then counts the digits of the LAST
+    // component. Default 0 keeps every existing installation as it was.
+    // GitHub issue #3.
+    uint8_t  coordFormat     = 0;
 
     // AIS
     int  aisRange   = 5;    // nm, display range
@@ -256,6 +289,16 @@ struct AppConfig {
     float  anchorRadius  = 40.0f;   // drift-alarm radius [m]
     bool   anchorAlarmOn = false;   // drag-alarm armed
     bool   anchorNorthUp = true;    // true = North-up view, false = heading-up
+    // Anchor state shared with NauticPi over the bus (see AnchorSync.h for the
+    // PGN - it is written down there and nowhere else).
+    // setUtc stands still at the moment the anchor fell and is what the user
+    // is shown; revUtc moves on EVERY change, arming and radius included, and
+    // is what decides who wins when both devices changed something. The two
+    // must never be merged. Persisted so a reboot does not cost this device
+    // its authority against the other one.
+    uint32_t anchorSetUtc  = 0;     // Unix UTC when the anchor fell; 0 = none
+    uint32_t anchorRevUtc  = 0;     // Unix UTC of the last change
+    uint8_t  anchorRevNode = 0;     // who made it (1 = NauticPi, 2 = this)
 
     // Tank / battery user config (names, capacity, tank calibration). Matched to
     // bus instances. Sized to DataModel MAX_TANKS (6) / MAX_BATT (4).
@@ -276,6 +319,15 @@ struct AppConfig {
     bool  allowButterfly    = false;   // wing-on-wing: jib poled out opposite the main on a run
     int16_t noGoAngle       = 30;      // No-Go half-angle (deg): |TWA| < this = in irons (configurable)
     bool  windLinesApparent = false;   // wind-flow lines: false=true wind (TWA), true=apparent (AWA)
+    // Wind history curves inside the instrument: 0 = off, 1 = true wind only,
+    // 2 = true and apparent. The middle setting exists because the inner
+    // circle is already busy - boat, sails, compass rose, flow lines - and one
+    // curve may be all it can carry legibly. Off by default: an existing
+    // installation should not gain a new element in its instrument unasked.
+    // 0 = off, 1 = true wind only, 2 = both, 3 = apparent only.
+    // 2 keeps its old meaning on purpose so configs written before the
+    // apparent-only stage existed still mean what they meant.
+    uint8_t windTraceMode = 0;
     // Inner compass card of the wind / attitude screen. false = course-up (the
     // card turns so the current heading is at the top, the behaviour this
     // screen always had), true = north-up (N fixed at the top, the heading

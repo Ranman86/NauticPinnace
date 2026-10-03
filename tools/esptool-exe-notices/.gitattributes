@@ -1,0 +1,5 @@
+# The licence texts here are byte-identical copies of the upstream files and
+# NOTICE.md records their SHA-256. Keep git from converting their line endings
+# on checkout (the repo-wide rule is "text=auto"), or the hashes stop matching.
+*.txt -text
+*.rst -text

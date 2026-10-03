@@ -1,4 +1,5 @@
 #include "AnchorScreen.h"
+#include "../../nmea/AnchorSyncNode.h"
 #include "RenderYield.h"
 #include "../Theme.h"
 #include "../UiConfig.h"
@@ -121,7 +122,9 @@ void AnchorScreen::create(lv_obj_t *parent) {
         out = b;
         return l;
     };
+    _btnSetLbl =
     mkBtn(_btnSet,   T(STR_ANCH_SET_BTN), UI_S(64), UI_S(150), CLR_ACCENT, CLR_ON_ACCENT, cbSet);
+    refreshSetBtn();
     // Was U+2212 (−, "minus sign") which the font does not contain, so the button
     // showed an empty box. LV_SYMBOL_* glyphs ARE in the font; use the matching pair.
     mkBtn(_btnMinus, LV_SYMBOL_MINUS, UI_S(222), UI_S(46), CLR_SURFACE, CLR_TEXT, cbMinus);
@@ -133,12 +136,29 @@ void AnchorScreen::create(lv_obj_t *parent) {
 void AnchorScreen::resetForRebuild() {
     _canvas = nullptr;
     _btnSet = _btnMinus = _btnPlus = _btnAlarm = _btnAlarmLbl = nullptr;
+    _btnSetLbl = nullptr;
     // _cbuf and _trkN/_trkE intentionally kept (PsramArena buffers reused;
     // the arena never frees, and keeping the track preserves the swing history
     // across a live theme rebuild).
 }
 
+// Re-label the buttons when the state moved under them. Cheap when nothing
+// changed, which is the normal case.
+void AnchorScreen::syncButtons() {
+    if (appConfig.cfg.anchorSet != _btnSetShown) {
+        _btnSetShown = appConfig.cfg.anchorSet;
+        refreshSetBtn();
+    }
+    if (appConfig.cfg.anchorAlarmOn != _btnAlarmShown) {
+        _btnAlarmShown = appConfig.cfg.anchorAlarmOn;
+        refreshAlarmBtn();
+    }
+}
+
 void AnchorScreen::onShow() {
+    _btnSetShown   = !appConfig.cfg.anchorSet;       // force both to redraw
+    _btnAlarmShown = !appConfig.cfg.anchorAlarmOn;
+    syncButtons();
     refreshAlarmBtn();
 }
 
@@ -152,6 +172,7 @@ void AnchorScreen::refreshAlarmBtn() {
 
 // ── Per-frame update ─────────────────────────────────────────────────────────
 void AnchorScreen::update() {
+    syncButtons();   // the bus may have set or lifted the anchor since the last frame
     // _trkN/_trkE joined this guard when they moved into the PSRAM arena: both
     // the sampler below and the breadcrumb loop in draw() index them without a
     // further check, so an exhausted arena must stop us here rather than
@@ -301,6 +322,24 @@ void AnchorScreen::draw() {
     if (_maxDist <= 0.f) snprintf(buf, sizeof(buf), "--");
     else                 snprintf(buf, sizeof(buf), "%d m", (int)(_maxDist + 0.5f));
     ctext(_canvas, UI_S(8), CS - UI_S(28), UI_S(120), FONT_SMALL, CLR_TEXT, LV_TEXT_ALIGN_LEFT, buf);
+    // Bottom-right: when the anchor fell (setUtc, shown in local time). NOT
+    // revUtc - that moves on every change and would show the time of the last
+    // radius nudge instead of the moment the anchor went down. Blank when the
+    // device had no clock at the time: a missing time beats an invented one.
+    ctext(_canvas, CS - UI_S(128), CS - UI_S(44), UI_S(120), FONT_SMALL, CLR_TEXT_DIM,
+          LV_TEXT_ALIGN_RIGHT, T(STR_ANCH_SINCE));
+    if (set && appConfig.cfg.anchorSetUtc) {
+        int16_t offMin;
+        { auto lk = data.lock(); offMin = data.localOffsetMin; }
+        const uint32_t loc = appConfig.cfg.anchorSetUtc + (int32_t)offMin * 60;
+        const uint32_t sod = loc % 86400UL;
+        snprintf(buf, sizeof(buf), "%02u:%02u",
+                 (unsigned)(sod / 3600), (unsigned)((sod % 3600) / 60));
+    } else {
+        snprintf(buf, sizeof(buf), "--");
+    }
+    ctext(_canvas, CS - UI_S(128), CS - UI_S(28), UI_S(120), FONT_SMALL, CLR_TEXT,
+          LV_TEXT_ALIGN_RIGHT, buf);
 
     // Centre status text when not armed / no fix / dragging.
     const char *msg = nullptr; lv_color_t mc = CLR_TEXT_DIM;
@@ -315,8 +354,32 @@ void AnchorScreen::draw() {
 }
 
 // ── Button callbacks ─────────────────────────────────────────────────────────
+// Label and colour for the dual-purpose set/lift button.
+void AnchorScreen::refreshSetBtn() {
+    if (!_btnSet || !_btnSetLbl) return;
+    const bool down = appConfig.cfg.anchorSet;
+    lv_label_set_text(_btnSetLbl, T(down ? STR_ANCH_LIFT_BTN : STR_ANCH_SET_BTN));
+    lv_obj_set_style_bg_color(_btnSet, down ? CLR_SURFACE : CLR_ACCENT, 0);
+    lv_obj_set_style_text_color(_btnSetLbl, down ? CLR_TEXT : CLR_ON_ACCENT, 0);
+}
+
 void AnchorScreen::cbSet(lv_event_t *e) {
     AnchorScreen *self = (AnchorScreen *)lv_event_get_user_data(e);
+
+    if (appConfig.cfg.anchorSet) {              // anchor is down → lift it
+        appConfig.cfg.anchorSet     = false;
+        appConfig.cfg.anchorLat     = NAN;
+        appConfig.cfg.anchorLon     = NAN;
+        appConfig.cfg.anchorSetUtc  = 0;
+        appConfig.cfg.anchorAlarmOn = false;    // a lifted anchor cannot drag
+        AnchorSyncNode::noteLocalChange();
+        appConfig.save();
+        self->_trkIdx = 0; self->_trkFull = false; self->_maxDist = 0.f; self->_lastTrkMs = 0;
+        self->refreshSetBtn();
+        self->refreshAlarmBtn();
+        return;
+    }
+
     float lat, lon; bool ok;
     {
         auto lk = data.lock();
@@ -327,25 +390,38 @@ void AnchorScreen::cbSet(lv_event_t *e) {
     appConfig.cfg.anchorSet = true;
     appConfig.cfg.anchorLat = lat;
     appConfig.cfg.anchorLon = lon;
+    // When the anchor fell. Held separately from the revision stamp and shown
+    // to the user; 0 when this device has no clock, which is honest - better a
+    // missing time than an invented one.
+    appConfig.cfg.anchorSetUtc = anchorSyncNowUtcOrZero();
+    AnchorSyncNode::noteLocalChange();
     appConfig.save();
     self->_trkIdx = 0; self->_trkFull = false; self->_maxDist = 0.f; self->_lastTrkMs = 0;
+    self->refreshSetBtn();
 }
 
+// The radius buttons stamp a revision like everything else: pulling the swing
+// circle IS a change, and ordering by setUtc alone would have swallowed it.
 void AnchorScreen::cbMinus(lv_event_t *e) {
     (void)e;
-    appConfig.cfg.anchorRadius = clampf(appConfig.cfg.anchorRadius - 5.f, 10.f, 200.f);
+    const float before = appConfig.cfg.anchorRadius;
+    appConfig.cfg.anchorRadius = clampf(before - 5.f, 10.f, 200.f);
+    if (appConfig.cfg.anchorRadius != before) AnchorSyncNode::noteLocalChange();
     appConfig.save();
 }
 
 void AnchorScreen::cbPlus(lv_event_t *e) {
     (void)e;
-    appConfig.cfg.anchorRadius = clampf(appConfig.cfg.anchorRadius + 5.f, 10.f, 200.f);
+    const float before = appConfig.cfg.anchorRadius;
+    appConfig.cfg.anchorRadius = clampf(before + 5.f, 10.f, 200.f);
+    if (appConfig.cfg.anchorRadius != before) AnchorSyncNode::noteLocalChange();
     appConfig.save();
 }
 
 void AnchorScreen::cbAlarm(lv_event_t *e) {
     AnchorScreen *self = (AnchorScreen *)lv_event_get_user_data(e);
     appConfig.cfg.anchorAlarmOn = !appConfig.cfg.anchorAlarmOn;
+    AnchorSyncNode::noteLocalChange();
     appConfig.save();
     self->refreshAlarmBtn();
 }

@@ -266,7 +266,7 @@ pio run -t upload
 
 > **Note:** `uploadfs` rewrites the whole LittleFS partition from `data/`,
 > which resets the on-device configuration to factory state — WiFi
-> credentials cleared, English, demo mode on, and the first-run flow (below)
+> credentials cleared, English, demo mode off, and the first-run flow (below)
 > appears again. Export your config first (web UI → Import/Export) if you
 > want to restore it afterwards.
 
@@ -290,30 +290,72 @@ You don't need a toolchain just to try the firmware:
   **Pick the right board:** all three are ESP32-S3 and indistinguishable over
   USB, so the browser cannot choose for you, and the wrong firmware leaves the
   screen dark until you flash the right one.
-- **Release package:** grab the ZIP from the
-  [Releases](https://github.com/Ranman86/NauticPinnace/releases) page. On
-  Windows, double-click `flash.bat` (a standalone `esptool.exe` is bundled —
-  nothing to install); on Linux/macOS, `pip install esptool` and run
-  `flash.sh`. Details in the included `FLASHING.md`.
+- **Release package (all three boards):** grab the ZIP from the
+  [Releases](https://github.com/Ranman86/NauticPinnace/releases) page. It
+  holds one folder per board — `4/`, `7b/`, `5b/` — and flash scripts that
+  ask which board is connected; as in the browser, the wrong choice leaves
+  the screen dark. On Windows, double-click `flash.bat` (a standalone
+  `esptool.exe` is bundled — nothing to install); on Linux/macOS,
+  `pip install "esptool>=4.8,<6"` and run `sh flash.sh`. Both also take the board and
+  the port as arguments: `.\flash.bat 7b COM5`, `sh flash.sh 7b /dev/ttyACM0`.
+  Details — including the 7-inch's USB driver and a fallback for the
+  5-inch — in the included `FLASHING.md`.
 
 The script paths **erase the entire 16 MB flash first**, then write bootloader,
 firmware and web UI — so the device really starts from a factory state rather
 than new firmware layered on old leftovers (the erase also clears the NVS area
 the ESP-IDF uses for WiFi calibration and cached credentials). The whole run
-takes about half a minute. The browser flasher offers the erase as a prompt on
+takes about a minute. The browser flasher offers the erase as a prompt on
 first install instead of always doing it.
 
-`FLASHING.md` in the release package documents the firmware-only command if you
-want to update while keeping your configuration.
+To update while keeping your configuration, use the web interface's
+**Update** tab, or the firmware-only USB command in the release package's
+`FLASHING.md` — it writes the partition table and `boot_app0.bin` along with
+the firmware, because a board updated over WiFi may be running from its
+second app slot and would otherwise keep starting the old firmware.
 
 <details>
 <summary>Maintainer notes</summary>
 
-Build a release with `python tools/make_release.py --version vX.Y.Z`. It
-compiles firmware + LittleFS, assembles `release/NauticPinnace-vX.Y.Z/`
-(images, `flash.bat` with a bundled `esptool.exe`, `flash.sh`,
-`manifest.json`, `FLASHING.md`, licences), zips it, and refreshes the web
-flasher payload in `docs/flash/`. Upload the ZIP to the GitHub release.
+A release is two separate runs, after `FW_VERSION` in `src/Version.h` has
+been set to the release version:
+
+1. `python tools/make_release.py --version vX.Y.Z` builds **all three
+   boards**, one after the other, and assembles
+   `release/NauticPinnace-vX.Y.Z/` and its ZIP: a folder per board (`4/`,
+   `7b/`, `5b/`, each with the five images, the merged
+   `nauticpinnace-full.bin` and a `manifest.json`) and, once at the top,
+   `flash.bat` with a bundled `esptool.exe` plus its source and notices,
+   `flash.sh`, `FLASHING.md` and the licences. It also fetches the source
+   archives of the LGPL libraries into
+   `release/NauticPinnace-vX.Y.Z-sources/`. It does **not** touch
+   `docs/flash/`.
+2. `python tools/gen_web_flasher.py --skip-build` regenerates the web
+   flasher payload in `docs/flash/` (images, one manifest per board, and the
+   licence copies that travel with them) from the same build output — both
+   scripts build every board into the same directories, so building twice
+   gains nothing. Commit it with `git add -A docs/flash`, so removed files are
+   recorded too.
+
+Both release scripts run `tools/release_checks.py` over their inputs before
+they write anything — the build machine's account name or home path inside an
+image, an image older than the sources, a firmware without the expected
+version, a LittleFS image that differs from `data/`, files or WiFi credentials
+in `data/` that do not belong there — and stop if any of them fails, leaving
+the previous output untouched. `--skip-build` is accepted only when the
+existing build output passes. `python tools/release_checks.py <file or
+directory>` runs the same checks report-only.
+
+To try the package's `flash.bat` or `flash.sh` without touching a board, set
+`NP_FLASH_DRYRUN=1`: they then print the esptool commands instead of running
+them (and `flash.bat` does not pause).
+
+Release assets on GitHub (the scripts upload nothing; `make_release.py` ends
+with this list): `NauticPinnace-vX.Y.Z.zip` (all three boards) plus the six
+LGPL source archives `src-arduino-esp32-2.0.17.zip`, `src-AsyncTCP-ef448a8.zip`,
+`src-ESPAsyncWebServer-ad3741d.zip` (linked by the 4-inch),
+`src-arduino-esp32-3.3.11.zip`, `src-AsyncTCP-3.5.0.zip` and
+`src-ESPAsyncWebServer-3.12.0.zip` (linked by the 7-inch and 5-inch).
 
 The web flasher needs GitHub Pages enabled: *Settings → Pages → Source:
 deploy from branch `main`, folder `/docs`*. Until then the link above 404s.
@@ -322,10 +364,13 @@ Flash layout (from `partitions_16MB.csv`): bootloader `0x0`, partition table
 `0x8000`, boot_app0 `0xe000`, firmware `0x10000`, LittleFS `0xA10000`.
 </details>
 
-**No boat? Try it anyway.** The factory config ships with **demo mode** on:
-all screens run on animated synthetic data (marked by a demo banner) until
-you turn it off in the web UI — so a bare board on a desk shows the full
-instrument set. Or skip the hardware entirely and use the PC simulator.
+**No boat? Try it anyway.** The factory config ships with **demo mode off**,
+so out of the box the display shows live bus data — and on a bare board, empty
+values. Switch it on in the web UI under **Display → Demo mode** (see
+[Connecting to the web UI](#connecting-to-the-web-ui)): all screens then run on
+animated synthetic data, marked by a demo banner, until you turn it off again —
+so a bare board on a desk shows the full instrument set. Or skip the hardware
+entirely and use the PC simulator.
 
 ### PC simulator
 
@@ -475,7 +520,7 @@ it in the on-screen settings or the web UI (reboots to apply). The only
 functional loss: the stereo remote becomes read-only.
 
 <details>
-<summary><strong>PGNs received</strong> (34)</summary>
+<summary><strong>PGNs received</strong> (35)</summary>
 
 | PGN | Data |
 |---|---|
@@ -509,12 +554,14 @@ functional loss: the stereo remote becomes read-only.
 | 130312 | Temperature, extended |
 | 130320 | Tide station data (hand-decoded) |
 | 130820 | Stereo status (proprietary, manufacturer 419) |
+| 131035 | Anchor state shared with NauticPi (proprietary, manufacturer 2046) |
 
 </details>
 
-**Transmitted:** application code sends only PGN 126720 (proprietary
-commands to a stereo of manufacturer 419: source, volume, transport), and only
-when listen-only is off. In node mode the library additionally handles the
+**Transmitted:** application code sends two proprietary PGNs, and only
+when listen-only is off: 126720 (commands to the stereo, manufacturer
+419: source, volume, transport) and 131035 (the anchor state shared with
+NauticPi - on every change plus a 10 s heartbeat). In node mode the library additionally handles the
 usual protocol traffic (address claim, heartbeat).
 
 ---
@@ -572,7 +619,8 @@ data/           LittleFS image: web UI, factory config.json, polar.json
 lib/NMEA2000_esp32/  TWAI-based CAN driver (ESP32-S3 compatible)
 boards/         PlatformIO board definition for the Waveshare panel
 tools/          generators: LVGL fonts (Montserrat subsets), hull outline
-                from an image, world map mask, boot-logo converter
+                from an image, world map mask, boot-logo converter;
+                release tooling (ZIP, web flasher, pre-release checks)
 docs/img/       simulator screenshots used in this README
 download/fonts/ unmodified Montserrat TTFs + OFL.txt (source of the fonts)
 ```
@@ -590,11 +638,16 @@ The project's own code is **MIT** (see [LICENSE](LICENSE)).
 Bundled third-party components keep their own licences — the complete list
 with obligations lives in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), full texts in
-[`LICENSES/`](LICENSES/). Highlights: LVGL, ArduinoJson, NMEA2000,
-LovyanGFX (MIT/BSD); Montserrat and the generated bitmap fonts (SIL OFL 1.1);
-Arduino-ESP32 core, AsyncTCP and ESPAsyncWebServer (LGPL — **if you
-distribute a built `firmware.bin`, the LGPL relink obligations apply**; see
-the notices file).
+[`LICENSES/`](LICENSES/). Highlights: LVGL, ArduinoJson, NMEA2000 and, on
+the 4-inch only, LovyanGFX (MIT/BSD); Montserrat and the bitmap fonts generated from it (SIL OFL 1.1);
+the OpenBridge Icon Pack icons of the icon trial (CC BY 4.0, see `ICONS-TRIAL.md`);
+Arduino-ESP32 core, AsyncTCP and ESPAsyncWebServer (LGPL, linked statically;
+the 4-inch and the 1024 × 600 boards link different versions of them). From
+v1.2.0 on, every GitHub Release carries the source of exactly the library
+versions its firmware links, as `src-*.zip` assets next to the ZIP, and the
+application source needed to relink is this repository at the release tag.
+**If you distribute a built `firmware.bin` yourself, the LGPL obligations —
+library source and relinkability — pass to you**; see the notices file.
 
 Data: world map from Natural Earth (public domain); tide forecast at runtime
 from BSH (CC BY 4.0, credited on screen); NMEA 2000 field layouts as facts
@@ -602,5 +655,11 @@ from the [canboat](https://github.com/canboat/canboat) project. The shipped
 polar table holds generic example values — import your own boat's polar
 (e.g. from [weatherrouting.online](https://weatherrouting.online/)) via the
 web UI. The hull silhouette is hand-drawn.
+
+Trademarks: NMEA 2000 is a registered trademark of the National Marine
+Electronics Association. Other
+product and company names mentioned here belong to their respective owners.
+NauticPinnace is an independent project, not affiliated with or endorsed by any
+of them - the names appear only to say which equipment it works with.
 
 Fair winds! ⛵

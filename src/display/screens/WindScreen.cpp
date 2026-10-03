@@ -37,8 +37,9 @@ WindScreen windScreen;
 
 // The heartbeat prints all five under fixed names, so no name table is needed
 // here - the order below IS the order of the ph fields on that line.
-enum { WS_PH_BG = 0, WS_PH_ZONE, WS_PH_TICK, WS_PH_BOAT, WS_PH_OVL, WS_PH_N };
-static uint32_t s_phMaxUs[WS_PH_N] = { 0, 0, 0, 0, 0 };
+enum { WS_PH_BG = 0, WS_PH_ZONE, WS_PH_TICK, WS_PH_BOAT, WS_PH_TRACE, WS_PH_OVL,
+       WS_PH_N };
+static uint32_t s_phMaxUs[WS_PH_N] = { 0, 0, 0, 0, 0, 0 };
 
 #define WS_PHASE_BEGIN()  int64_t _phT = esp_timer_get_time()
 #define WS_PHASE_END(ix)  do {                                          \
@@ -64,7 +65,7 @@ static uint32_t s_phMaxUs[WS_PH_N] = { 0, 0, 0, 0, 0 };
 // pretending the background fill won.
 // Declared extern at the call site (main.cpp), not in WindScreen.h, because
 // that header is shared with the 4" board, which has no such counters.
-void windPhaseTake(uint32_t out[5]) {
+void windPhaseTake(uint32_t out[WS_PH_N]) {
     for (int i = 0; i < WS_PH_N; i++) {
         if (out) out[i] = s_phMaxUs[i];
         s_phMaxUs[i] = 0;
@@ -110,16 +111,11 @@ static inline lv_point_t wp(float cx, float cy, float r, float angleDeg) {
              (lv_coord_t)(cy - r * cosf(a)) };
 }
 
-static void cline(lv_obj_t *cv,
-                  float x1, float y1, float x2, float y2,
-                  lv_color_t col, lv_coord_t w = 1, lv_opa_t opa = LV_OPA_COVER) {
-    lv_draw_line_dsc_t d;
-    lv_draw_line_dsc_init(&d);
-    d.color = col; d.width = w; d.opa = opa;
-    lv_point_t p[2] = {{ (lv_coord_t)x1, (lv_coord_t)y1 },
-                        { (lv_coord_t)x2, (lv_coord_t)y2 }};
-    lv_canvas_draw_line(cv, p, 2, &d);
-}
+// cline() - der alte Umweg ueber lv_canvas_draw_line() - ist am 2026-08-30
+// ENTFALLEN. Alle 28 Aufrufe laufen jetzt ueber WindScreen::linePx(), das
+// direkt in den Canvas-Puffer schreibt. Achtung beim Nachziehen aus aelterem
+// Code: die Argumentreihenfolge unterscheidet sich, linePx() nimmt die
+// Deckkraft VOR der Strichbreite.
 
 // Filled triangle by horizontal scanlines
 static void fillTri(lv_obj_t *cv,
@@ -222,6 +218,196 @@ void WindScreen::spanH(int y, int x0, int x1, lv_color_t col, lv_opa_t opa) {
         while (p <= end) *p++ = col;
     } else {
         while (p <= end) { *p = lv_color_mix(col, *p, opa); p++; }
+    }
+}
+
+// Kantengeglaettete 1-px-Linie, direkt in _cbuf - das Gegenstueck zu spanH()
+// fuer Striche statt Flaechen.
+//
+// WARUM: cline() ist lv_canvas_draw_line() und zahlt pro Aufruf denselben Zoll,
+// den der Kommentar bei spanH() beschreibt (malloc/free, zwei memsets, ein
+// voller lv_obj_invalidate). Am Geraet gemessen: die 13 Stroemungslinien in
+// drawWindLines() brauchten so 50,9 ms - von 77 ms der ganzen BOAT-Phase, also
+// rund 4 ms fuer EINEN Strich von 40 % Deckkraft.
+//
+// Verfahren ist Xiaolin Wu: pro Schritt entlang der laengeren Achse werden die
+// beiden benachbarten Pixel der kuerzeren Achse anteilig eingefaerbt. Ohne das
+// haetten die Linien eine harte Treppe - bei 40 % Deckkraft hinter dem Boot
+// faellt so etwas sofort auf.
+void WindScreen::linePx(float x0, float y0, float x1, float y1,
+                        lv_color_t col, lv_opa_t opa, float w) {
+    if (!_cbuf) return;
+
+    auto pixel = [&](int x, int y, float f) {
+        if (x < 0 || x >= CW || y < 0 || y >= CH) return;
+        if (f <= 0.f) return;
+        if (f > 1.f) f = 1.f;
+        const lv_opa_t a = (lv_opa_t)((float)opa * f);
+        if (a == 0) return;
+        lv_color_t *p = _cbuf + (size_t)y * (size_t)CW + (size_t)x;
+        *p = (a >= LV_OPA_COVER) ? col : lv_color_mix(col, *p, a);
+    };
+
+    // Breite Striche: Deckung aus dem ECHTEN Abstand jedes Pixels zur Strecke,
+    // genau wie in ringAA().
+    //
+    // Der erste Versuch lief anders und war sichtbar schlechter: er ging in
+    // 1-px-Schritten die Linie entlang und setzte je Schritt einen Streifen
+    // quer dazu, wobei die Deckkraft aus dem GANZZAHLIGEN Versatz kam und die
+    // Zielpixel gerundet wurden. Damit gab es quer zur Linie ueberhaupt keine
+    // Glaettung - nur Stufen, dazu Doppelschreiber an den Rundungsgrenzen.
+    // Der Nutzer hat es sofort als "pixelig" erkannt. Merke: die Deckkraft muss
+    // aus dem tatsaechlichen Abstand des Pixelmittelpunkts kommen, nie aus dem
+    // Schleifenindex.
+    if (w > 1.5f) {
+        const float dxl = x1 - x0, dyl = y1 - y0;
+        const float len2 = dxl * dxl + dyl * dyl;
+        if (len2 < 1e-6f) return;
+        const float len = sqrtf(len2);
+        const float h   = w * 0.5f;
+        const float r   = h + 1.f;            // Einflussradius inkl. weicher Kante
+
+        int ya = (int)floorf(fminf(y0, y1) - r);
+        int yb = (int)ceilf (fmaxf(y0, y1) + r);
+        if (ya < 0) ya = 0;
+        if (yb > CH - 1) yb = CH - 1;
+        const float xlo = fminf(x0, x1) - r, xhi = fmaxf(x0, x1) + r;
+
+        // Geradengleichung A*x + B*y + C = 0 mit |A,B| = len, damit
+        // |A*x + B*y + C| unmittelbar der Abstand mal len ist.
+        const float A = -dyl, B = dxl, C = -(A * x0 + B * y0);
+
+        for (int y = ya; y <= yb; y++) {
+            const float py = (float)y + 0.5f;
+            float xa = xlo, xb = xhi;
+            if (fabsf(A) > 1e-4f) {
+                const float k1 = (-r * len - B * py - C) / A;
+                const float k2 = ( r * len - B * py - C) / A;
+                const float lo = fminf(k1, k2), hi = fmaxf(k1, k2);
+                if (lo > xa) xa = lo;
+                if (hi < xb) xb = hi;
+            }
+            int ix0 = (int)floorf(xa), ix1 = (int)ceilf(xb);
+            if (ix1 < 0 || ix0 > CW - 1 || ix0 > ix1) continue;
+            if (ix0 < 0) ix0 = 0;
+            if (ix1 > CW - 1) ix1 = CW - 1;
+
+            for (int x = ix0; x <= ix1; x++) {
+                const float px = (float)x + 0.5f;
+                float t = ((px - x0) * dxl + (py - y0) * dyl) / len2;
+                if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
+                const float cx = x0 + t * dxl, cy = y0 + t * dyl;
+                const float ddx = px - cx, ddy = py - cy;
+                const float d = sqrtf(ddx * ddx + ddy * ddy);
+                float f = h + 0.5f - d;
+                if (f <= 0.f) continue;
+                if (f > 1.f) f = 1.f;
+                pixel(x, y, f);
+            }
+        }
+        return;
+    }
+
+    const bool steil = fabsf(y1 - y0) > fabsf(x1 - x0);
+    if (steil) { float t; t = x0; x0 = y0; y0 = t; t = x1; x1 = y1; y1 = t; }
+    if (x0 > x1) { float t; t = x0; x0 = x1; x1 = t; t = y0; y0 = y1; y1 = t; }
+
+    const float dx = x1 - x0;
+    const float dy = y1 - y0;
+    const float grad = (dx == 0.f) ? 1.f : dy / dx;
+
+    float y = y0 + grad * (roundf(x0) - x0);
+    const int xEnd = (int)roundf(x1);
+    for (int x = (int)roundf(x0); x <= xEnd; x++, y += grad) {
+        const int   iy = (int)floorf(y);
+        const float fr = y - (float)iy;
+        if (steil) { pixel(iy, x, 1.f - fr); pixel(iy + 1, x, fr); }
+        else       { pixel(x, iy, 1.f - fr); pixel(x, iy + 1, fr); }
+    }
+}
+
+// Kantengeglaetteter Kreisring - siehe Begruendung im Header.
+//
+// Beruehrt wird nur das Band selbst: je Zeile werden die ein bis zwei
+// x-Bereiche berechnet, in denen |Abstand zum Mittelpunkt - r| <= h liegt.
+// Innerhalb davon ergibt der Abstand unmittelbar die Deckkraft, so dass die
+// Kanten weich auslaufen statt zu treppen - bei einem 2 px breiten Ring auf
+// einem 600 px grossen Kreis ist genau das der sichtbare Unterschied.
+void WindScreen::ringAA(float cx, float cy, float r, float w,
+                        lv_color_t col, lv_opa_t opa) {
+    if (!_cbuf || r <= 0.f || w <= 0.f) return;
+    const float h    = w * 0.5f;
+    const float rOut = r + h, rIn = r - h;
+    const int   y0   = (int)floorf(cy - rOut - 1.f);
+    const int   y1   = (int)ceilf (cy + rOut + 1.f);
+
+    for (int y = y0; y <= y1; y++) {
+        if (y < 0 || y >= CH) continue;
+        const float dy = (float)y + 0.5f - cy;
+        const float ay = fabsf(dy);
+        if (ay > rOut + 1.f) continue;
+
+        // Aeusserer Rand der Zeile; innen faellt das Band in zwei Haelften,
+        // sobald die Zeile das Loch schneidet.
+        const float xo = sqrtf(fmaxf(0.f, (rOut + 1.f) * (rOut + 1.f) - dy * dy));
+        const bool  gespalten = ay < (rIn - 1.f);
+        const float xi = gespalten
+                       ? sqrtf(fmaxf(0.f, (rIn - 1.f) * (rIn - 1.f) - dy * dy))
+                       : 0.f;
+
+        auto bogen = [&](int xa, int xb) {
+            if (xb < 0 || xa >= CW) return;
+            if (xa < 0) xa = 0;
+            if (xb >= CW) xb = CW - 1;
+            lv_color_t *row = _cbuf + (size_t)y * (size_t)CW;
+            for (int x = xa; x <= xb; x++) {
+                const float dx = (float)x + 0.5f - cx;
+                const float d  = sqrtf(dx * dx + dy * dy);
+                float f = h + 0.5f - fabsf(d - r);   // 1 in der Mitte, 0 aussen
+                if (f <= 0.f) continue;
+                if (f > 1.f) f = 1.f;
+                const lv_opa_t a = (lv_opa_t)((float)opa * f);
+                if (a == 0) continue;
+                lv_color_t *p = row + x;
+                *p = (a >= LV_OPA_COVER) ? col : lv_color_mix(col, *p, a);
+            }
+        };
+
+        if (gespalten) {
+            bogen((int)floorf(cx - xo), (int)ceilf(cx - xi));
+            bogen((int)floorf(cx + xi), (int)ceilf(cx + xo));
+        } else {
+            bogen((int)floorf(cx - xo), (int)ceilf(cx + xo));
+        }
+    }
+}
+
+// Gefuellte Scheibe mit weicher Kante - siehe Begruendung im Header.
+void WindScreen::discAA(float cx, float cy, float r, lv_color_t col, lv_opa_t opa) {
+    if (!_cbuf || r <= 0.f) return;
+    int ya = (int)floorf(cy - r - 1.f);
+    int yb = (int)ceilf (cy + r + 1.f);
+    if (ya < 0) ya = 0;
+    if (yb > CH - 1) yb = CH - 1;
+
+    for (int y = ya; y <= yb; y++) {
+        const float dy   = (float)y + 0.5f - cy;
+        const float halb = sqrtf(fmaxf(0.f, (r + 1.f) * (r + 1.f) - dy * dy));
+        int xa = (int)floorf(cx - halb), xb = (int)ceilf(cx + halb);
+        if (xb < 0 || xa > CW - 1) continue;
+        if (xa < 0) xa = 0;
+        if (xb > CW - 1) xb = CW - 1;
+        lv_color_t *row = _cbuf + (size_t)y * (size_t)CW;
+        for (int x = xa; x <= xb; x++) {
+            const float dx = (float)x + 0.5f - cx;
+            float f = r + 0.5f - sqrtf(dx * dx + dy * dy);
+            if (f <= 0.f) continue;
+            if (f > 1.f) f = 1.f;
+            const lv_opa_t a = (lv_opa_t)((float)opa * f);
+            if (a == 0) continue;
+            lv_color_t *p = row + x;
+            *p = (a >= LV_OPA_COVER) ? col : lv_color_mix(col, *p, a);
+        }
     }
 }
 
@@ -328,7 +514,7 @@ void WindScreen::drawSailFoil(float tackX, float tackY, float clewX, float clewY
     // Outline the leeward (curved) sail edge for crisp definition.
     if (edgeW > 0)
         for (int i = 0; i < N; i++)
-            cline(_canvas, pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, edgeCol, edgeW);
+            linePx(pts[i].x, pts[i].y, pts[i + 1].x, pts[i + 1].y, edgeCol, LV_OPA_COVER, edgeW);
 }
 
 // ── computeSailState ──────────────────────────────────────────────────────────
@@ -477,22 +663,36 @@ void WindScreen::drawInstrument(float twa, float awa, float tws, float stw, floa
     {
         // Two pixels per store: a 16-bit store loop measured 18 MB/s here
         // against the ~49 MB/s this PSRAM answers a word-wide fill with.
+        // NUR AUSSERHALB DER INSTRUMENTENSCHEIBE loeschen.
+        //
+        // drawBezel() fuellt unmittelbar danach die Scheibe bis R_OUTER+1 -
+        // alles, was hier innerhalb davon geschrieben wird, ist bereits eine
+        // Bilddauer spaeter wieder weg. Gerechnet: die Scheibe deckt
+        // pi*253,5^2 = 201.850 der 360.000 Pixel ab, also 56 % der Leinwand.
+        // Genau dieser Anteil war jede Bilddauer umsonst geschriebener
+        // Speicher - und Speicherbandbreite ist auf diesem Board der Engpass,
+        // nicht Rechenzeit.
+        //
+        // Die Ecken werden weiterhin voll geloescht; dort liegen die
+        // Eckwerte, die Kursanzeige und der Polarbalken, und dort darf nichts
+        // stehenbleiben.
         const lv_color_t bgColor = CLR_BG;
-        const size_t     rowPx   = (size_t)CW;
         const int        CHUNK   = 8;   // rows per yield window
-        lv_color_t      *p       = _cbuf;
+        const float      rKeep   = R_OUTER + 1.f;   // exakt was drawBezel fuellt
         for (int row = 0; row < CH; row += CHUNK) {
-            int         rows = (CH - row < CHUNK) ? CH - row : CHUNK;
-            lv_color_t *end  = p + (size_t)rows * rowPx;
-#if LV_COLOR_DEPTH == 16
-            if ((((uintptr_t)p) & 3u) && p < end) *p++ = bgColor;
-            uint32_t      *w    = (uint32_t *)p;
-            const uint32_t two  = ((uint32_t)bgColor.full << 16) | (uint32_t)bgColor.full;
-            const size_t   pair = (size_t)(end - p) / 2;
-            for (size_t i = 0; i < pair; i++) *w++ = two;
-            p = (lv_color_t *)w;
-#endif
-            while (p < end) *p++ = bgColor;
+            const int rows = (CH - row < CHUNK) ? CH - row : CHUNK;
+            for (int y = row; y < row + rows; y++) {
+                const float dy = (float)y + 0.5f - CY;
+                if (fabsf(dy) >= rKeep) {           // Zeile beruehrt die Scheibe nicht
+                    spanH(y, 0, CW - 1, bgColor, LV_OPA_COVER);
+                    continue;
+                }
+                const int hx = (int)floorf(sqrtf(rKeep * rKeep - dy * dy));
+                const int xa = (int)CX - hx;
+                const int xb = (int)CX + hx;
+                if (xa > 0)      spanH(y, 0,      xa - 1,  bgColor, LV_OPA_COVER);
+                if (xb < CW - 1) spanH(y, xb + 1, CW - 1,  bgColor, LV_OPA_COVER);
+            }
             renderYield();
         }
         lv_obj_invalidate(_canvas);
@@ -523,6 +723,9 @@ void WindScreen::drawInstrument(float twa, float awa, float tws, float stw, floa
     // loops offer one. On the 4-inch board each of these is a 1 ms sleep; here
     // renderYield() collapses them into whatever the 20 ms budget allows, which
     // for a whole instrument repaint is one or two of the six.
+    // Aufgeschluesselt gemessen (7B, 2026-08-30): bezel 23,1 ms, zoneRing
+    // 36,0 ms, die beiden renderYield() zusammen 1,5 ms. Die Pausen sind also
+    // vernachlaessigbar - was diese Phase kostet, ist echte Zeichenarbeit.
     drawBezel();
     renderYield();
     drawZoneRing(absTwa);
@@ -546,6 +749,12 @@ void WindScreen::drawInstrument(float twa, float awa, float tws, float stw, floa
     // Centre of the instrument: flow lines + compass rose + boat with sails, or
     // the artificial horizon in ATTITUDE mode.
     WS_PHASE_END(WS_PH_BOAT);
+
+    // The two wind history curves, on top of the boat but under the pointers
+    // and the value boxes: they are context, not something to read a number
+    // off, and must never hide the live indicators.
+    drawWindTrace(nTwa, nAwa);
+    WS_PHASE_END(WS_PH_TRACE);
     drawInnerBorder();
     drawOuterBorder();
     if (!isnan(tws)) drawVmgMarkers(tws, absTwa);
@@ -561,6 +770,9 @@ void WindScreen::drawInstrument(float twa, float awa, float tws, float stw, floa
         drawTrimAdvice(absTwa, nTwa, tws);
         drawReefBadge(sail.reefCount);
     }
+    // Aufgeschluesselt gemessen (7B, 2026-08-30, vor der ringAA-Umstellung):
+    // Raender 25,2 ms, Zeiger 9,8, KPIs 12,1, Ruderbogen 4,9. Die beiden
+    // Randkreise waren also die Haelfte dieser Phase - deshalb ringAA().
     drawRudderArc(rudder);          // curved rudder-angle gauge below the rose, above the polar bar
 
     // ── Polar performance bar ─────────────────────────────────────────────
@@ -624,13 +836,26 @@ void WindScreen::drawBezel() {
     // A radius-CIRCLE lv_canvas_draw_rect() this size is an LVGL radius mask
     // evaluated over the full 600x600 bounding box; fillEllipse() writes the
     // same disc as spans. Same reasoning as spanH().
-    fillEllipse(CX, CY, R_OUTER + 1.f, R_OUTER + 1.f, C_BEZEL, LV_OPA_COVER);
+    //
+    // RING statt Scheibe: die Mitte bis R_INNER faerbt drawInnerBg() gleich
+    // danach ohnehin um. Das waren pi*185^2 = 107.500 von 201.850 Pixeln, also
+    // gut die Haelfte dieser Fuellung, jede Bilddauer umsonst. Ein Pixel
+    // Ueberlappung nach innen, damit an der Naht nichts durchblitzt.
+    fillAnnulus(CX, CY, R_INNER - 1.f, R_OUTER + 1.f, C_BEZEL, LV_OPA_COVER);
 }
 
 // ── Layer 2: Coloured zone arcs ───────────────────────────────────────────────
 
 void WindScreen::drawZoneRing(float absTwa) {
     // Base ring (dark)
+    //
+    // Die sechs Zonenfarben unten decken zusammen exakt 360 Grad ab
+    // (2ng + 2(45-ng) + 2*20 + 2*35 + 2*50 + 60), dieser Grundring wird also
+    // vollstaendig uebermalt. Gemessen kostet er 9,3 ms von 38 ms der Phase.
+    // Er bleibt trotzdem: er ist die Versicherung gegen Haarlinien an den
+    // Sektorgrenzen, wo die Polygon-Naeherung Luecken lassen kann. Auf einem
+    // Instrument sind 9 ms dafuer gut angelegt - wer sie sparen will, muss
+    // vorher am echten Panel pruefen, ob die Naht sichtbar wird.
     arcRing(R_ZONE_I, R_ZONE_O, -180.f, 360.f, C_BASE, LV_OPA_COVER);
 
     // The six zone colours were painted with an opacity ONTO that base ring,
@@ -718,6 +943,159 @@ void WindScreen::drawInnerBg() {
     fillEllipse(CX, CY, R_INNER, R_INNER, C_INNER, LV_OPA_COVER);   // see drawBezel()
 }
 
+// ── Wind history traces (apparent + true, last ~60 s) ────────────────────────
+//
+// AN ORDINARY WIND STRIP CHART, TIPPED ONTO ITS SIDE AND LAID ALONG THE
+// POINTER. Take the usual plot - time down one axis, wind speed across the
+// other - and rotate it so that its TIME axis runs from the middle of the rose
+// outward to the live pointer. The newest sample sits out at the rose and each
+// sample migrates inward as it ages, reaching the centre after the full window.
+// Across that axis stands the wind SPEED. One curve per pointer, drawn on that
+// pointer's own axis, so each history belongs visibly to its arrow.
+//
+// THE SPEED SCALE IS ABSOLUTE AND SPANS THE WHOLE BAND: 0 kn at one edge, the
+// full scale at the other, exactly like the printed plot. It is NOT measured
+// from the current value. An earlier version anchored the newest point on the
+// axis and drew everything as a deviation from it; that pins the curve to the
+// pointer very neatly and is wrong, because the same bulge then means a
+// different wind every minute and the absolute strength cannot be read at all.
+//
+// The reason the curve nevertheless runs roughly from the centre to the arrow -
+// which is the whole point of the shape - is the choice of scale, not a trick
+// of the geometry: the maximum is rounded UP to whole 5 kn, so a wind peaking
+// at 7 kn is drawn against a 10 kn band and therefore sits near mid-band. That
+// is the same reason the reference plot shows 4.3 kn on a 0-10 axis.
+//
+// THE SCALE STEPS, IT DOES NOT BREATHE. A continuously self-scaling band looks
+// lively and is useless: the same curve would mean 4 kn one minute and 25 the
+// next. Rounded up to whole 5 kn and never below 10, the picture holds still
+// for minutes at a time and two glances an hour apart are comparable, while
+// light airs still use most of the band.
+//
+// A LINE, NOT AN AREA. The printed plot fills under the curve; here that would
+// put a large opaque wedge over the boat and the flow lines. The trace is
+// context beneath the live pointers and must never hide them.
+//
+// NaN entries are gaps, not zeros - the polyline breaks there. A wind sensor
+// that dropped out must leave a hole, never a straight line implying a steady
+// wind that was never measured.
+void WindScreen::drawWindTrace(float nTwa, float nAwa) {
+    if (!_cbuf) return;
+    const uint8_t mode = appConfig.cfg.windTraceMode;   // 0 off, 1 true, 2 both, 3 apparent
+    if (mode == 0) return;
+
+    // Copied under the lock, then released: the drawing below is far too long
+    // to hold the model against the bus task. 120 * 16 bytes = 1.9 KB of the
+    // loop task's 8 KB stack - see the note in DataModel.h on why this ring is
+    // separate from (and much smaller than) windHistory.
+    DataModel::WindTracePoint pts[DataModel::WIND_TRACE];
+    int  idx; bool full;
+    {
+        auto lk = data.lock();
+        if (!data.windTrace) return;
+        idx  = data.windTraceIdx;
+        full = data.windTraceFull;
+        memcpy(pts, data.windTrace,
+               sizeof(DataModel::WindTracePoint) * DataModel::WIND_TRACE);
+    }
+    const int n = full ? DataModel::WIND_TRACE : idx;
+    if (n < 2) return;                       // nothing to connect yet
+
+    // One scale for both curves, so apparent and true stay comparable - the
+    // apparent wind is the faster of the two and therefore sets the band.
+    float vmax = 0.f;
+    for (int k = 0; k < n; k++) {
+        const int i = full ? (idx + k) % DataModel::WIND_TRACE : k;
+        if (!isnan(pts[i].aws) && pts[i].aws > vmax) vmax = pts[i].aws;
+        if (!isnan(pts[i].tws) && pts[i].tws > vmax) vmax = pts[i].tws;
+    }
+    if (vmax <= 0.f) return;
+    float scale = ceilf(vmax / 5.f) * 5.f;
+    if (scale < 10.f) scale = 10.f;
+
+    // Two passes so the true-wind curve always ends up on top of the apparent
+    // one: they cross constantly, and a consistent order reads calmer than
+    // whichever happened to be drawn last.
+    // Shortest segment worth a draw call - see the note at the linePx below.
+    static constexpr float MIN_SEG = 1.6f * UI_SF;
+
+    const int passFrom = (mode == 1) ? 1 : 0;       // 1 = true only
+    const int passTo   = (mode == 3) ? 1 : 2;       // 3 = apparent only
+    for (int pass = passFrom; pass < passTo; pass++) {
+        const bool       trueWind = (pass == 1);
+        const lv_color_t col      = trueWind ? C_TWA_PTR : C_AWA_PTR;
+        const float      base     = trueWind ? nTwa : nAwa;
+        if (isnan(base)) continue;
+
+        // Time axis along the live pointer, speed axis across it. Screen
+        // convention as in wp(): 0 deg = up, y grows downward.
+        const float a  = base * DEG2RAD;
+        const float ux =  sinf(a), uy = -cosf(a);   // outward, towards the rose
+        const float vx =  cosf(a), vy =  sinf(a);   // across: 0 kn left, full right
+
+        float px = 0.f, py = 0.f; bool have = false;
+        for (int k = 0; k < n; k++) {
+            const int i = full ? (idx + k) % DataModel::WIND_TRACE : k;
+            const float spd = trueWind ? pts[i].tws : pts[i].aws;
+            if (isnan(spd)) { have = false; continue; }
+
+            // Age in samples counted back from the newest. The divisor is the
+            // FULL window, not n: while the ring is still filling the tail must
+            // stop short of the centre instead of stretching to fill it.
+            const int   agek = (n - 1) - k;
+            float       fAge = (float)agek / (float)(DataModel::WIND_TRACE - 1);
+            if (fAge > 1.f) fAge = 1.f;
+            const float r = R_TRACE_MAX * (1.f - fAge);
+
+            // Speed across the band: 0 kn at -W_TRACE, full scale at +W_TRACE.
+            float f = spd / scale;
+            if (f < 0.f) f = 0.f;
+            if (f > 1.f) f = 1.f;
+            float d = W_TRACE * (2.f * f - 1.f);
+
+            // Close the strip to a point at the centre. Without this the oldest
+            // sample sits a full half-width off to the side and the curve looks
+            // like a stray scratch across the boat instead of something that
+            // starts in the middle of the rose. The ramp costs the amplitude of
+            // the last ~12 s of history, which is the part nobody reads.
+            const float fR = r / R_TRACE_MAX;
+            if (fR < 0.25f) d *= fR / 0.25f;
+
+            float x = CX + ux * r + vx * d;
+            float y = CY + uy * r + vy * d;
+
+            // Keep the corner case inside the dial: the outermost sample at the
+            // far edge of the band would otherwise land on the degree ring.
+            const float dx = x - CX, dy = y - CY;
+            const float rr = sqrtf(dx * dx + dy * dy);
+            if (rr > R_TRACE_MAX) {
+                const float s = R_TRACE_MAX / rr;
+                x = CX + dx * s; y = CY + dy * s;
+            }
+
+            if (have) {
+                // Do not draw a segment shorter than the line is wide. 120
+                // samples over R_TRACE_MAX means a radial step of ~1.5 px, so
+                // most segments are sub-pixel and cost a full linePx() call
+                // each for nothing: 238 calls per frame, and the per-call setup
+                // - not the pixels - was 16 ms of an 188 ms frame. Holding the
+                // anchor until the pen has actually moved keeps the identical
+                // picture. The last sample is always drawn so the curve still
+                // ends exactly at its pointer.
+                const float sx = x - px, sy = y - py;
+                if ((sx * sx + sy * sy) < MIN_SEG * MIN_SEG && k < n - 1) continue;
+                // Age fade over the whole window: the newest segment at full
+                // strength, the oldest at a third, so the eye finds "now"
+                // without a legend.
+                lv_opa_t opa = (lv_opa_t)((float)LV_OPA_80 * (1.f - 0.55f * fAge));
+                linePx(px, py, x, y, col, opa, 1.4f * UI_SF);
+            }
+            px = x; py = y; have = true;
+        }
+    }
+    renderYield();
+}
+
 // ── Layer 5: Wind flow lines (parallel to TWA) ────────────────────────────────
 
 void WindScreen::drawWindLines(float twaDeg) {
@@ -739,7 +1117,7 @@ void WindScreen::drawWindLines(float twaDeg) {
         float y1 = CY + half * cosA + off * pY;
         float x2 = CX + half * sinA + off * pX;
         float y2 = CY - half * cosA + off * pY;
-        cline(_canvas, x1, y1, x2, y2, C_WIND_LN, 1, LV_OPA_40);
+        linePx(x1, y1, x2, y2, C_WIND_LN, LV_OPA_40);
     }
 }
 
@@ -809,12 +1187,12 @@ void WindScreen::drawBoat(const SailState &sail) {
     }
     fillPolygon(hp, 36, C_INNER, LV_OPA_COVER);
     for (int i = 0; i < 36; i++)
-        cline(_canvas, hp[i].x, hp[i].y, hp[(i+1)%36].x, hp[(i+1)%36].y, C_HULL, 2);
+        linePx(hp[i].x, hp[i].y, hp[(i+1)%36].x, hp[(i+1)%36].y, C_HULL, LV_OPA_COVER, 2);
 
 
     // ── Forestay (bow → mast, on the centreline = the jib luff) ────────────
     lv_color_t cRig = (uiTheme.windRigging);
-    cline(_canvas, bowX, bowY, mastX, mastY, cRig, 1, LV_OPA_60);
+    linePx(bowX, bowY, mastX, mastY, cRig, LV_OPA_60, 1);
 
     // ── Resolve the two clews from the smoothed trim ───────────────────────
     float bss   = (_smBoomDeg >= 0.f) ? 1.f : -1.f;
@@ -843,7 +1221,7 @@ void WindScreen::drawBoat(const SailState &sail) {
     // else the normal leeward jib (hidden when running).
     if (butterfly) {
         drawSailFoil(bowX, bowY, clewJX, clewJY, jss, jCam, sailCol, sailOpa, leechCol, 2);
-        cline(_canvas, mastX, mastY, clewJX, clewJY, cRig, 2, LV_OPA_70);   // whisker pole
+        linePx(mastX, mastY, clewJX, clewJY, cRig, LV_OPA_70, 2);   // whisker pole
         ctext(_canvas, CX - 36.f * UI_SF, CY - 35.f * BS, 72.f * UI_SF,
               FONT_TINY, CLR_ACCENT, LV_TEXT_ALIGN_CENTER, "Butterfly");
     } else if (sail.useSpinnaker) {
@@ -852,12 +1230,12 @@ void WindScreen::drawBoat(const SailState &sail) {
         drawCodeZero(sail);
     } else if (!sail.running) {
         drawSailFoil(bowX, bowY, clewJX, clewJY, jss, jCam, sailCol, sailOpa, leechCol, 2);
-        cline(_canvas, clewJX, clewJY, CX + jss * 9.f * BS, CY + 4.f * BS, CLR_GREEN, 1, LV_OPA_50); // jib sheet
+        linePx(clewJX, clewJY, CX + jss * 9.f * BS, CY + 4.f * BS, CLR_GREEN, LV_OPA_50, 1); // jib sheet
     }
 
     // ── MAINSAIL at the MAST (centre) ──────────────────────────────────────
     drawSailFoil(mastX, mastY, clewMX, clewMY, bss, mCam, sailCol, sailOpa, leechCol, 2);
-    cline(_canvas, mastX, mastY, clewMX, clewMY, cRig, 2);   // boom spar (on top)
+    linePx(mastX, mastY, clewMX, clewMY, cRig, LV_OPA_COVER, 2);   // boom spar (on top)
 
     // ── Mast: a single point at the ship's centre (NOT a fore-aft line) ────
     { lv_draw_rect_dsc_t rd; lv_draw_rect_dsc_init(&rd);
@@ -867,46 +1245,38 @@ void WindScreen::drawBoat(const SailState &sail) {
     // ── Rudder ─────────────────────────────────────────────────────────────
     {
         auto lk = data.lock();
-        float ra = data.rudderAngle;
-        drawRudder(isnan(ra) ? 0.f : ra, ss);
+        const float ra = data.rudderAngle;
+        drawRudder(isnan(ra) ? 0.f : ra);
     }
+}
+
+// Ruderblatt am Heck: nur Blatt und Drehpunkt, keine Gradzahl - die stand
+// doppelt im Bild, den Wert zeigt der Bogen unten (drawRudderArc). Das Blatt
+// bleibt als schnell erfassbare Richtungsanzeige und ist gegenueber der ersten
+// Fassung groesser (Halblaenge 4 -> 6, Strich 2 -> 3).
+void WindScreen::drawRudder(float rudderDeg) {
+    const float BS   = BOAT_S;
+    const float pX   = CX;
+    const float pY   = CY + 24.7f * BS;
+    const float half = 6.0f * BS;
+    const float ra   = rudderDeg * DEG2RAD;
+    const float dx   = half * sinf(ra);
+    const float dy   = half * cosf(ra);
+
+    const lv_color_t col = (uiTheme.windFlow);
+    linePx(pX - dx, pY - dy, pX + dx, pY + dy, col, LV_OPA_COVER, 3.f);
+    discAA(pX, pY, 2.5f * UI_SF, col, LV_OPA_COVER);
 }
 
 // ── Keel (dark oval behind hull) ─────────────────────────────────────────────
 void WindScreen::drawKeel() {
     const float BS = BOAT_S;
     fillEllipse(CX, CY + 3.3f * BS, 1.8f * BS, 4.3f * BS, (uiTheme.windMast), LV_OPA_COVER);
-    cline(_canvas, CX, CY - 1.f * BS, CX, CY + 7.f * BS, (uiTheme.windMast), 3);
+    linePx(CX, CY - 1.f * BS, CX, CY + 7.f * BS, (uiTheme.windMast), LV_OPA_COVER, 3);
 }
 
 
 // ── Rudder (cyan, pivots at scaled Cy=74 * 0.333 = CY+24.7) ─────────────────
-void WindScreen::drawRudder(float rudderDeg, float /*ss*/) {
-    const float BS   = BOAT_S;
-    const float pX   = CX;
-    const float pY   = CY + 24.7f * BS;
-    const float half = 4.0f * BS;
-    float ra = rudderDeg * DEG2RAD;
-    float dx = half * sinf(ra);
-    float dy = half * cosf(ra);
-
-    lv_color_t col = (uiTheme.windFlow);
-    cline(_canvas, pX - dx, pY - dy, pX + dx, pY + dy, col, 2);
-
-    // Pivot dot
-    lv_draw_rect_dsc_t rd; lv_draw_rect_dsc_init(&rd);
-    rd.bg_color = col; rd.bg_opa = LV_OPA_COVER;
-    rd.radius   = LV_RADIUS_CIRCLE; rd.border_width = 0;
-    lv_canvas_draw_rect(_canvas,
-        (lv_coord_t)(pX - UI_S(2)), (lv_coord_t)(pY - UI_S(2)), UI_S(4), UI_S(4), &rd);
-
-    // Label only if significant deflection
-    if (fabsf(rudderDeg) > 2.f) {
-        char buf[8]; snprintf(buf, sizeof(buf), "%+.0f", rudderDeg);
-        ctext(_canvas, pX - 14.f * UI_SF, pY + 5.f * UI_SF, 28.f * UI_SF,
-              FONT_TINY, col, LV_TEXT_ALIGN_CENTER, buf);
-    }
-}
 
 
 // ── Sheet lines: jib clew → fairlead → winch ─────────────────────────────────
@@ -917,8 +1287,8 @@ void WindScreen::drawSheetLines(const SailState &sail, float clewX, float clewY)
     const float wX  = CX + ss * 7.0f * BS,  wY  = CY + 14.7f * BS;
 
     lv_color_t col = CLR_GREEN;   // green sheet
-    cline(_canvas, clewX, clewY, flX, flY, col, 1, LV_OPA_60);
-    cline(_canvas, flX,   flY,   wX,  wY,  col, 1, LV_OPA_50);
+    linePx(clewX, clewY, flX, flY, col, LV_OPA_60, 1);
+    linePx(flX, flY, wX, wY, col, LV_OPA_50, 1);
 }
 
 // ── Spinnaker ─────────────────────────────────────────────────────────────────
@@ -935,19 +1305,16 @@ void WindScreen::drawSpinnaker(const SailState &sail) {
     fillEllipse(ocx, ocy, 18.6f * BS, 15.3f * BS, col, 210);
     for (float a = 0.f; a < 360.f; a += 6.f) {
         float a1 = a * DEG2RAD, a2 = (a + 6.f) * DEG2RAD;
-        cline(_canvas,
-              ocx + 18.6f * BS * sinf(a1), ocy - 15.3f * BS * cosf(a1),
-              ocx + 18.6f * BS * sinf(a2), ocy - 15.3f * BS * cosf(a2),
-              CLR_ORANGE, 1, 200);
+        linePx(ocx + 18.6f * BS * sinf(a1), ocy - 15.3f * BS * cosf(a1), ocx + 18.6f * BS * sinf(a2), ocy - 15.3f * BS * cosf(a2), CLR_ORANGE, 200, 1);
     }
 
     float halsX = CX - ss * 4.0f * BS;
     float halsY = ocy;
-    cline(_canvas, CX, CY - 29.f * BS, halsX, halsY, (uiTheme.windRigging), 1, LV_OPA_70);
+    linePx(CX, CY - 29.f * BS, halsX, halsY, (uiTheme.windRigging), LV_OPA_70, 1);
 
     float schotX = CX + ss * 28.6f * BS;
     float schotY = CY - 3.3f * BS;
-    cline(_canvas, CX, CY + 7.3f * BS, schotX, schotY, CLR_GREEN, 1, LV_OPA_60);
+    linePx(CX, CY + 7.3f * BS, schotX, schotY, CLR_GREEN, LV_OPA_60, 1);
 }
 
 // ── Code Zero ─────────────────────────────────────────────────────────────────
@@ -975,17 +1342,11 @@ void WindScreen::drawCodeZero(const SailState &sail) {
 // ── Layer 7+8: Circle borders ─────────────────────────────────────────────────
 
 void WindScreen::drawInnerBorder() {
-    lv_draw_arc_dsc_t d; lv_draw_arc_dsc_init(&d);
-    d.color = (uiTheme.windMast); d.width = 3; d.opa = LV_OPA_COVER;
-    lv_canvas_draw_arc(_canvas,
-        (lv_coord_t)CX, (lv_coord_t)CY, (lv_coord_t)R_INNER, 0, 360, &d);
+    ringAA(CX, CY, R_INNER, 3.f, (uiTheme.windMast), LV_OPA_COVER);
 }
 
 void WindScreen::drawOuterBorder() {
-    lv_draw_arc_dsc_t d; lv_draw_arc_dsc_init(&d);
-    d.color = (uiTheme.windHull); d.width = 2; d.opa = LV_OPA_COVER;
-    lv_canvas_draw_arc(_canvas,
-        (lv_coord_t)CX, (lv_coord_t)CY, (lv_coord_t)R_OUTER, 0, 360, &d);
+    ringAA(CX, CY, R_OUTER, 2.f, (uiTheme.windHull), LV_OPA_COVER);
 }
 
 // ── Layer 9: TWA pointer (blue triangle, tip points inward at zone outer) ────
@@ -1109,8 +1470,7 @@ void WindScreen::drawCenter_Attitude(float roll, float pitch, float rot) {
         if (disc > 0.f) {
             float sd = sqrtf(disc);
             float t1 = (-B - sd) * 0.5f, t2 = (-B + sd) * 0.5f;
-            cline(_canvas, CX + t1 * cphi, horY + t1 * sphi,
-                           CX + t2 * cphi, horY + t2 * sphi, LINEC, 2);
+            linePx(CX + t1 * cphi, horY + t1 * sphi, CX + t2 * cphi, horY + t2 * sphi, LINEC, LV_OPA_COVER, 2);
         }
     }
 
@@ -1126,7 +1486,7 @@ void WindScreen::drawCenter_Attitude(float roll, float pitch, float rot) {
         float hl = halfL[i];
         float ax = mx - hl*cphi, ay = my - hl*sphi;
         float bx = mx + hl*cphi, by = my + hl*sphi;
-        cline(_canvas, ax, ay, bx, by, LINEC, 1, LV_OPA_80);
+        linePx(ax, ay, bx, by, LINEC, LV_OPA_80, 1);
         snprintf(lbl, sizeof(lbl), "%d", pv[i] < 0 ? -pv[i] : pv[i]);
         ctext(_canvas, bx + 2.f * UI_SF, by - 6.f * UI_SF, 18.f * UI_SF, FONT_TINY, LINEC, LV_TEXT_ALIGN_LEFT, lbl);
     }
@@ -1135,14 +1495,14 @@ void WindScreen::drawCenter_Attitude(float roll, float pitch, float rot) {
     const float rB = 100.f * UI_SF;               // scale radius (over the sky)
     const int   bt[5] = { 10, 20, 30, 45, 60 };
     { lv_point_t p1 = wp(CX,CY,rB,0.f), p2 = wp(CX,CY,rB-11.f*UI_SF,0.f);  // 0° major tick
-      cline(_canvas, p1.x, p1.y, p2.x, p2.y, LINEC, 2, LV_OPA_70); }
+      linePx(p1.x, p1.y, p2.x, p2.y, LINEC, LV_OPA_70, 2); }
     for (int i = 0; i < 5; i++) {
         for (int s = -1; s <= 1; s += 2) {
             float ang = (float)(s * bt[i]);
             bool maj = (bt[i] % 30) == 0;
             lv_point_t p1 = wp(CX, CY, rB, ang);
             lv_point_t p2 = wp(CX, CY, rB - (maj ? 11.f : 7.f) * UI_SF, ang);
-            cline(_canvas, p1.x, p1.y, p2.x, p2.y, LINEC, maj ? 2 : 1, LV_OPA_70);
+            linePx(p1.x, p1.y, p2.x, p2.y, LINEC, LV_OPA_70, maj ? 2 : 1);
         }
     }
     {
@@ -1154,10 +1514,10 @@ void WindScreen::drawCenter_Attitude(float roll, float pitch, float rot) {
     }
 
     // ── Fixed aircraft reference (does NOT rotate) ───────────────────────────
-    cline(_canvas, CX - 38.f * UI_SF, CY, CX - 14.f * UI_SF, CY,                 CLR_YELLOW, 3);
-    cline(_canvas, CX - 14.f * UI_SF, CY, CX - 14.f * UI_SF, CY + 7.f * UI_SF,   CLR_YELLOW, 3);
-    cline(_canvas, CX + 38.f * UI_SF, CY, CX + 14.f * UI_SF, CY,                 CLR_YELLOW, 3);
-    cline(_canvas, CX + 14.f * UI_SF, CY, CX + 14.f * UI_SF, CY + 7.f * UI_SF,   CLR_YELLOW, 3);
+    linePx(CX - 38.f * UI_SF, CY, CX - 14.f * UI_SF, CY, CLR_YELLOW, LV_OPA_COVER, 3);
+    linePx(CX - 14.f * UI_SF, CY, CX - 14.f * UI_SF, CY + 7.f * UI_SF, CLR_YELLOW, LV_OPA_COVER, 3);
+    linePx(CX + 38.f * UI_SF, CY, CX + 14.f * UI_SF, CY, CLR_YELLOW, LV_OPA_COVER, 3);
+    linePx(CX + 14.f * UI_SF, CY, CX + 14.f * UI_SF, CY + 7.f * UI_SF, CLR_YELLOW, LV_OPA_COVER, 3);
     { lv_draw_rect_dsc_t rd; lv_draw_rect_dsc_init(&rd);
       rd.bg_color = CLR_YELLOW; rd.bg_opa = LV_OPA_COVER; rd.radius = UI_S(2); rd.border_width = 0;
       lv_canvas_draw_rect(_canvas, (lv_coord_t)(CX-UI_S(3)), (lv_coord_t)(CY-UI_S(3)), UI_S(6), UI_S(6), &rd); }
@@ -1165,8 +1525,8 @@ void WindScreen::drawCenter_Attitude(float roll, float pitch, float rot) {
     // ── Rate-of-turn strip (below the aircraft symbol) ───────────────────────
     {
         const float yb = CY + 62.f * UI_SF, FS = 60.f, halfW = 46.f * UI_SF;
-        cline(_canvas, CX - halfW, yb, CX + halfW, yb, LINEC, 1, LV_OPA_70);
-        cline(_canvas, CX, yb - 5.f * UI_SF, CX, yb + 5.f * UI_SF, LINEC, 1, LV_OPA_70);   // centre mark
+        linePx(CX - halfW, yb, CX + halfW, yb, LINEC, LV_OPA_70, 1);
+        linePx(CX, yb - 5.f * UI_SF, CX, yb + 5.f * UI_SF, LINEC, LV_OPA_70, 1);   // centre mark
         float r  = isnan(rot) ? 0.f : fmaxf(-FS, fminf(FS, rot));
         float xr = CX + (r / FS) * halfW;
         lv_color_t rc = (fabsf(rot) > 30.f) ? CLR_ORANGE : CLR_GREEN;
@@ -1265,7 +1625,7 @@ void WindScreen::drawCompassRose(float hdg) {
         bool major = (b % 30) == 0;
         lv_point_t p1 = wp(CX, CY, major ? rtM : rt0, a);
         lv_point_t p2 = wp(CX, CY, rt1, a);
-        cline(_canvas, p1.x, p1.y, p2.x, p2.y, major ? cMaj : cTick, major ? 2 : 1, LV_OPA_70);
+        linePx(p1.x, p1.y, p2.x, p2.y, major ? cMaj : cTick, LV_OPA_70, major ? 2 : 1);
     }
     // Cardinal letters: German Ost = "O", English East = "E" (not static — T() is
     // language-dependent and the language can change at runtime).
@@ -1404,7 +1764,7 @@ void WindScreen::drawRudderArc(float rudderDeg) {
             lv_canvas_draw_arc(_canvas,(lv_coord_t)CX,(lv_coord_t)CY,(lv_coord_t)rM,90,(int)(90.f+sp),&ad); }
     }
     { lv_point_t p1 = wp(CX, CY, rI - 2.f, 180.f), p2 = wp(CX, CY, rO + 2.f, 180.f);  // amidships tick
-      cline(_canvas, p1.x, p1.y, p2.x, p2.y, CLR_TEXT, 2); }
+      linePx(p1.x, p1.y, p2.x, p2.y, CLR_TEXT, LV_OPA_COVER, 2); }
     lv_point_t sp2 = wp(CX, CY, rM, 180.f - HALF + 4.f);   // stbd end (right)
     ctext(_canvas, sp2.x - 13.f * UI_SF, sp2.y - 7.f * UI_SF, 26.f * UI_SF, FONT_TINY, CLR_GREEN, LV_TEXT_ALIGN_CENTER, T(STR_WIND_STB));
     lv_point_t bp2 = wp(CX, CY, rM, 180.f + HALF - 4.f);   // port end (left)
@@ -1552,9 +1912,9 @@ void WindScreen::triPointer(float windAngle,
     float brY = bcY - hw * sinA;
 
     fillTri(_canvas, tipX, tipY, blX, blY, brX, brY, col, opa);
-    cline(_canvas, tipX, tipY, blX, blY, col, 2, opa);
-    cline(_canvas, tipX, tipY, brX, brY, col, 2, opa);
-    cline(_canvas, blX,  blY,  brX, brY, col, 1, opa);
+    linePx(tipX, tipY, blX, blY, col, opa, 2);
+    linePx(tipX, tipY, brX, brY, col, opa, 2);
+    linePx(blX, blY, brX, brY, col, opa, 1);
 }
 
 // ── dashedRadial helper ───────────────────────────────────────────────────────

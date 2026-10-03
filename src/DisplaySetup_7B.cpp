@@ -44,6 +44,21 @@
 // transceiver - which is what NMEA 2000 needs, so do not clear it.
 static uint8_t s_exio = 0xFF;
 
+// PROTOKOLL: [Register, Wert] an 0x24 - und das ist AM GERAET GEMESSEN.
+//
+// Ich hatte das hier am 2026-08-30 auf das Mehr-Adressen-Schema des echten
+// CH422G umgebaut (0x24 Systemregister, 0x38 Ausgabedaten, 0x26 Eingaenge),
+// weil die Annahme "gleiche Registerbelegung wie der CH32V003 des 4-Zoellers"
+// im Quelltext unbelegt dastand und LovyanGFX es im selben Baum anders macht.
+//
+// Ein I2C-Scan am Geraet hat das WIDERLEGT: auf diesem Bus antworten nur
+// 0x24 (Expander) und 0x5D (GT911-Touch) - weder vor noch nach dem Freigeben
+// der Ausgangstreiber meldet sich 0x38. Das Register-Protokoll ist fuer dieses
+// Board also richtig, und der USB/CAN-Umschalter EXIO5 wurde die ganze Zeit
+// korrekt getrieben (Schattenwert startet 0xFF).
+//
+// Der Scan bleibt drin. Er hat eine drei Jahre alte Annahme in zwei Minuten
+// entschieden, und er kostet einmalig ein paar Millisekunden beim Start.
 static bool ch422_write(uint8_t reg, uint8_t val) {
     Wire.beginTransmission(CH422_I2C_ADDR);
     Wire.write(reg);
@@ -51,10 +66,12 @@ static bool ch422_write(uint8_t reg, uint8_t val) {
     return Wire.endTransmission() == 0;
 }
 
+static bool exio_flush() { return ch422_write(CH422_REG_OUT, s_exio); }
+
 static bool exio_set(uint8_t pin, bool high) {
     if (high) s_exio |=  (uint8_t)(1u << pin);
     else      s_exio &= (uint8_t)~(1u << pin);
-    return ch422_write(CH422_REG_OUT, s_exio);
+    return exio_flush();
 }
 
 // This board has no buzzer on the expander - the anchor alarm is silent here.
@@ -158,9 +175,17 @@ void displayDiag() {
     const bool ok = (Wire.endTransmission(false) == 0) &&
                     (Wire.requestFrom((uint8_t)CH422_I2C_ADDR, (uint8_t)1) == 1);
     if (ok) in = Wire.read();
+#ifdef EXIO_USB_CAN
+    Serial.printf("[disp] CH422G out=0x%02X in=0x%02X (%s)  EXIO%d(USB/CAN)=%d  "
+                  "panel %dx%d @%u Hz\n",
+                  s_exio, in, ok ? "ok" : "read failed",
+                  EXIO_USB_CAN, (s_exio >> EXIO_USB_CAN) & 1,
+                  LCD_WIDTH, LCD_HEIGHT, (unsigned)LCD_PCLK_HZ);
+#else
     Serial.printf("[disp] CH422G out=0x%02X in=0x%02X (%s)  panel %dx%d @%u Hz\n",
                   s_exio, in, ok ? "ok" : "read failed",
                   LCD_WIDTH, LCD_HEIGHT, (unsigned)LCD_PCLK_HZ);
+#endif
     Serial.flush();
 }
 
@@ -484,9 +509,51 @@ static void lvgl_touch_cb(lv_indev_drv_t *indev, lv_indev_data_t *data) {
 void displayInit() {
     Wire.begin(CH422_I2C_SDA, CH422_I2C_SCL, 400000);
 
-    if (!ch422_write(CH422_REG_MODE, 0xFF))
-        Serial.println("[disp] !!! CH422G did not ACK - check the I2C bus");
-    ch422_write(CH422_REG_OUT, s_exio);      // EXIO6 = LCD supply on
+    // Wer am Bus haengt, wird gemessen und nicht angenommen. Genau diese
+    // Annahme ("CH422G, gleiche Registerbelegung wie der 4-Zoeller") stand
+    // jahrelang unbelegt im Quelltext und hat die Fehlersuche verzoegert.
+    auto i2c_scan = [](const char *wann) {
+        char liste[96] = "";
+        size_t n = 0;
+        for (uint8_t a = 0x08; a <= 0x77; a++) {
+            Wire.beginTransmission(a);
+            if (Wire.endTransmission() == 0 && n + 6 < sizeof liste)
+                n += snprintf(liste + n, sizeof liste - n, " 0x%02X", a);
+        }
+        Serial.printf("[i2c] %s antwortende Adressen:%s\n", wann, n ? liste : " keine");
+        Serial.flush();
+    };
+    // ZWEIMAL scannen: manche Expander geben ihre Ausgabeadresse erst frei,
+    // nachdem die Ausgangstreiber eingeschaltet sind. Wer nur vorher misst,
+    // zieht daraus den falschen Schluss.
+    i2c_scan("");
+
+    // Erst die Ausgangstreiber freigeben, dann das Schattenbyte schicken.
+    // Beide Schritte werden einzeln quittiert, damit ein stummer Baustein
+    // nicht als "Panel laeuft doch" durchgeht - genau so ist der falsche
+    // Zugriff jahrelang unbemerkt geblieben.
+    const bool okCfg = ch422_write(CH422_REG_MODE, 0xFF);
+    const bool okOut = exio_flush();
+    if (!okCfg || !okOut)
+        Serial.printf("[disp] !!! CH422G ohne Quittung (cfg=%d out=%d) - I2C pruefen\n",
+                      (int)okCfg, (int)okOut);
+
+    // EXIO5 ausdruecklich setzen statt sich auf den Startwert des
+    // Schattenbytes zu verlassen: dieser Pin entscheidet, ob der gemeinsame
+    // Anschluss am USB-Bruecken- oder am CAN-Transceiver haengt. Ohne ihn
+    // kommt auf diesem Board nie eine NMEA-2000-Nachricht an.
+    //
+    // NUR auf dem 7B. Diese Datei wird auch fuer das 5-Zoll-Board uebersetzt
+    // (dessen env erbt vom 7B), und dort ist derselbe Expander-Pin ein
+    // ISOLIERTER EINGANG (DI1) - ihn zu treiben waere schlicht falsch.
+#ifdef EXIO_USB_CAN
+    exio_set(EXIO_USB_CAN, true);
+    Serial.printf("[disp] CH422G bereit, EXIO=0x%02X (EXIO%d=CAN)\n",
+                  s_exio, EXIO_USB_CAN);
+#else
+    Serial.printf("[disp] CH422G bereit, EXIO=0x%02X (kein USB/CAN-Umschalter)\n",
+                  s_exio);
+#endif
     delay(50);
 
     gt911_reset_and_detect();

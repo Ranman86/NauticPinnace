@@ -29,6 +29,7 @@ extern "C" void Cache_WriteBack_All(void);
 #include "display/LanguageOverlay.h"
 #include "net/BshTide.h"
 #include "PsramArena.h"
+#include "driver/twai.h"   // twai_get_status_info() fuer die CAN-Zeile im Heartbeat
 
 // Global instances
 DataModel  data;
@@ -487,7 +488,7 @@ extern void dispPaintTake(uint32_t *screenMaxUs, uint32_t *chromeMaxUs);
 // the maximum meant the other four had never once been observed, so every
 // conclusion about where the paint time goes rested on a single number.
 // All zero whenever the wind screen was not on display.
-extern void windPhaseTake(uint32_t out[5]);
+extern void windPhaseTake(uint32_t out[6]);
 
 static inline void paintTimed() {
     const int64_t t0 = esp_timer_get_time();
@@ -510,11 +511,11 @@ static inline void tickTimed() {
 // the format and arguments it has always had.
 #define HB_PERF_FMT  " fps=%.1f paint=%.1f tick=%.1f rend=%u flush=%.2f" \
                      " str=%u px=%u fsum=%.0f draw=%.0f scr=%.1f chr=%.1f steal=%u%%" \
-                     " ph bg=%.0f zone=%.0f tick=%.0f boat=%.0f ovl=%.0f"
+                     " ph bg=%.0f zone=%.0f tick=%.0f boat=%.0f trace=%.0f ovl=%.0f"
 #define HB_PERF_ARGS , hbFps, hbPaintMs, hbTickMs, hbRendMs, hbFlushMs, \
                        hbStrips, hbPx, hbFsumMs, hbDrawMs, hbScrMs, hbChromeMs, hbStealPct, \
                        hbPh[0] / 1000.0f, hbPh[1] / 1000.0f, hbPh[2] / 1000.0f, \
-                       hbPh[3] / 1000.0f, hbPh[4] / 1000.0f
+                       hbPh[3] / 1000.0f, hbPh[4] / 1000.0f, hbPh[5] / 1000.0f
 #else
 #define HB_PERF_FMT  ""
 #define HB_PERF_ARGS
@@ -632,7 +633,7 @@ void loop() {
         uint32_t hbFrames = 0, hbRendMs = 0, hbFlushUs = 0, hbStrips = 0, hbFsumUs = 0;
         uint32_t hbPx = 0;
         uint32_t hbScrUs = 0, hbChromeUs = 0;
-        uint32_t hbPh[5] = { 0, 0, 0, 0, 0 };
+        uint32_t hbPh[6] = { 0, 0, 0, 0, 0, 0 };
         dispPerfTake(&hbFrames, &hbRendMs, &hbFlushUs, &hbStrips, &hbFsumUs, &hbPx);
         dispPaintTake(&hbScrUs, &hbChromeUs);
         windPhaseTake(hbPh);
@@ -657,7 +658,31 @@ void loop() {
         s_paintMaxUs = 0;
         s_tickMaxUs  = 0;
 #endif
-        Serial.printf("[HB] t=%u DRAM=%u blk=%u min=%u PSRAM=%u n2kRx=%u rssi=%d ip=%s screen=%s"
+        // CAN-Zustand direkt beim Treiber erfragen. Ohne das sehen "Bus nicht
+        // angeschlossen", "falsche Pins" und "falsche Baudrate" von aussen
+        // voellig gleich aus - naemlich alle wie n2kRx=0. Der Unterschied
+        // steckt in den Fehlerzaehlern: echte Stille laesst sie auf 0, ein
+        // falsch verstandener Bus laesst sie steigen.
+        //   st=0 STOPPED | 1 RUNNING | 2 BUS_OFF | 3 RECOVERING; can=n/a = kein Treiber
+        //
+        // Die AUSSAGEKRAFT steckt in der Kombination, nicht in einer Zahl:
+        //   rx=0 UND alle Fehlerzaehler 0  -> die Leitung ist elektrisch still
+        //                                     (nichts angeschlossen / falsche Pins)
+        //   rx=0 ABER rxerr/busoff steigen -> Bus da, aber falsch verstanden
+        //                                     (Baudrate, Verdrahtung, Abschluss)
+        char canTxt[72] = " can=n/a";
+        {
+            twai_status_info_t ti;
+            if (twai_get_status_info(&ti) == ESP_OK)
+                snprintf(canTxt, sizeof canTxt,
+                         " can=st%d rx=%u rxmiss=%u txerr=%u rxerr=%u busoff=%u",
+                         (int)ti.state, (unsigned)ti.msgs_to_rx,
+                         (unsigned)ti.rx_missed_count,
+                         (unsigned)ti.tx_error_counter,
+                         (unsigned)ti.rx_error_counter,
+                         (unsigned)ti.bus_error_count);
+        }
+        Serial.printf("[HB] t=%u DRAM=%u blk=%u min=%u PSRAM=%u n2kRx=%u%s rssi=%d ip=%s screen=%s"
                       HB_PERF_FMT "\n",
             now,
             heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
@@ -665,6 +690,7 @@ void loop() {
             heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
             heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
             g_n2kRxCount,
+            canTxt,
             rssi,
             ip.c_str(),
             dispMgr.currentTitle()

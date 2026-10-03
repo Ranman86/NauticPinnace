@@ -13,8 +13,11 @@
 #
 #  * PORTRAIT IS NOT A FLAG. The simulator reads display.rotation out of the
 #    configuration, exactly like the device does - that is the point, it shows
-#    what a rotated panel really shows. So each portrait pass gets a throwaway
-#    config with rotation 90.
+#    what a rotated panel really shows. So each pass gets a throwaway config
+#    with display.rotation set to 0 or 90. data\config.json normally has no
+#    rotation key at all, so the key has to be ADDED, not replaced: a text
+#    substitution silently did nothing and every "portrait" image was a
+#    landscape frame turned on its side.
 #
 #  * A PORTRAIT CAPTURE COMES OUT SIDEWAYS. The window keeps the panel's
 #    1024x600 shape and the picture lies on its side inside it, again exactly
@@ -67,6 +70,20 @@ $tmpRoot = Join-Path $env:TEMP "nauticpinnace-shots-$PID"
 New-Item -ItemType Directory -Force -Path $tmpRoot | Out-Null
 New-Item -ItemType Directory -Force -Path $OUT | Out-Null
 
+# Writes the per-pass config: the project's config with display.rotation set,
+# creating the key (and the display object) when it is missing.
+$mkcfg = @'
+import json, sys, io
+src, dst, rot = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with io.open(src, encoding="utf-8-sig") as f:
+    c = json.load(f)
+c.setdefault("display", {})["rotation"] = rot
+with io.open(dst, "w", encoding="utf-8") as f:
+    f.write(json.dumps(c, indent=2, ensure_ascii=False))
+'@
+$mkcfgFile = Join-Path $tmpRoot "mkcfg.py"
+Set-Content -Path $mkcfgFile -Value $mkcfg -Encoding utf8
+
 # Six simulator instances at once. They only read the project and write into
 # their own directory, so there is nothing for them to fight over.
 $jobs = @()
@@ -76,8 +93,8 @@ foreach ($p in $passes) {
 
     # A throwaway config, so the real data\config.json is never touched.
     $cfg = Join-Path $dir "config.json"
-    (Get-Content (Join-Path $PROJECT "data\config.json") -Raw) `
-        -replace '"rotation"\s*:\s*\d+', ('"rotation": ' + $p.Rot) | Set-Content $cfg -Encoding utf8
+    & python $mkcfgFile (Join-Path $PROJECT "data\config.json") $cfg $p.Rot
+    if ($LASTEXITCODE -ne 0) { throw "could not write the config for $($p.Theme) $($p.Orient)" }
 
     $jobs += Start-Job -ScriptBlock {
         param($exe, $dir, $theme, $cfg, $path)

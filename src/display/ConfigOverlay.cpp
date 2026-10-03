@@ -1,4 +1,5 @@
 #include "ConfigOverlay.h"
+#include "Icons.h"   // OpenBridge icon trial
 #if defined(BOARD_PANEL_1024X600)
 #include "../BoardConfig.h"   // board macros (the geometry comes from Theme.h)
 #endif
@@ -158,7 +159,7 @@ void ConfigOverlay::open() {
 
     // ---- header ----
     mkLabel(_root, T(STR_CFG_TITLE), 14, 12, FONT_LARGE, CLR_TEXT);
-    mkButton(_root, LV_SYMBOL_CLOSE, W - 12 - 44, 8, 44, 36, CLR_SURFACE, CLR_TEXT, cbClose);
+    mkButton(_root, npSym(NP_ICON_CLOSE), W - 12 - 44, 8, 44, 36, CLR_SURFACE, CLR_TEXT, cbClose);   // OpenBridge icon trial
 
     // ---- WLAN section ----
     // Section title on the left; the WLAN radio switch sits on the otherwise-

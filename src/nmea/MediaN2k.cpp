@@ -91,16 +91,46 @@ static void txSetZoneVolumeWire(int zone, int pct) {
     txCommand(CMD_SET_VOLUME, p, 2);
 }
 
+// ---- who is at the other end? -----------------------------------------------
+// Every control below used to update the DataModel unconditionally, and next /
+// prev fell through to the demo playlist whenever the bus was not transmitting.
+// "Not transmitting" is also listen-only, or no CAN wiring at all - so with demo
+// mode OFF a tap on next painted "Sailing / Rod Stewart" onto the screen, and
+// play/pause and the mute buttons flipped their icons for a radio nobody had
+// heard. Now there are exactly two counterparts:
+//   - the demo stereo, but only while DemoData is actually feeding it. demoTick()
+//     runs at ~5 Hz in demo mode and stops the moment demo mode goes off, so its
+//     last call is the test, not the config flag: the PC simulator feeds demo
+//     data in --shots runs with cfg.demoMode false (sim_main.cpp).
+//   - a radio heard on the bus (data.mediaConnected, set by PGN 130820).
+// The local model mirrors a control only when one of them exists. Commands go
+// on the bus only when the bus is live and the demo is not: the demo's source
+// list and track are invented and must not steer a real radio.
+// A flag of its own, not "s_demoLastMs == 0": millis() is 0 at a simulator start.
+static volatile bool     s_demoTicked  = false; // demoInit()/demoTick() ever ran
+static volatile uint32_t s_demoLastMs  = 0;     // when they last did
+static const uint32_t    DEMO_ALIVE_MS = 2000;  // 10 tick periods of 200 ms
+
+static bool demoLive() {
+    return s_demoTicked && (uint32_t)(millis() - s_demoLastMs) < DEMO_ALIVE_MS;
+}
+
+// Call with the data lock held.
+static bool mirrorLocally(bool demo) { return demo || data.mediaConnected; }
+
+static bool txLive(bool demo) { return n2kActive && !demo; }
+
 // ---- control (called from the media screen; updates DataModel immediately) -
 void setSource(int idx) {
+    const bool demo = demoLive();
     {
         auto lk = data.lock();
-        if (idx >= 0 && idx < (int)data.mediaSourceCount) {
+        if (mirrorLocally(demo) && idx >= 0 && idx < (int)data.mediaSourceCount) {
             data.mediaSource = (int8_t)idx;
             data.lastMediaUpdate = millis();
         }
     }
-    if (n2kActive) { uint8_t p = (uint8_t)idx; txCommand(CMD_SET_SOURCE, &p, 1); }
+    if (txLive(demo)) { uint8_t p = (uint8_t)idx; txCommand(CMD_SET_SOURCE, &p, 1); }
 }
 
 void cycleSource(int dir) {
@@ -117,29 +147,34 @@ void cycleSource(int dir) {
 void setZoneVolume(int zone, int vol) {
     if (zone < 0 || zone >= DataModel::MEDIA_NUM_ZONES) return;
     vol = clampi(vol, 0, 100);
+    const bool demo = demoLive();
     {
         auto lk = data.lock();
-        data.mediaZoneVol[zone]  = (uint8_t)vol;
-        data.mediaZoneMute[zone] = false;   // dragging the level unmutes the zone
-        data.lastMediaUpdate = millis();
+        if (mirrorLocally(demo)) {
+            data.mediaZoneVol[zone]  = (uint8_t)vol;
+            data.mediaZoneMute[zone] = false;   // dragging the level unmutes the zone
+            data.lastMediaUpdate = millis();
+        }
     }
-    if (n2kActive) txSetZoneVolumeWire(zone, vol);
+    if (txLive(demo)) txSetZoneVolumeWire(zone, vol);
 }
 
 void setMasterVolume(int vol) {
     vol = clampi(vol, 0, 100);
+    const bool demo = demoLive();
     uint8_t newVals[DataModel::MEDIA_NUM_ZONES];
     {
         auto lk = data.lock();
+        const bool local = mirrorLocally(demo);
         int old = data.mediaMasterVol();   // loudest zone = reference
         for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) {
             int nv = (old <= 0) ? vol : clampi((int)(data.mediaZoneVol[i] * (float)vol / old + 0.5f), 0, 100);
-            data.mediaZoneVol[i] = (uint8_t)nv;
+            if (local) data.mediaZoneVol[i] = (uint8_t)nv;
             newVals[i] = data.mediaZoneMute[i] ? 0 : (uint8_t)nv;   // muted zones stay silent
         }
-        data.lastMediaUpdate = millis();
+        if (local) data.lastMediaUpdate = millis();
     }
-    if (n2kActive) for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) txSetZoneVolumeWire(i, newVals[i]);
+    if (txLive(demo)) for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) txSetZoneVolumeWire(i, newVals[i]);
 }
 
 void nudgeMaster(int delta) {
@@ -153,51 +188,61 @@ void nudgeMaster(int delta) {
 // setZoneVolume) unmutes.
 void toggleZoneMute(int zone) {
     if (zone < 0 || zone >= DataModel::MEDIA_NUM_ZONES) return;
+    const bool demo = demoLive();
     bool m; int vol;
     {
         auto lk = data.lock();
-        data.mediaZoneMute[zone] = !data.mediaZoneMute[zone];
-        m   = data.mediaZoneMute[zone];
+        m   = !data.mediaZoneMute[zone];
         vol = data.mediaZoneVol[zone];
-        data.lastMediaUpdate = millis();
+        if (mirrorLocally(demo)) {
+            data.mediaZoneMute[zone] = m;
+            data.lastMediaUpdate = millis();
+        }
     }
-    if (n2kActive) txSetZoneVolumeWire(zone, m ? 0 : vol);
+    if (txLive(demo)) txSetZoneVolumeWire(zone, m ? 0 : vol);
 }
 
 // Master mute: if any zone is muted → unmute all, else mute all.
 void toggleAllMute() {
+    const bool demo = demoLive();
     uint8_t eff[DataModel::MEDIA_NUM_ZONES];
     {
         auto lk = data.lock();
+        const bool local = mirrorLocally(demo);
         bool any = false;
         for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) if (data.mediaZoneMute[i]) any = true;
         bool nm = !any;
         for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) {
-            data.mediaZoneMute[i] = nm;
+            if (local) data.mediaZoneMute[i] = nm;
             eff[i] = nm ? 0 : data.mediaZoneVol[i];
         }
-        data.lastMediaUpdate = millis();
+        if (local) data.lastMediaUpdate = millis();
     }
-    if (n2kActive) for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) txSetZoneVolumeWire(i, eff[i]);
+    if (txLive(demo)) for (int i = 0; i < DataModel::MEDIA_NUM_ZONES; i++) txSetZoneVolumeWire(i, eff[i]);
 }
 
 void playPause() {
+    const bool demo = demoLive();
     uint8_t newState; int8_t src;
     {
         auto lk = data.lock();
-        data.mediaPlayState = (data.mediaPlayState == 1) ? 2 : 1;
-        newState = data.mediaPlayState; src = data.mediaSource;
-        data.lastMediaUpdate = millis();
+        newState = (data.mediaPlayState == 1) ? 2 : 1;
+        src = data.mediaSource;
+        if (mirrorLocally(demo)) {
+            data.mediaPlayState = newState;
+            data.lastMediaUpdate = millis();
+        }
     }
-    if (n2kActive) {
+    if (txLive(demo)) {
         uint8_t p[2] = { (uint8_t)(src < 0 ? 0 : src),
                          (uint8_t)(newState == 1 ? TRANSPORT_PLAY : TRANSPORT_PAUSE) };
         txCommand(CMD_MEDIA_CONTROL, p, 2);
     }
 }
 
-// In demo mode next/prev jump the demo track list; live they send transport cmds.
-void nextTrack();   // fwd (demo impl below)
+// next/prev step the demo playlist while the demo runs, send a transport command
+// when the bus is live, and do nothing otherwise (implementation below the demo).
+void nextTrack();
 void prevTrack();
 
 // ---- incoming status (PGN 130820) -------------------------------------------
@@ -291,12 +336,12 @@ void handlePGN130820(const tN2kMsg &msg) {
 #endif // !SIMULATOR
 
 void requestStatus() {
-    if (n2kActive) txCommand(CMD_REQUEST_STATUS, nullptr, 0);
+    if (txLive(demoLive())) txCommand(CMD_REQUEST_STATUS, nullptr, 0);
 }
 
 // ============================================================
-// Demo data (used when demoMode / CAN off): a fake stereo that plays a
-// playlist so the screen is fully alive and interactive in the simulator.
+// Demo data (used in demo mode only - DemoData calls demoTick): a fake stereo
+// that plays a playlist so the screen is fully alive and interactive.
 // ============================================================
 static const char *DEMO_SOURCES[] = { "FM", "AM", "AUX", "Bluetooth", "USB" };
 static const int   DEMO_SOURCE_N  = 5;
@@ -310,7 +355,6 @@ static const DemoTrack DEMO_TRACKS[] = {
 };
 static const int DEMO_TRACK_N = 5;
 static int      s_demoTrack   = 0;
-static uint32_t s_demoLastMs  = 0;
 
 static void demoLoadTrack(int i) {
     auto lk = data.lock();
@@ -340,12 +384,23 @@ void demoInit() {
     }
     demoLoadTrack(s_demoTrack);
     s_demoLastMs = millis();
+    s_demoTicked = true;
 }
 
 void demoTick(uint32_t nowMs) {
-    if (s_demoLastMs == 0) s_demoLastMs = nowMs;
-    uint32_t dt = nowMs - s_demoLastMs;
+    // Signed: demoInit() stamps millis(), which can already be a millisecond past
+    // the nowMs the caller took before calling it - unsigned, that wrapped to a
+    // 49-day step and skipped the first track at once.
+    int32_t gap = s_demoTicked ? (int32_t)(nowMs - s_demoLastMs) : 0;
+    if (gap < 0) gap = 0;
+    // Back after a pause: demo mode was switched off (which wiped the model, see
+    // main.cpp demoTask / N2kHandler::loop) and on again. DemoData seeds the
+    // stereo only on its very first tick, so seed it again here - otherwise the
+    // re-enabled demo showed an empty media screen.
+    if (gap >= (int32_t)DEMO_ALIVE_MS) { demoInit(); gap = 0; }
     s_demoLastMs = nowMs;
+    s_demoTicked = true;
+    const uint32_t dt = (uint32_t)gap;
     auto lk = data.lock();
     if (data.mediaPlayState != 1) return;             // only advance while playing
     data.mediaElapsedMs += dt;
@@ -360,24 +415,22 @@ void demoTick(uint32_t nowMs) {
     }
 }
 
-void nextTrack() {
-    if (n2kActive) {
+// The playlist only while the demo runs; a skip on the bus otherwise. Neither:
+// nothing to skip - the title stays "--". (This is where a tap used to invent a
+// track with demo mode off, see "who is at the other end?" above.)
+static void stepTrack(int dir) {
+    const bool demo = demoLive();
+    if (demo) {
+        s_demoTrack = (s_demoTrack + dir + DEMO_TRACK_N) % DEMO_TRACK_N;
+        demoLoadTrack(s_demoTrack);
+    } else if (txLive(demo)) {
         int8_t src; { auto lk = data.lock(); src = data.mediaSource; }
-        uint8_t p[2] = { (uint8_t)(src < 0 ? 0 : src), TRANSPORT_NEXT };
-        txCommand(CMD_MEDIA_CONTROL, p, 2); return;
+        uint8_t p[2] = { (uint8_t)(src < 0 ? 0 : src), dir > 0 ? TRANSPORT_NEXT : TRANSPORT_PREV };
+        txCommand(CMD_MEDIA_CONTROL, p, 2);
     }
-    s_demoTrack = (s_demoTrack + 1) % DEMO_TRACK_N;
-    demoLoadTrack(s_demoTrack);
 }
 
-void prevTrack() {
-    if (n2kActive) {
-        int8_t src; { auto lk = data.lock(); src = data.mediaSource; }
-        uint8_t p[2] = { (uint8_t)(src < 0 ? 0 : src), TRANSPORT_PREV };
-        txCommand(CMD_MEDIA_CONTROL, p, 2); return;
-    }
-    s_demoTrack = (s_demoTrack - 1 + DEMO_TRACK_N) % DEMO_TRACK_N;
-    demoLoadTrack(s_demoTrack);
-}
+void nextTrack() { stepTrack(+1); }
+void prevTrack() { stepTrack(-1); }
 
 } // namespace Media

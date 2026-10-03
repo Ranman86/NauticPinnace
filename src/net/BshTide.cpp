@@ -12,6 +12,7 @@
 #include <time.h>
 #include <math.h>
 #include "../nmea/DataModel.h"
+#include "../config/Config.h"   // cfg.tideBshFetch gates the fetch, not the clock
 #include "../SunCalc.h"
 
 // ── JSON pools -> PSRAM ──────────────────────────────────────────────────────
@@ -278,15 +279,44 @@ static bool fetchBsh() {
 static void bshTask(void *) {
     bool synced = false;
     int  iter   = 0;
+    // Seeded from the current setting so a device that BOOTS with the fetch
+    // off does not announce a "switched off" it never switched away from.
+    bool wasFetching = appConfig.cfg.tideBshFetch;
     // Let boot settle first: screen creation + WiFi association allocate heap, and
     // the TLS fetch (~40 KB transient) must not collide with that peak.
     vTaskDelay(pdMS_TO_TICKS(25000));
     for (;;) {
         if (WiFi.status() == WL_CONNECTED) {
+            // SNTP runs REGARDLESS of the tide setting. This task carries two
+            // unrelated jobs, and for a device with no GPS on the bus the clock
+            // sync is the only time source there is - switching the tide
+            // forecast off must not take the clock with it, or the clock page
+            // loses the date, the sun and moon lines, and its own astronomical
+            // tide estimate along with them.
             if (!synced || (iter % RESYNC_EVERY) == 0) {
                 if (syncTimeFromSntp()) synced = true;
             }
-            fetchBsh();
+
+            if (appConfig.cfg.tideBshFetch) {
+                fetchBsh();
+            } else if (wasFetching) {
+                // Switched off while running. Drop what was already stored, or
+                // the clock page would keep presenting an ageing forecast as
+                // current for up to twelve hours - its freshness window - while
+                // the user believes the source is off. Falls through to PGN
+                // 130320 or the astronomical estimate on the next repaint.
+                {
+                    auto lk = data.lock();
+                    for (int i = 0; i < DataModel::MAX_TIDE_FC; i++)
+                        data.tideFc[i] = DataModel::TideExtreme{};
+                    data.tideFcCount = 0;
+                    data.tideIsBsh   = false;
+                    data.lastTideFcMs = 0;
+                    memset(data.tideStation, 0, sizeof(data.tideStation));
+                }
+                Serial.println("[BSH] fetch disabled in config - stored forecast cleared");
+            }
+            wasFetching = appConfig.cfg.tideBshFetch;
             // The 12 KB stack is sized for the TLS handshake and lives in PSRAM;
             // print what was left so a future mbedTLS/ArduinoJson change cannot
             // quietly eat the margin without anyone seeing it.
