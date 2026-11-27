@@ -22,7 +22,7 @@
 // this short - "1.1.0" or "1.1.0-rc1" fit, a git hash does not.
 // ============================================================================
 
-#define FW_VERSION      "1.2.0"
+#define FW_VERSION      "1.3.0"
 
 // Model version reported alongside it on the bus. This describes the HARDWARE
 // generation, not the software, and therefore moves only when a new board
@@ -32,12 +32,32 @@
 // Which board this binary was built for. Three variants share these sources
 // and produce visibly different firmware, so "which version" is only half the
 // question when someone reports a problem - GET /api/info answers both.
+//
+// EXACTLY ONE board flag per firmware env (docs/N2K-UPDATE.md 8.1). This used
+// to fall back to the 4-inch for any env without a 7B or 5B flag, so a build
+// that forgot its flag silently became a "4-inch" image - harmless while the
+// name was only logged, dangerous now that it goes into the firmware
+// descriptor that an update over NMEA 2000 checks before it writes anything.
+// The simulator is the one build without a board flag (or with the 7B flag,
+// for the 1024x600 layout); it carries no descriptor.
+#if !defined(SIMULATOR) && \
+    (defined(BOARD_WAVESHARE_4) + defined(BOARD_WAVESHARE_7B) + defined(BOARD_WAVESHARE_5B)) != 1
+#error "exactly one of BOARD_WAVESHARE_4 / _7B / _5B must be defined"
+#endif
+
+// NP_BOARD_ID: the board id of the update protocol (docs/N2K-UPDATE.md 4.1).
+// Only ever added to, never renumbered: senders compare it with the id in
+// every image they offer.
 #if defined(BOARD_WAVESHARE_7B)
 #define FW_BOARD_NAME "waveshare-7b-1024x600"
+#define NP_BOARD_ID   2
 #elif defined(BOARD_WAVESHARE_5B)
 #define FW_BOARD_NAME "waveshare-5b-1024x600"
+#define NP_BOARD_ID   3
 #elif defined(SIMULATOR)
 #define FW_BOARD_NAME "simulator"
+#define NP_BOARD_ID   0
 #else
 #define FW_BOARD_NAME "waveshare-4inch-480x480"
+#define NP_BOARD_ID   1
 #endif

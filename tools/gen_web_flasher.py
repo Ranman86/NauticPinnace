@@ -29,7 +29,9 @@ match: the screen stays dark. It is not fatal - flashing the right one fixes
 it - but the page says so plainly.
 
 Order of work, so that a failure never leaves a half-written docs/flash/:
-  1. data/ is checked (tools/release_checks.py) before anything is built
+  1. data/ is checked (tools/release_checks.py) before anything is built,
+     and so are the Arduino IDF libs of the 7B/5B core: compiled from the
+     custom_sdkconfig that platformio.ini lists (check_hybrid_libs)
   2. all three boards are built (unless --skip-build)
   3. every input of every board is checked - account name or home paths,
      brand names, LittleFS image == data/, freshness, FW_VERSION
@@ -192,10 +194,35 @@ def find_boot_app0(pkg_roots):
     raise SystemExit('boot_app0.bin not found - build at least once first')
 
 
+_HYBRID_CHECKED = []
+
+
+def check_hybrid_cores():
+    """The 7B/5B link against Arduino IDF libs that pioarduino compiles from
+    custom_sdkconfig in platformio.ini, once per PlatformIO core - and it
+    notices a changed list only through a hash in sdkconfig.defaults that
+    every core shares, so the neutral core can keep libs from an older list
+    (release_checks.check_hybrid_libs). Problems for every core a 7B/5B
+    build here runs in."""
+    problems, cores = [], []
+    for b in BOARDS:
+        core = build_env(b).get('PLATFORMIO_CORE_DIR') or PIO_CORE
+        if b['key'] != '4' and core not in cores:
+            cores.append(core)
+            problems += release_checks.check_hybrid_libs(core)
+    return problems
+
+
 def build(board, skip):
     """Build one board (unless skip); return {image name: path}."""
     envvars = build_env(board)
     bdir, pkg_roots = board_paths(board, envvars)
+    if not skip and not _HYBRID_CHECKED:
+        # Once, before the FIRST board is built: a stale core costs no build.
+        if not release_checks.report(check_hybrid_cores(),
+                                     'Arduino IDF libs of the 7B/5B core'):
+            raise SystemExit('Nothing was built, and no output was changed.')
+        _HYBRID_CHECKED.append(True)
     if not skip:
         for fn in REBUILT:
             p = os.path.join(bdir, fn)
@@ -270,7 +297,7 @@ def main():
     # 3. validate every input BEFORE docs/flash/ is touched
     problems = release_checks.check_data_dir(DATA)
     for b, images in built:
-        problems += release_checks.check_build_output(images, version, DATA)
+        problems += release_checks.check_build_output(images, version, DATA, board=b['key'])
     if not release_checks.report(problems, 'build output of all boards'):
         if a.skip_build:
             print('\n--skip-build refused: the existing build output fails the '

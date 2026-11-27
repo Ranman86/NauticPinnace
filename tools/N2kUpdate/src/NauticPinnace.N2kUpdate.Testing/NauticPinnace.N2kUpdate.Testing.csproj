@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Test support for the sender library: a virtual CAN bus on a virtual clock, and a
+    scripted display that answers per docs/N2K-UPDATE.md. Used by the unit tests,
+    by the frame recorder of the cross test (14.3.2) and by the CLI's simulated
+    display. Not shipped with the updater.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>NauticPinnace.N2kUpdate.Testing</RootNamespace>
+    <AssemblyName>NauticPinnace.N2kUpdate.Testing</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NauticPinnace.N2kUpdate\NauticPinnace.N2kUpdate.csproj" />
+  </ItemGroup>
+</Project>

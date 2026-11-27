@@ -68,6 +68,7 @@ import math
 import os
 import re
 import sys
+import textwrap
 import unicodedata
 import xml.etree.ElementTree as ET
 
@@ -1090,6 +1091,30 @@ def size_guard(size):
     return '!defined(BOARD_PANEL_1024X600)' if small else 'defined(BOARD_PANEL_1024X600)'
 
 
+# Icons without the -google suffix that are nevertheless Material geometry (a path
+# comparison against Google Material Icons / Material Symbols). settings-iec is one
+# of them despite its suffix: its gear outline is Material Symbols "settings". The
+# media icons are the ones OpenBridge itself files under "-google" frames. Keep the
+# tuple complete - ship a new icon of this kind, add it here. Each output names
+# only the ones it actually contains (fonts: PANEL_ICONS, sprite: WEB_ICONS).
+MATERIAL_GEOMETRY = ('home', 'time', 'anchorwatch', 'trend', 'settings-iec',
+                     'simulation', 'media-play', 'media-pause', 'media-skip-next',
+                     'media-skip-previous', 'image', 'clipboard', 'save-proposal',
+                     'delete', 'palette-night')
+
+
+def material_list(ids):
+    """The Material-geometry icons among ids, in MATERIAL_GEOMETRY order."""
+    have = set(ids)
+    return ', '.join(i for i in MATERIAL_GEOMETRY if i in have)
+
+
+MATERIAL_FONT = material_list(i for _, i in PANEL_ICONS)
+MATERIAL_WEB = material_list(WEB_ICONS)
+IEC_NOTE = ('Icons whose id ends in -iec are OpenBridge redrawings of IEC 62288 '
+            'symbols (no IEC rights granted); the gear outline of settings-iec is '
+            'Material geometry, as listed above.')
+
 # The CC BY 4.0 change statements (section 3(a)(1)(B)). ONE wording each, used
 # verbatim by THIRD-PARTY-NOTICES.md, src/display/LicenseText.h and OB_ATTRIB in
 # data/index.html as well - change them everywhere or nowhere.
@@ -1108,9 +1133,11 @@ def licence_block(src):
         ' *   Licence text: LICENSES/CC-BY-4.0.txt. Exported from Figma on %s.'
         % src.get('exportDate', '?'),
         ' * Changes: %s.' % CHANGES_FONT,
-        ' * Icons whose id ends in -google are based on Google Material Icons, (c) Google',
-        ' *   LLC, Apache License 2.0 (LICENSES/Apache-2.0.txt). Icons whose id ends in -iec',
-        ' *   are OpenBridge redrawings of IEC 62288 symbols; no rights of the IEC are granted.',
+        ' * Based on Google Material Icons, (c) Google LLC, Apache License 2.0',
+        ' *   (LICENSES/Apache-2.0.txt): the icons whose id ends in -google, and these,',
+        ' *   which are drawn on the same geometry:',
+    ] + [' *     ' + l for l in textwrap.wrap(MATERIAL_FONT + '.', 72)] \
+      + [' * ' + l for l in textwrap.wrap(IEC_NOTE, 76)] + [
         ' * NauticPinnace is not affiliated with or endorsed by OpenBridge.',
         ' * Redistribute this file only together with that notice.',
     ]
@@ -1224,13 +1251,15 @@ def emit_header(sizes):
 
 def sprite_block(src, icons):
     attribution = ('Icons: "%s" by %s, %s, %s %s, exported %s. Changes: %s. '
-                   'Icons whose id ends in -google are based on Google Material Icons (Google '
-                   'LLC, Apache-2.0); icons whose id ends in -iec are OpenBridge redrawings of '
+                   'Icons whose id ends in -google, and %s drawn on the same geometry, are '
+                   'based on Google Material Icons (Google LLC, Apache-2.0); icons whose id '
+                   'ends in -iec are OpenBridge redrawings of '
                    'IEC 62288 symbols (no IEC rights granted). Not affiliated with or endorsed '
                    'by OpenBridge. OpenBridge icon trial.'
                    % (src.get('title', 'OpenBridge Icon Pack'), src.get('author', 'OpenBridge'),
                       src.get('url', ''), src.get('licence', 'CC BY 4.0'),
-                      src.get('licenceUrl', ''), src.get('exportDate', '?'), CHANGES_WEB))
+                      src.get('licenceUrl', ''), src.get('exportDate', '?'), CHANGES_WEB,
+                      MATERIAL_WEB))
     if '--' in attribution:
         raise SystemExit('attribution text must not contain "--" (HTML comment)')
     lines = [SPRITE_BEGIN,

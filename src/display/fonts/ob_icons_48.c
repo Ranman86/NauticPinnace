@@ -12,9 +12,14 @@
  *   Provided as is, without warranties of any kind (Section 5 of the licence).
  *   Licence text: LICENSES/CC-BY-4.0.txt. Exported from Figma on 2026-09-29.
  * Changes: rasterised into 4-bpp bitmap fonts and reduced to one colour.
- * Icons whose id ends in -google are based on Google Material Icons, (c) Google
- *   LLC, Apache License 2.0 (LICENSES/Apache-2.0.txt). Icons whose id ends in -iec
- *   are OpenBridge redrawings of IEC 62288 symbols; no rights of the IEC are granted.
+ * Based on Google Material Icons, (c) Google LLC, Apache License 2.0
+ *   (LICENSES/Apache-2.0.txt): the icons whose id ends in -google, and these,
+ *   which are drawn on the same geometry:
+ *     home, time, anchorwatch, trend, settings-iec, simulation, media-play,
+ *     media-pause, media-skip-next, media-skip-previous.
+ * Icons whose id ends in -iec are OpenBridge redrawings of IEC 62288 symbols
+ * (no IEC rights granted); the gear outline of settings-iec is Material
+ * geometry, as listed above.
  * NauticPinnace is not affiliated with or endorsed by OpenBridge.
  * Redistribute this file only together with that notice.
  */

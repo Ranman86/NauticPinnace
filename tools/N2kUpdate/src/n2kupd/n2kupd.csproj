@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    n2kupd: command-line front end of the sender library. Discovery, identify and
+    update over a CANable, over slcan text on TCP or a child process (the cross-test
+    bridges of 14.3.3), the scripted display as a TCP server, and the frame recorder
+    of the cross test (14.3.2). Cross-platform; Windows-only parts are guarded.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>NauticPinnace.N2kUpdate.Cli</RootNamespace>
+    <AssemblyName>n2kupd</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NauticPinnace.N2kUpdate\NauticPinnace.N2kUpdate.csproj" />
+    <ProjectReference Include="..\NauticPinnace.N2kUpdate.Testing\NauticPinnace.N2kUpdate.Testing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\WindowsHostTiming.cs" Link="Shared\WindowsHostTiming.cs" />
+    <Compile Include="..\Shared\CanablePorts.cs" Link="Shared\CanablePorts.cs" />
+    <Compile Include="..\Shared\UpdaterSettings.cs" Link="Shared\UpdaterSettings.cs" />
+  </ItemGroup>
+</Project>

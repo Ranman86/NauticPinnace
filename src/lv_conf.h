@@ -419,9 +419,11 @@
 #endif
 #else
 /* Print the assert site BEFORE restarting - a bare esp_restart() made every
- * LVGL assert look like a silent spontaneous reboot (menu-crash hunt 2026-08). */
-#define LV_ASSERT_HANDLER_INCLUDE <esp_system.h>
-#define LV_ASSERT_HANDLER do { printf("[lv-assert] %s:%d\n", __FILE__, __LINE__); esp_restart(); } while (0);
+ * LVGL assert look like a silent spontaneous reboot (menu-crash hunt 2026-08).
+ * otaGuardNoteAssert() makes the crash-loop guard count it as a crash
+ * (docs/N2K-UPDATE.md 10.6); the header also brings esp_restart(). */
+#define LV_ASSERT_HANDLER_INCLUDE "n2kupdate/LvAssert.h"
+#define LV_ASSERT_HANDLER do { printf("[lv-assert] %s:%d\n", __FILE__, __LINE__); otaGuardNoteAssert(); esp_restart(); } while (0);
 #endif
 
 #define LV_LOG_PRINTF 0

@@ -32,11 +32,13 @@
 #include "strings_core.inc"
 #include "strings_screens.inc"
 #include "strings_config.inc"
+#include "strings_update.inc"
 
 #define I18N_STRINGS(X) \
     I18N_STRINGS_CORE(X)    \
     I18N_STRINGS_SCREENS(X) \
-    I18N_STRINGS_CONFIG(X)
+    I18N_STRINGS_CONFIG(X)  \
+    I18N_STRINGS_UPDATE(X)
 
 enum StrId : uint16_t {
 #define X(k, de, en) STR_##k,

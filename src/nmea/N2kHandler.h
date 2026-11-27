@@ -19,6 +19,7 @@ enum N2kSrcCat {
     N2K_SRC_STW,       // 128259
     N2K_SRC_ENV,       // 130310 / 130311 / 130314 / 130312
     N2K_SRC_ATT,       // 127257
+    N2K_SRC_AP,        // 65305 / 65340 / 65341 - pilot computers only (ApPipeline)
     N2K_SRC_CAT_N
 };
 #define N2K_SRC_SLOTS 4
@@ -26,7 +27,7 @@ struct N2kSrcSeen { uint8_t sa; uint32_t count; uint32_t lastMs; };
 extern N2kSrcSeen g_n2kSrcSeen[N2K_SRC_CAT_N][N2K_SRC_SLOTS];
 // JSON keys in category order - shared by firmware and WebUI.
 static const char *const N2K_SRC_KEYS[N2K_SRC_CAT_N] = {
-    "pos", "hdg", "wind", "depth", "stw", "env", "att"
+    "pos", "hdg", "wind", "depth", "stw", "env", "att", "ap"
 };
 
 class N2kHandler {
@@ -56,6 +57,7 @@ private:
     static void onAisStaticA(const tN2kMsg &msg);       // PGN 129794
     static void onAisStaticB(const tN2kMsg &msg);       // PGN 129809/129810
     static void onHeadingTrack(const tN2kMsg &msg);     // PGN 127237 (autopilot)
+    static void onPilotFrame(const tN2kMsg &msg);       // PGN 65305/65340/65341 (pilot mode)
     static void onAttitude(const tN2kMsg &msg);         // PGN 127257 (yaw/pitch/roll)
     static void onRateOfTurn(const tN2kMsg &msg);       // PGN 127251
     static void onHeave(const tN2kMsg &msg);            // PGN 127252

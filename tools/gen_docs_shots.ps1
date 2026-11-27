@@ -95,6 +95,10 @@ foreach ($p in $passes) {
     $cfg = Join-Path $dir "config.json"
     & python $mkcfgFile (Join-Path $PROJECT "data\config.json") $cfg $p.Rot
     if ($LASTEXITCODE -ne 0) { throw "could not write the config for $($p.Theme) $($p.Orient)" }
+    # The simulator looks for polar.json next to the config it is given, as the
+    # device has its polar next to its config - without it Speed & Polar shows
+    # "--" for Polar and Perf.
+    Copy-Item (Join-Path $PROJECT "data\polar.json") (Join-Path $dir "polar.json")
 
     $jobs += Start-Job -ScriptBlock {
         param($exe, $dir, $theme, $cfg, $path)
@@ -108,17 +112,31 @@ $jobs | Remove-Job
 
 # Turn the captures into the documentation set: strip the scr_NN_/ovl_NN_
 # prefixes, rotate portrait upright, write PNG.
+#
+# The name comes from the screen's title, and two screens can share one: both
+# data grid pages are called "Data grid". Stripped to "data_grid" the second
+# silently overwrote the first, and data_grid_1/_2 were never written at all.
+# A title that occurs more than once in a pass is therefore numbered in slot
+# order - data_grid_1 (3x3), data_grid_2 (one big value) - and never written
+# under its bare name.
 $py = @'
 import sys, os, re, glob
 from PIL import Image
 src, out, theme, orient, rot = sys.argv[1:6]
+shots = []
+for f in sorted(glob.glob(os.path.join(src, "*.bmp"))):   # slot order
+    m = re.match(r"(?:scr|ovl)_\d+_(.+)\.bmp$", os.path.basename(f))
+    if m:
+        shots.append((f, m.group(1)))
+count = {}
+for _, name in shots:
+    count[name] = count.get(name, 0) + 1
+seen = {}
 n = 0
-for f in glob.glob(os.path.join(src, "*.bmp")):
-    base = os.path.basename(f)
-    m = re.match(r"(?:scr|ovl)_\d+_(.+)\.bmp$", base)
-    if not m:
-        continue
-    name = m.group(1)
+for f, name in shots:
+    if count[name] > 1:
+        seen[name] = seen.get(name, 0) + 1
+        name = "%s_%d" % (name, seen[name])
     im = Image.open(f)
     if int(rot):
         # ROTATE_270 undoes the panel's 90 degree mount, so the result reads

@@ -1,3 +1,25 @@
+wpa_supplicant - licence text
+=============================
+
+Below the line: wpa_supplicant's COPYING file followed by its README, which
+holds the licence terms, both verbatim (ESP-IDF 5.5.5,
+components/wpa_supplicant/).
+
+The linked hostap files name Jouni Malinen as copyright holder; the ones
+listed here name a further holder. Each of them says "This software may be
+distributed under the terms of the BSD license. See README for more
+details.", so the BSD licence below applies to these notices too (file in
+brackets):
+
+Copyright (c) 2019, The Linux Foundation
+    [src/common/dragonfly.c, SAE / WPA3 - all boards]
+Copyright (c) 2020, The Linux Foundation
+    [src/common/sae_pk.c, SAE-PK - 7B/5B]
+Copyright (c) 2013 Cozybit, Inc.
+    [src/crypto/aes-siv.c, AES-SIV - 7B/5B]
+
+------------------------------------------------------------------------------
+
 wpa_supplicant and hostapd
 --------------------------
 

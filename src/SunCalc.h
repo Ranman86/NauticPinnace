@@ -8,9 +8,10 @@
 // ============================================================
 
 // Days since 1970-01-01 for a civil date. scDaysFromCivil/scCivilFromDays are
-// ports of Howard Hinnant's public chrono-compatible date algorithms
-// (howardhinnant.github.io/date_algorithms.html; also published under MIT in
-// github.com/HowardHinnant/date) — see THIRD-PARTY-NOTICES.md.
+// ports of Howard Hinnant's chrono-compatible date algorithms as published on
+// howardhinnant.github.io/date_algorithms.html, which the author donated to the
+// public domain there. The same algorithms are also in his MIT-licensed date
+// library; nothing was copied from that library. See THIRD-PARTY-NOTICES.md.
 static inline long scDaysFromCivil(int y, unsigned m, unsigned d) {
     y -= m <= 2;
     long     era = (y >= 0 ? y : y - 399) / 400;
@@ -71,16 +72,35 @@ static inline void scSunTimesUTC(int year, unsigned month, unsigned day,
 
 // Subsolar point: solar declination [deg] and the longitude [deg, -180..180]
 // where the sun is overhead, for a civil date + UTC seconds-of-day.
+// Low-precision solar coordinates after the US Naval Observatory's
+// "Approximate Solar Coordinates" (mean anomaly, mean longitude, equation of
+// centre, obliquity), with the same day count and sidereal time as
+// scTideEstimate() below: within about 0.01 deg of the NOAA (Meeus) solar
+// position over 1990-2060. The sun stands overhead where the local sidereal
+// time equals its right ascension, i.e. at longitude RA - GMST. This replaces
+// a cosine fit of the declination (off by up to 1.3 deg) and a subsolar
+// longitude of 180 - 15 deg/h, which left out the equation of time (up to
+// 16 min, i.e. 4 deg of longitude). The sun position behind the clock map now
+// matches scSunTimesUTC()'s sunrise/sunset to about a minute (formerly up to
+// 25 min); the terminator drawn there is the geometric one (altitude 0), so it
+// passes the boat a few minutes after sunrise and before sunset - the
+// refraction and solar radius in the 90.833 deg zenith of those times.
 static inline void scSubsolar(int year, unsigned month, unsigned day,
                               double utcSec, float &decDeg, float &sunLonDeg) {
-    long N = scDaysFromCivil(year, month, day) - scDaysFromCivil(year, 1, 1) + 1;
-    // Declination (approx, deg): 23.44° * sin(360/365 * (N + 10))  (perihelion ~ Jan 3)
-    decDeg = -23.44f * cosf(0.0174532925f * (360.f / 365.f) * (float)(N + 10));
-    // Subsolar longitude: 0° at 12:00 UTC, moves 15°/h westward.
-    float lon = 180.f - (float)(utcSec / 86400.0) * 360.f;
-    while (lon > 180.f)  lon -= 360.f;
-    while (lon < -180.f) lon += 360.f;
-    sunLonDeg = lon;
+    const double D2R = 0.0174532925199433;
+    // Days since J2000.0 (2000-01-01 12:00 UTC = day 10957.5 since 1970).
+    const double d = (double)scDaysFromCivil(year, month, day) + utcSec / 86400.0 - 10957.5;
+    const double g = (357.529 + 0.98560028 * d) * D2R;               // mean anomaly
+    const double q = 280.459 + 0.98564736 * d;                        // mean longitude [deg]
+    const double L = (q + 1.915 * sin(g) + 0.020 * sin(2.0 * g)) * D2R;   // ecliptic longitude
+    const double e = (23.439 - 0.00000036 * d) * D2R;                 // obliquity
+    decDeg = (float)(asin(sin(e) * sin(L)) / D2R);
+    const double ra   = atan2(cos(e) * sin(L), cos(L)) / D2R;         // right ascension [deg]
+    const double gmst = 280.46061837 + 360.98564736629 * d;           // [deg]
+    double lon = fmod(ra - gmst, 360.0);                              // -360..360
+    while (lon > 180.0)  lon -= 360.0;
+    while (lon < -180.0) lon += 360.0;
+    sunLonDeg = (float)lon;
 }
 
 // Moon: synodic age [days, 0..29.53], illuminated fraction [0..1], waxing flag.
@@ -114,6 +134,8 @@ static inline void scMoonPhase(long daysSince1970, double secOfDay,
 //   hoursToNext      : hours until the next high or low water (forcing extreme)
 //   nextIsHigh       : true if that next extreme is a high water
 //   springFactor     : 0.5 (neap) .. 1.5 (spring) range multiplier
+//
+// scTideLevel() below repeats the levelNorm part of this; change both together.
 static inline void scTideEstimate(long daysSince1970, double secOfDay, float lonDeg,
                                   float &levelNorm, bool &rising,
                                   float &hoursToNext, bool &nextIsHigh,
@@ -151,4 +173,25 @@ static inline void scTideEstimate(long daysSince1970, double secOfDay, float lon
     // Next extreme is a HIGH if it lands on H = 0 or 180 (i.e. 2H = multiple of 360).
     double Hnext = fmod(H + degTo, 360.0);
     nextIsHigh = (fmod(Hnext, 180.0) < 0.5);
+}
+
+// levelNorm of scTideEstimate() on its own, for the tide curve, which needs
+// nothing else at up to a few hundred points per redraw: one sin and three
+// fmod fewer than the full estimate. The statements are those of
+// scTideEstimate(), operation for operation, so the result is bit-identical -
+// the curve has to be the same function as the readout above it. Keep them
+// in step.
+static inline float scTideLevel(long daysSince1970, double secOfDay, float lonDeg) {
+    const double D2R = 0.0174532925;
+    double d = ((double)daysSince1970 + secOfDay / 86400.0) - 10957.5;
+    double lamMoon = fmod(218.316 + 13.176396 * d, 360.0); if (lamMoon < 0) lamMoon += 360.0;
+    double lamSun  = fmod(280.460 +  0.9856474 * d, 360.0); if (lamSun  < 0) lamSun  += 360.0;
+    const double eps = 23.439 * D2R;
+    double raMoon = atan2(cos(eps) * sin(lamMoon * D2R), cos(lamMoon * D2R)) / D2R;
+    raMoon = fmod(raMoon + 360.0, 360.0);
+    double gmst = fmod(280.46061837 + 360.98564736629 * d, 360.0);
+    double H = fmod(gmst + lonDeg - raMoon + 720.0, 360.0);
+    double elong = fmod(lamMoon - lamSun + 360.0, 360.0);
+    const float springFactor = (float)(1.0 + 0.46 * cos(2.0 * elong * D2R));
+    return (float)(springFactor * cos(2.0 * H * D2R));
 }

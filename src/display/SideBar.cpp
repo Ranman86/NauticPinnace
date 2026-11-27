@@ -341,12 +341,28 @@ void SideBar::applyConfig() {
     buildCells();
 }
 
+// lv_label_set_text() frees, re-allocates and re-measures the text and
+// invalidates the label even when the string is the same - and updateValues()
+// writes every cell twice a second. A tank level, a battery voltage or a log
+// reading hardly ever changes between two of those writes, yet each write cost
+// the cell a redraw: its rounded, bordered card plus the value glyphs, one
+// draw-buffer pass each, on every screen. Comparing against the label's own
+// text first leaves out exactly the writes that would not change a pixel. There
+// is no cache to go stale (a rebuilt cell starts with a new label), and the
+// value labels keep LVGL's default LV_LABEL_LONG_WRAP, so there is no scroll
+// animation that a rewrite would have restarted either.
+static void setLabelIfChanged(lv_obj_t *lbl, const char *txt) {
+    const char *cur = lv_label_get_text(lbl);
+    if (cur && strcmp(cur, txt) == 0) return;
+    lv_label_set_text(lbl, txt);
+}
+
 void SideBar::updateValues() {
     const SidebarConfig &sc = appConfig.cfg.sidebar;
     for (int i = 0; i < _count; i++) {
         if (!_cells[i].lblValue) continue;
         const GridCell &cfg = cellCfg(sc, i);
-        if (!cfg.pgn[0]) { lv_label_set_text(_cells[i].lblValue, ""); continue; }
+        if (!cfg.pgn[0]) { setLabelIfChanged(_cells[i].lblValue, ""); continue; }
         // dmFieldByKey takes the DataModel lock itself (non-recursive mutex -
         // this must NOT run while already holding data.lock()).
         const float v = dmFieldByKey(cfg.pgn);
@@ -360,7 +376,7 @@ void SideBar::updateValues() {
             snprintf(fmt, sizeof(fmt), "%%.%df", cfg.decimals);
             snprintf(buf, sizeof(buf), fmt, v);
         }
-        lv_label_set_text(_cells[i].lblValue, buf);
+        setLabelIfChanged(_cells[i].lblValue, buf);
     }
 }
 

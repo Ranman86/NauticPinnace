@@ -50,7 +50,8 @@ enclosure/
 #   * 54 third-party LICENSE files would land under this repository's name.
 #     Three of these components ARE linked into the 7B / 5B firmware -
 #     joltwallet littlefs, network_provisioning and cJSON, through the
-#     prebuilt libraries of the Arduino 3.3.11 core - and are credited in
+#     ESP-IDF libraries the 7B / 5B build compiles with custom_sdkconfig
+#     under the Arduino 3.3.11 core - and are credited in
 #     THIRD-PARTY-NOTICES.md section 2.1, with their texts in LICENSES/. The
 #     rest is not linked. The notices travel with the binaries; the source
 #     tree does not need to.
@@ -73,3 +74,21 @@ boot_shot.bmp
 # copy ever land here, it must not be committed.
 *figma-export*.json
 Provenance/
+
+# C# sender library, updater and tests (tools/N2kUpdate): build output only.
+tools/N2kUpdate/**/bin/
+tools/N2kUpdate/**/obj/
+
+# Same story for the periodic capture of the interactive simulator
+# (sim_main.cpp, every ~10 s while it runs outside --shots).
+sim_shot.bmp
+
+# Host-side check programs of docs/WIND-AND-SAILS.md, section 7.3: built and
+# run from the repository root, so their binaries and the generator's output
+# land here. Local only; docs/downwind_vectors.txt, which the checker rewrites,
+# is not ignored: it belongs in the repository.
+/downwind_check
+/downwind_check.exe
+/wind_vectors
+/wind_vectors.exe
+/wind_vectors_out.txt

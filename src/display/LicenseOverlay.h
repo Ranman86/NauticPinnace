@@ -23,6 +23,10 @@ public:
 
     // Call from the LVGL task (DisplayManager::update), never from an event.
     void requestOpenFirstRun() { _pendingFirstRun = true; }
+    // open() on the next update() - for an event callback of another overlay
+    // that closes itself first (ConfigOverlay::cbLicenses): its tree is gone
+    // by then, so the two never share the LVGL pool.
+    void requestOpen() { _pendingOpen = true; }
     void update();
 
 #if defined(PERF_LICENSE_SCROLL)
@@ -48,6 +52,7 @@ private:
 #endif
     bool _open = false;
     bool _pendingFirstRun = false;
+    bool _pendingOpen = false;
 };
 
 extern LicenseOverlay licenseOverlay;

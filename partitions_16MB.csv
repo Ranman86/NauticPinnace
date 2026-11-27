@@ -4,8 +4,10 @@
 # The two app slots are deliberately the SAME size: an OTA update writes the
 # new image into the inactive slot, so a smaller second slot would silently
 # cap how big the firmware may ever grow. 4.94 MB each against a current
-# firmware of ~2.35 MB leaves ample room. No OTA code exists yet (nothing
-# includes Update.h / esp_ota_*) - the layout is simply ready for it.
+# firmware of ~2.4 MB leaves ample room. Both update paths use them - WiFi
+# (/api/ota) and NMEA 2000 (src/n2kupdate/OtaWriter.cpp) - and an update
+# reports at most slot size - 4096 bytes as its limit (docs/N2K-UPDATE.md 9.2).
+# otadata (below) is what the bootloader's rollback works on.
 #
 # The coredump partition is what makes a panic readable: the Arduino libs are
 # built with coredump-to-flash enabled, so WITHOUT it every boot logged

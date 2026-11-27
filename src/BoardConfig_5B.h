@@ -13,7 +13,7 @@
 // vendor selects it with ESP_PANEL_USE_1024_600_LCD.
 //
 // Sources: vendor examples in waveshareteam/ESP32-S3-Touch-LCD-5
-// (examples/Arduino/examples/{02_RS485,03_SD,05_IO_Test,06_TWAItransmit,
+// (examples/Arduino/examples/{02_RS485_Test,03_SD_Test,05_IO_Test,06_TWAItransmit,
 // 08_DrawColorBar,09_lvgl_v8_demo}) plus the vendor board definition
 // ESP32_Display_Panel/src/board/supported/waveshare/
 // BOARD_WAVESHARE_ESP32_S3_TOUCH_LCD_5_B.h — NOT the wiki tables.
@@ -28,7 +28,9 @@
 //   Vendor sdkconfig has CONFIG_SPIRAM_MODE_OCT=y (module is a WROOM-1-N16R8)
 //   -> board_build.arduino.memory_type = qio_opi, same as the 7B.
 //
-// Differences from the 7B (see BoardConfig_7B.h) — only five things:
+// Differences from the 7B (see BoardConfig_7B.h) — only six things:
+//   • The IO expander is a real CH422G, not the 7B's CH32V003 with a
+//     register map - same address 0x24, different protocol (see below).
 //   • CAN is on GPIO15/16, NOT 20/19.
 //   • There is NO USB/CAN multiplexer. The 7B's EXIO_USB_CAN does not exist
 //     here (EXIO5 is an isolated digital INPUT on this board) — nothing has
@@ -40,7 +42,7 @@
 //   • RS485 sits on GPIO43/44 (the UART0 pins), where the 7B has 15/16.
 //   • Different blanking: frame is 1368 x 637 instead of the 7B's 1386 x 661.
 // Everything else — all 16 RGB data pins, HSYNC/VSYNC/DE/PCLK, the I2C bus,
-// the GT911 and the CH422G pin functions 1..4 — is byte-for-byte identical.
+// the GT911 and the expander pin functions 1..4 — is byte-for-byte identical.
 // ============================================================
 
 // --- LCD panel geometry ------------------------------------------------------
@@ -116,11 +118,27 @@
 #define LCD_D15        40   // R7
 
 // --- CH422G IO expander (shared I2C bus with the touch controller) -----------
-// Same chip, same address and same register handling as the 7B - the existing
-// expander code carries over unchanged.
+// A REAL CH422G (measured 2026-10-29). It was taken for the 7B's chip at the
+// port, but the 7B's is a CH32V003 that takes [register, value] at 0x24. This
+// one has one I2C address per command and one byte per transfer: 0x24 system
+// byte (bit0 IO_OE, bit1 A_SCAN, bit2 OD_EN, bit3 SLEEP), 0x38 IO output,
+// 0x26 IO input, 0x23 OC output; a scan finds it on 0x20..0x27 and 0x30..0x3F
+// (the 7B's expander answers on 0x24 only).
+// It refuses the second byte of a [register, value] write, and the first lands
+// as the system byte - 0x02/0x03 switch on the display scan, which drives the
+// IO pins and with them the touch reset.
+// The firmware writes the system byte only (CH422G_SYS_INPUTS) and reads the
+// pins: IO_OE sets all of IO0..IO7 to outputs at once, and IO0/IO5 are the
+// isolated inputs DI0/DI1 here. So no pin is driven - backlight not
+// switchable, panel and touch out of reset on their own.
+#define EXIO_REAL_CH422G  1
 #define CH422_I2C_SDA   8
 #define CH422_I2C_SCL   9
-#define CH422_I2C_ADDR 0x24
+#define CH422_I2C_ADDR 0x24             // system byte (write)
+#define CH422G_ADDR_IN 0x26             // IO0..IO7 levels (read)
+#define CH422G_SYS_INPUTS 0x04          // scan off, IO0..7 inputs, OC open drain
+// The 7B's register map, kept only for the bring-up sketch (bringup/), which
+// still talks to the expander the 7B's way. The firmware does not use it here.
 #define CH422_REG_MODE 0x02
 #define CH422_REG_OUT  0x03
 #define CH422_REG_IN   0x04

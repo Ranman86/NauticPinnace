@@ -132,9 +132,16 @@
   },
   "ais": {
     "range": 5,
+    "north_up": true,
     "alarm": true,
     "cpa": 0.5,
     "tcpa": 10
+  },
+  "cal": {
+    "wind_damp_app_spd": 2,
+    "wind_damp_app_dir": 2,
+    "wind_damp_true_spd": 2,
+    "wind_damp_true_dir": 2
   },
   "anchor": {
     "set": false,
@@ -149,6 +156,7 @@
   "show_perf_overlay": false,
   "sail": {
     "lwl_m": 9.5,
+    "spi_type": "balloon",
     "spinnaker": true,
     "code_zero": true,
     "foresail_pct": 140,

@@ -149,7 +149,12 @@ void TankScreen::update() {
         // Litres via the calibration curve (or linear) + configured/bus capacity.
         float litres  = tc ? tc->liters(list[i].lvl, list[i].cap)
                            : (!isnan(list[i].cap) && list[i].cap > 0.f ? list[i].lvl / 100.f * list[i].cap : NAN);
-        float capDisp = (tc && !isnan(tc->capacity)) ? tc->capacity : list[i].cap;
+        // The capacity shown: the one saved, else the calibration's top - liters()
+        // never goes past it, and a calibration ignores the bus's - else the bus's.
+        // A calibrated tank without a capacity used to show its percentage alone.
+        float capDisp = (tc && !isnan(tc->capacity)) ? tc->capacity
+                      : (tc && tc->calN >= 2)       ? tc->calLit[tc->calN - 1]
+                      : list[i].cap;
         char vb[32];
         if (!isnan(litres) && !isnan(capDisp) && capDisp > 0.f)
             snprintf(vb, sizeof(vb), "%d %%   %d/%d L", pct, (int)(litres + 0.5f), (int)(capDisp + 0.5f));

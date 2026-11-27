@@ -25,6 +25,10 @@ void sim_mouse_cb(lv_indev_drv_t *drv, lv_indev_data_t *data);
 struct SDL_Event;
 void sim_hal_handle_event(struct SDL_Event *ev);
 
+// Logical (LVGL, post-rotation) coordinates to SDL window coordinates, for a test
+// that injects mouse events: the inverse of what sim_mouse_cb() works out.
+void sim_hal_logical_to_window(int lx, int ly, int *wx, int *wy);
+
 #ifdef __cplusplus
 }
 #endif

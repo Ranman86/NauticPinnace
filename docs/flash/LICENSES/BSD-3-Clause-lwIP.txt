@@ -1,3 +1,56 @@
+lwIP - licence texts
+====================
+
+Section 1 below is lwIP's COPYING file, reproduced verbatim. Its conditions
+and disclaimer apply in the same wording to each of the following copyright
+notices, which the linked lwIP files carry in their own headers (file in
+brackets; "all boards" = the 4-inch, 7B and 5B images):
+
+Copyright (c) 2001-2004 Swedish Institute of Computer Science.
+Copyright (c) 2001-2003 Swedish Institute of Computer Science.
+    [most of the stack - all boards; 2001-2003 in etharp.c, netif/ethernet.c
+     and ESP-IDF's sys_arch.c]
+Copyright (c) 2001-2004 Leon Woestenberg <leon.woestenberg@gmx.net>
+Copyright (c) 2001-2004 Axon Digital Design B.V., The Netherlands.
+    [ipv4/dhcp.c - all boards]
+Copyright (c) 2003-2004 Leon Woestenberg <leon.woestenberg@axon.tv>
+Copyright (c) 2003-2004 Axon Digital Design B.V., The Netherlands.
+    [ipv4/etharp.c, netif/ethernet.c - all boards]
+Copyright (c) 2010 Inico Technologies Ltd.
+    [IPv6: ethip6.c, icmp6.c, ip6.c, ip6_addr.c, ip6_frag.c, mld6.c,
+     nd6.c - all boards]
+Copyright (c) 2007-2009 Frederic Bernon, Simon Goldschmidt
+    [apps/sntp/sntp.c - all boards; the source spells the first name with
+     accents]
+uIP version Copyright (c) 2002-2003, Adam Dunkels.
+    [dns.c - all boards]
+Copyright (c) 2016 The MINIX 3 Project.
+    [tcp_isn_default.c, ESP-IDF's TCP initial-sequence-number hook - all
+     boards; in ESP-IDF 5.5.5 this file is otherwise Espressif's, under
+     Apache-2.0]
+Copyright (c) 2018 Simon Goldschmidt
+    [ipv6/dhcp6.c - 7B / 5B only]
+
+Two linked lwIP files have no copyright line of their own but carry the same
+conditions and disclaimer: api/netdb.c and netif/ppp/pppos.c (both 7B / 5B
+only).
+
+ipv4/igmp.c (all boards) has its own wording, which differs in clause 3 and
+in the disclaimer: it is reproduced in section 2.
+
+The other notices of the lwIP PPP files that the 7B / 5B link are in
+BSD-lwIP-PPP.txt.
+
+Sources: ESP-IDF 5.5.5 (components/lwip) for the 7B / 5B; ESP-IDF 4.4.7 with
+espressif/esp-lwip a45be9e438f6cf9c54ec150581819c3b95d5af6b for the 4-inch.
+COPYING and the headers read the same in both, except that dhcp6.c is not
+linked on the 4-inch.
+
+
+------------------------------------------------------------------------------
+1. lwIP COPYING
+------------------------------------------------------------------------------
+
 Copyright (c) 2001, 2002 Swedish Institute of Computer Science.
 All rights reserved.
 
@@ -23,3 +76,39 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING
 IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY
 OF SUCH DAMAGE.
 
+
+------------------------------------------------------------------------------
+2. ipv4/igmp.c (IGMP) - all boards
+------------------------------------------------------------------------------
+
+Copyright (c) 2002 CITEL Technologies Ltd.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+3. Neither the name of CITEL Technologies Ltd nor the names of its contributors
+   may be used to endorse or promote products derived from this software
+   without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY CITEL TECHNOLOGIES AND CONTRIBUTORS ``AS IS''
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL CITEL TECHNOLOGIES OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+This file is a contribution to the lwIP TCP/IP stack.
+The Swedish Institute of Computer Science and Adam Dunkels
+are specifically granted permission to redistribute this
+source code.

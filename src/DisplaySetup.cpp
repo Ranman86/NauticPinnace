@@ -3,6 +3,7 @@
 #include "display/DisplayManager.h"
 #include "display/UiConfig.h"
 #include "config/Config.h"        // display.rotation
+#include "n2kupdate/OtaGuard.h"   // flush counter, health criterion H3
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -16,11 +17,17 @@ static void ch32_write(uint8_t reg, uint8_t val) {
     Wire.endTransmission();
 }
 
+// What the expander was last told for the buzzer and the backlight, so the
+// late check (displayLateCheck) knows what to put back.
+static bool    s_ch32Bee = false;
+static uint8_t s_ch32Pwm = 0x00;      // board_init(): full brightness
+
 // Anchor-alarm buzzer (CH32V003 expander pin 7, active-HIGH). Only bit6 differs
 // from the steady-state OUT value 0xBF (all HIGH, resets released); on -> 0xFF,
 // off -> 0xBF. Called from the LVGL task (same context as touch I2C) so the bus
 // access is serialised.
 void boardBuzzer(bool on) {
+    s_ch32Bee = on;
     ch32_write(CH32_REG_OUT, on ? (uint8_t)(0xBF | CH32_BEE_EN) : (uint8_t)0xBF);
 }
 
@@ -194,10 +201,150 @@ static void gt911_write_config() {
     }
 }
 
+// ---- Waiting for the expander -------------------------------------------------
+// The CH32V003 is a microcontroller with its own firmware, and it is the one
+// that powers the panel (SYS_EN) and releases its reset. setup() used to wait
+// a blind 8 s for it ("needs ~4-5 s to fully boot before it accepts I2C
+// commands reliably"), on every start, warm or cold.
+//
+// Now it is asked until it proves it is listening: it ACKs its address AND a
+// write sticks - the LCD_RST bit is driven low and back high, and the OUT
+// register has to read back each state (it reads 0xBD/0xBF in normal running,
+// i.e. it reflects what was written). Only the power and reset bits are
+// compared; the other lines may be inputs or held by their peers. These are
+// the very writes board_init() makes next anyway: DIR 0xFF, OUT 0xBF, a short
+// LCD reset pulse (the real one follows) - nothing new is written.
+//
+// Capped at the old 8 s: should a unit never confirm, it boots exactly as
+// late as before, and the line says why. Warm resets cannot test this - the
+// expander keeps running through an ESP reset; only a cold power-on can.
+//
+// The result is kept (displayExpanderWait()) for the boot summary main.cpp
+// prints later: on this board the console is the S3's own USB port, and
+// what is printed before a terminal has picked the port up again is lost.
+static ExpanderWait s_wait;
+
+static const uint8_t CH32_MASK = CH32_SYS_EN | CH32_LCD_RST | CH32_TOUCH_RST | CH32_BEE_EN;
+
+// Read OUT until the masked bits read `want`: right away 2 ms after the write,
+// and up to twice more 2 ms apart. The 2 ms are a guess at how fast the
+// expander's firmware applies a write it has ACKed; should it do that from
+// its main loop rather than in the I2C interrupt, a single read would miss
+// it every round, and the wait would run into its 8 s cap on every boot -
+// failing safe, but silently cancelling the point of it.
+static int ch32_read_out_until(uint8_t want) {
+    int r = -1;
+    for (int i = 0; i < 3; i++) {
+        delay(2);
+        r = ch32_read(CH32_REG_OUT);
+        if (r >= 0 && (r & CH32_MASK) == want) break;
+    }
+    return r;
+}
+
+static void ch32_wait_ready() {
+    const uint32_t CAP_MS = 8000;
+    const uint8_t  want = CH32_SYS_EN | CH32_LCD_RST | CH32_TOUCH_RST;   // BEE silent
+    const uint32_t t0 = millis();
+    uint32_t firstAck = 0, rounds = 0;
+    bool acked = false;
+    int r1 = -1, r2 = -1, r3 = -1;
+    for (;;) {
+        Wire.beginTransmission(CH32_I2C_ADDR);
+        if (Wire.endTransmission() == 0) {
+            if (!acked) { acked = true; firstAck = millis() - t0; }
+            rounds++;
+            // Each readback a little after its write: it must not race the
+            // expander's own handling of the write it just ACKed.
+            ch32_write(CH32_REG_DIR, 0xFF);
+            ch32_write(CH32_REG_OUT, 0xBF);
+            r1 = ch32_read_out_until(want);
+            ch32_write(CH32_REG_OUT, 0xBF & ~CH32_LCD_RST);
+            r2 = ch32_read_out_until(want & ~CH32_LCD_RST);
+            ch32_write(CH32_REG_OUT, 0xBF);
+            r3 = ch32_read_out_until(want);
+            if (r1 >= 0 && r2 >= 0 && r3 >= 0 &&
+                (r1 & CH32_MASK) == want && (r2 & CH32_MASK) == (want & ~CH32_LCD_RST) &&
+                (r3 & CH32_MASK) == want) {
+                s_wait.confirmed = true;
+                break;
+            }
+        }
+        if (millis() - t0 >= CAP_MS) break;
+        delay(acked ? 20 : 10);
+    }
+    s_wait.atMs       = millis();
+    s_wait.tookMs     = s_wait.atMs - t0;
+    s_wait.firstAckMs = firstAck;
+    s_wait.rounds     = (uint16_t)rounds;
+    s_wait.acked      = acked;
+    if (s_wait.confirmed)
+        Serial.printf("[boot] expander ready after %u ms (t=%u ms; first ACK "
+                      "after %u ms, %u round%s, out=0x%02X)\n",
+                      (unsigned)s_wait.tookMs, (unsigned)s_wait.atMs,
+                      (unsigned)firstAck, (unsigned)rounds,
+                      rounds == 1 ? "" : "s", (unsigned)r3);
+    else
+        Serial.printf("[boot] !!! expander NOT confirmed after %u ms (%s, %u rounds, "
+                      "readback %d/%d/%d) - continuing as before the change\n",
+                      (unsigned)s_wait.tookMs, acked ? "it ACKs" : "no ACK at all",
+                      (unsigned)rounds, r1, r2, r3);
+}
+
+const ExpanderWait &displayExpanderWait() { return s_wait; }
+
+// ---- The late check -----------------------------------------------------------
+// Once, about 10 s after start (main.cpp). The wait above proves that the
+// expander listens at one moment; the blind 8 s it replaces also covered a
+// firmware that answers early and only LATER applies its own power-on
+// defaults - a late init of its own, the same family as the 7B expander that
+// does not hold its MODE register. Nothing has shown that on this board; a
+// cold start could, and this is what would tell.
+//
+// Compared are the four OUT bits the wait itself proved to read back: panel
+// supply, both resets, buzzer. DIR and PWM are logged, not judged - their
+// readback was never verified. On a mismatch everything board_init() set is
+// written again (and the buzzer to what the anchor alarm wants), which
+// silences a buzzer and restores the backlight. The panel's own init cannot
+// be repeated here: should the SUPPLY or the RESET have dropped, the ST7701S
+// has lost its register setup (sent over SPI by gfx.begin()), and only a
+// restart brings the picture back - the line says so.
+void displayLateCheck() {
+    const uint8_t want = (uint8_t)(CH32_SYS_EN | CH32_LCD_RST | CH32_TOUCH_RST |
+                                   (s_ch32Bee ? CH32_BEE_EN : 0));
+    const int dir = ch32_read(CH32_REG_DIR);
+    int out = ch32_read(CH32_REG_OUT);
+    if (out < 0) { delay(5); out = ch32_read(CH32_REG_OUT); }   // one lost transfer is no verdict
+    const int pwm = ch32_read(CH32_REG_PWM);
+    if (out >= 0 && (out & CH32_MASK) == want) {
+        s_wait.late = 1;
+        Serial.printf("[boot] late expander check at %u ms: settings held (out=0x%02X "
+                      "dir=0x%02X pwm=0x%02X)\n", (unsigned)millis(), (unsigned)out,
+                      (unsigned)(dir & 0xFF), (unsigned)(pwm & 0xFF));
+        return;
+    }
+    s_wait.late = 0;
+    const bool panelHit = out < 0 || !(out & CH32_SYS_EN) || !(out & CH32_LCD_RST);
+    ch32_write(CH32_REG_DIR, 0xFD);           // as board_init() leaves it
+    ch32_write(CH32_REG_OUT, (uint8_t)(0xBF | (s_ch32Bee ? CH32_BEE_EN : 0)));
+    ch32_write(CH32_REG_PWM, s_ch32Pwm);
+    delay(2);
+    const int out2 = ch32_read(CH32_REG_OUT);
+    Serial.printf("[boot] !!! late expander check at %u ms: it had LOST its settings "
+                  "(out=%d dir=%d pwm=%d, expected out&0x%02X=0x%02X) - written again, "
+                  "out now %d%s\n", (unsigned)millis(), out, dir, pwm,
+                  (unsigned)CH32_MASK, (unsigned)want, out2,
+                  panelHit ? "; panel supply/reset had dropped: the panel lost its "
+                             "init, a RESTART is needed for a picture" : "");
+}
+
 static void board_init() {
     Wire.begin(CH32_I2C_SDA, CH32_I2C_SCL);
     Wire.setClock(400000);
     delay(50);
+
+    // Replaces the blind 8 s that setup() used to wait (see above).
+    ch32_wait_ready();
 
     // --- I2C bus scan diagnostic ------------------------------------------
     Serial.println("[disp] I2C scan (SDA=15, SCL=7):");
@@ -262,11 +409,17 @@ static void board_init() {
     Serial.printf("[disp] GT911 @ 0x%02X: found=%d PID=\"%.4s\"\n",
         s_touchAddr, (int)gt911Found, (char*)pidBuf);
 
-    // Read config version (0x8047): 0x00 = no valid config → write one
+    // Read config version (0x8047): 0x00 = no valid config → write one.
+    // Only on a read that actually answered. A failed read used to leave
+    // cfgVer at its 0 and so counted as "no config" - and wrote 184 bytes into
+    // the controller's flash on the strength of a missing ACK. With the blind
+    // 8 s gone the GT911 is asked a few hundred ms after power-up, still well
+    // past its start-up time, but a failed read must never reflash it.
     uint8_t cfgVer = 0;
-    gt911_i2c_read(0x8047, &cfgVer, 1);
-    Serial.printf("[disp] GT911 cfg version=0x%02X\n", cfgVer);
-    if (cfgVer == 0x00 || cfgVer == 0xFF) {
+    const bool cfgRead = gt911_i2c_read(0x8047, &cfgVer, 1);
+    Serial.printf("[disp] GT911 cfg version=0x%02X%s\n", cfgVer,
+                  cfgRead ? "" : " (READ FAILED - config left alone)");
+    if (cfgRead && (cfgVer == 0x00 || cfgVer == 0xFF)) {
         gt911_write_config();   // writes 184-byte config for 480×480 panel
     }
 
@@ -278,7 +431,8 @@ static void board_init() {
 
 void setBrightness(uint8_t brightness) {
     // brightness 0=off, 255=full → CH32V003 PWM is inverted
-    ch32_write(CH32_REG_PWM, 255 - brightness);
+    s_ch32Pwm = (uint8_t)(255 - brightness);
+    ch32_write(CH32_REG_PWM, s_ch32Pwm);
 }
 
 void gt911Diag() {
@@ -499,6 +653,7 @@ static uint32_t s_flushPassCount = 0;  // full-screen renders per second
 static void lvgl_flush_cb(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t *color_p) {
     esp_task_wdt_reset();
     s_flushCount++;
+    OtaGuard::countFlush();   // H3: LVGL still flushes (N2K-UPDATE.md 10.2)
     uint32_t w = area->x2 - area->x1 + 1;
     uint32_t h = area->y2 - area->y1 + 1;
     if (s_flushCount <= 3) {

@@ -263,6 +263,18 @@ static void sim_track_swipe(bool pressed, int mx, int my) {
     s_swipe_active = false;
 }
 
+void sim_hal_logical_to_window(int lx, int ly, int *wx, int *wy) {
+    lv_disp_t *d = lv_disp_get_default();
+    const int pw = d ? d->driver->hor_res : s_width;    // physical
+    const int ph = d ? d->driver->ver_res : s_height;
+    switch (d ? d->driver->rotated : LV_DISP_ROT_NONE) {
+        case LV_DISP_ROT_90:  *wx = ly;          *wy = ph - 1 - lx; break;
+        case LV_DISP_ROT_180: *wx = pw - 1 - lx; *wy = ph - 1 - ly; break;
+        case LV_DISP_ROT_270: *wx = pw - 1 - ly; *wy = lx;          break;
+        default:              *wx = lx;          *wy = ly;          break;
+    }
+}
+
 void sim_mouse_cb(lv_indev_drv_t *drv, lv_indev_data_t *data) {
     // Replay one queued sample per read so LVGL cannot miss a press/release pair
     // — or the travel in between — that arrived within a single frame.

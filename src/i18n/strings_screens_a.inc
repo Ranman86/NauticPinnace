@@ -12,6 +12,9 @@
     X(AIS_TARGET_ONE,       "Ziel",                 "target")               \
     X(AIS_TARGETS,          "Ziele",                "targets")              \
     X(AIS_UNKNOWN,          "Unbekannt",            "Unknown")              \
+    X(AIS_NO_OWN_POS,       "Keine eigene Position", "No own position")     \
+    X(AIS_NORTH_UP,         "Nord oben",            "North up")             \
+    X(AIS_COURSE_UP,        "Kurs oben",            "Course up")            \
     /* ── AnchorScreen ────────────────────────────────────────────────────── */ \
     X(ANCH_SET_BTN,         "Anker setzen",         "Set anchor")           \
     X(ANCH_LIFT_BTN,        "Anker lichten",        "Lift anchor")          \
@@ -24,8 +27,21 @@
     X(ANCH_NO_GPS,          "Kein GPS-Fix",         "No GPS fix")           \
     /* ── AutopilotScreen ─────────────────────────────────────────────────── */ \
     X(AP_SET_HEADING,       "Sollkurs",             "Set Heading")          \
+    X(AP_SET_WIND,          "Soll-Windwinkel",      "Set Wind Angle")       \
     X(AP_DEVIATION,         "Abw.",                 "Err")                  \
     X(AP_RUDDER,            "Ruder",                "Rudder")               \
+    /* side of a held wind angle, next to the number */                     \
+    X(AP_PORT,              "Bb",                   "Port")                 \
+    X(AP_STBD,              "Stb",                  "Stbd")                 \
+    /* mode badge (140 px at 480; the screen drops to a smaller font when */ \
+    /* one does not fit). "--" for an unknown mode is not a text. */         \
+    X(AP_MODE_STANDBY,      "STANDBY",              "STANDBY")              \
+    X(AP_MODE_AUTO,         "AUTO",                 "AUTO")                 \
+    X(AP_MODE_WIND,         "WIND",                 "WIND")                 \
+    X(AP_MODE_NAV,          "NAV",                  "NAV")                  \
+    X(AP_MODE_NO_DRIFT,     "OHNE DRIFT",           "NO DRIFT")             \
+    /* engaged, but the mode itself is not known */                         \
+    X(AP_MODE_ACTIVE,       "AKTIV",                "ACTIVE")               \
     /* ── BatteryScreen ───────────────────────────────────────────────────── */ \
     X(BATT_NO_DATA,         "Keine Batteriedaten",  "No battery data")      \
     X(BATT_TO_FULL,         "bis voll",             "to full")              \

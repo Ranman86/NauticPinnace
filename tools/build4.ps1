@@ -24,6 +24,16 @@ param([Parameter(ValueFromRemainingArguments = $true)] $Rest)
 $core = if ($env:PLATFORMIO_CORE_DIR) { $env:PLATFORMIO_CORE_DIR }
         else { Join-Path $HOME ".platformio" }
 
+# The two variables below are put back the way they were at the end. A script
+# called with "&" shares the caller's environment: without the restore, every
+# pio run typed into the same terminal afterwards - a 7B or 5B build - silently
+# used this private package dir and build dir. It installed the pioarduino
+# packages into packages-4inch (esptool 5.3.0 included, the very eviction this
+# dir exists to stop), recompiled the IDF libs there for an hour, and left its
+# firmware.bin in build\nauticpinnace-4inch\<env>, where nobody looked for it
+# (seen 2026-10-13).
+$savedPkgs  = $env:PLATFORMIO_PACKAGES_DIR
+$savedBuild = $env:PLATFORMIO_BUILD_DIR
 $env:PLATFORMIO_PACKAGES_DIR = Join-Path $core "packages-4inch"
 
 # ...and its own BUILD dir, for the same reason one level up. Changing the
@@ -39,12 +49,22 @@ $env:PLATFORMIO_BUILD_DIR = Join-Path $core "build\nauticpinnace-4inch"
 
 # PlatformIO's bundled interpreter first (that is where a PlatformIO IDE
 # install puts it), a pio on PATH second.
-$pio = Join-Path $core "penv\Scripts\pio.exe"
-if (-not (Test-Path $pio)) {
-    $onPath = Get-Command pio -ErrorAction SilentlyContinue
-    if ($onPath) { $pio = $onPath.Source }
-    else { Write-Error "pio not found - looked in $pio and on PATH"; exit 1 }
+$code = 1
+try {
+    $pio = Join-Path $core "penv\Scripts\pio.exe"
+    if (-not (Test-Path $pio)) {
+        $onPath = Get-Command pio -ErrorAction SilentlyContinue
+        if ($onPath) { $pio = $onPath.Source }
+        else { Write-Error "pio not found - looked in $pio and on PATH"; exit 1 }
+    }
+    $proj = Split-Path $PSScriptRoot -Parent
+    & $pio run -d $proj -e waveshare_esp32s3_4 @Rest
+    $code = $LASTEXITCODE
+} finally {
+    # Back to the caller's values; an unset variable stays unset.
+    if ($null -eq $savedPkgs)  { Remove-Item Env:PLATFORMIO_PACKAGES_DIR -ErrorAction SilentlyContinue }
+    else { $env:PLATFORMIO_PACKAGES_DIR = $savedPkgs }
+    if ($null -eq $savedBuild) { Remove-Item Env:PLATFORMIO_BUILD_DIR -ErrorAction SilentlyContinue }
+    else { $env:PLATFORMIO_BUILD_DIR = $savedBuild }
 }
-$proj = Split-Path $PSScriptRoot -Parent
-& $pio run -d $proj -e waveshare_esp32s3_4 @Rest
-exit $LASTEXITCODE
+exit $code

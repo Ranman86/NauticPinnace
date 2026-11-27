@@ -91,9 +91,59 @@ void EngineScreen::buildFields() {
         styleLabel(vobj, vf, CLR_TEXT);
         lv_obj_align(vobj, LV_ALIGN_CENTER, 0, UI_S(6));
 
-        _fields[i].card = c;
-        _fields[i].val  = vobj;
+        _fields[i].card  = c;
+        _fields[i].val   = vobj;
+        _fields[i].unit  = u;
+        _fields[i].font  = vf;
+        _fields[i].shown = vf;
+        lv_obj_update_layout(c);   // placeValue() reads the card's content width
     }
+}
+
+// A value centred in its card ran into the unit in the bottom-right corner
+// once it had four digits ("2676hPa": oil pressure in hPa). It is moved left
+// just far enough to keep a gap to the unit; only a value too wide even for
+// that drops to the next smaller font. A value that fits stays centred.
+void EngineScreen::placeValue(Field &f, const char *txt) {
+    const lv_coord_t cw  = lv_obj_get_content_width(f.card);
+    const lv_coord_t gap = UI_S(4);
+    lv_point_t us = {0, 0};
+    const char *unit = lv_label_get_text(f.unit);
+    if (unit && *unit)
+        lv_txt_get_size(&us, unit, FONT_TINY, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const lv_coord_t room = cw - (us.x ? us.x + gap : 0);   // left edge up to the unit
+
+    // The steps down, each taken only if it is really a smaller font: the
+    // sizes are set in the web interface, and two roles set to the same size
+    // are the same font - a step that changes nothing would loop for ever.
+    const lv_font_t *const ladder[] = { FONT_LARGE, FONT_MED, FONT_SMALL };
+    const lv_font_t *font = f.font;
+    lv_point_t vs;
+    lv_txt_get_size(&vs, txt, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    size_t i = 0;
+    while (i < 3 && ladder[i] != font) i++;
+    for (size_t k = i + 1; vs.x > room && k < 3; k++) {
+        if (ladder[k] == font) continue;
+        lv_point_t ks;
+        lv_txt_get_size(&ks, txt, ladder[k], 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+        if (ks.x >= vs.x) continue;              // not smaller after all
+        font = ladder[k];
+        vs = ks;
+    }
+    if (font != f.shown) {
+        lv_obj_set_style_text_font(f.val, font, 0);
+        f.shown = font;
+    }
+    // LV_ALIGN_CENTER puts its left edge at cw/2 - vs.x/2 (integer halves, as
+    // lv_obj_pos.c does), its right edge vs.x further; the right edge may
+    // reach `room`. It never starts left of the card's content: with six
+    // narrow cards a value too wide even in the smallest font touches the
+    // unit rather than losing its first digit.
+    const lv_coord_t left0 = cw / 2 - vs.x / 2;
+    lv_coord_t dx = room - (left0 + vs.x);
+    if (dx > 0) dx = 0;
+    if (left0 + dx < 0) dx = left0 > 0 ? -left0 : 0;
+    lv_obj_align(f.val, LV_ALIGN_CENTER, dx, UI_S(6));
 }
 
 void EngineScreen::onShow() {
@@ -140,6 +190,7 @@ void EngineScreen::update() {
         float val = dmFieldByKey(fc.pgn);
         fmtVal(buf, sizeof(buf), val, fc.decimals);
         lv_label_set_text(_fields[i].val, buf);
+        placeValue(_fields[i], buf);
 
         // Per-data-point alarm / stale colouring
         lv_color_t col = CLR_TEXT;

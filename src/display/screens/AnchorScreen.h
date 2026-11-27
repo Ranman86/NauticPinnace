@@ -4,6 +4,15 @@
 #include "../../PsramArena.h"
 #include "../../i18n/I18n.h"
 
+#ifdef SIMULATOR
+// PC simulator test harness only (sim/sim_main.cpp, --set anchortrack): lays a
+// fixed breadcrumb track and can hold the 3-s sampler off. Called from
+// AnchorScreen::update(); null unless the harness installs it. Not in a
+// device build.
+extern void (*g_simAnchorTrack)(float *trkN, float *trkE, int cap, int &idx, bool &full,
+                                float &maxDist, uint32_t &lastTrkMs);
+#endif
+
 // ============================================================
 // AnchorScreen – "Ankerwache" (anchor watch).
 //
@@ -50,6 +59,38 @@ private:
     bool     _trkFull = false;
     uint32_t _lastTrkMs = 0;
     float    _maxDist = 0.f;                // largest drift seen this session [m]
+    // Bumped on every change of the track rings (a sample, a reset): the
+    // frame key below holds this instead of the 240 samples.
+    uint32_t _trkGen  = 0;
+
+    // The inputs of one frame, read once in update(): the frame key is built
+    // from them and draw() paints from them, so the two cannot disagree.
+    // gpsOk and rotDeg are derived there, by the expressions draw() used.
+    struct Frame {
+        bool     set, alarmOn, gpsOk;
+        float    radius, ancLat, ancLon;
+        uint32_t setUtc;
+        float    curLat, curLon, cog;
+        float    rotDeg;                    // view rotation, 0 = north up
+        int16_t  offMin;                    // local time offset for "since"
+    };
+
+    // What is on the canvas: every input that reaches a pixel in the state
+    // the frame is in, and nothing else - an input that cannot change a pixel
+    // there stays zero (with the anchor up, the position does not matter at
+    // all). Floats as bit patterns, every NaN folded into one; zero-filled
+    // and compared with memcmp(), so it has no padding (four bytes, then
+    // 32-bit words). Colours, fonts and sizes only change through create(),
+    // which resets _painted; the language is in the key all the same.
+    struct FrameKey {
+        uint8_t  set, gpsOk, alarmOn, lang;
+        uint32_t radius, rotDeg, maxDist, trkGen;
+        uint32_t setUtc;
+        int32_t  offMin;
+        uint32_t curLat, curLon, ancLat, ancLon, cog;
+    };
+    FrameKey _paintedKey;                   // valid with _painted
+    bool     _painted = false;
 
     // What the two buttons were last drawn for. The anchor state can change
     // without anyone touching this screen - NauticPi sets or lifts the anchor
@@ -60,8 +101,8 @@ private:
     bool     _btnSetShown   = false;
     bool     _btnAlarmShown = false;
 
-    void draw();
-    void refreshAlarmBtn();                 // label/colour for the alarm toggle
+    void draw(const Frame &f);
+    void refreshAlarmBtn();                // label/colour for the alarm toggle
     // The set button does double duty. There is no room for a fifth button in
     // the bottom band, and "lift" is only ever wanted when an anchor is down,
     // so the one button carries both. Without it this device could receive a

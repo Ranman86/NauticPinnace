@@ -30,8 +30,8 @@
 // A later version may APPEND fields. It may not reinterpret the ones above.
 //
 // THE HEADER IS NOT A SIGNATURE. 2046 is the ttlappalainen library's default
-// for open-source devices and sits in hundreds of DIY projects - the Nautinect
-// autopilot sends its own messages under it on 130970-130972 - so FE 9F only
+// code, chosen as a free code from the NMEA list and not assigned by the NMEA.
+// Many DIY projects send under it (Nautinect's autopilot: 130970-130972), so FE 9F only
 // says "some DIY device". It does keep every commercial sender out (a stereo
 // maker's 419 = A3 99, B&G 381), and telling our message from another hobbyist's rests on
 // the PGN nobody else uses, then on the message id, the format version, the
@@ -52,8 +52,8 @@ enum : uint8_t {
 // in canboat, Santa Cruz Instruments in their own firmware. 131035 (0x1FFDB)
 // was then chosen by measurement, as the centre of the widest gap left after
 // canboat 8.2.1 and its history, ~130 other decoders and real bus captures were
-// swept. Nothing else in this tree may spell the number out; see the full
-// reasoning in SailTrimMonitor/ANCHOR-SYNC.md.
+// swept. Nothing else in this tree may spell the number out; the full reasoning
+// is in ANCHOR-SYNC.md of NauticPi (github.com/Ranman86/NauticPi).
 //
 // It stays inside 130816..131071, so the wire format is untouched by the move:
 // the PGN travels in the CAN identifier, not in the payload, and the reference

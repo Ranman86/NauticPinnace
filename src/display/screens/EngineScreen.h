@@ -20,9 +20,14 @@ private:
     lv_obj_t *_status    = nullptr;
 
     // Configurable bottom fields (count + data point from appConfig.cfg.engineFields)
-    struct Field { lv_obj_t *card=nullptr, *val=nullptr; };
+    struct Field {
+        lv_obj_t *card = nullptr, *val = nullptr, *unit = nullptr;
+        const lv_font_t *font = nullptr;   // the value font the card width allows
+        const lv_font_t *shown = nullptr;  // the one set now (smaller if needed)
+    };
     Field _fields[MAX_FIELDS];
     int   _fieldCount = 0;
     lv_obj_t *_fieldRow = nullptr;   // parent container, retained for rebuilds
     void buildFields();
+    void placeValue(Field &f, const char *txt);
 };

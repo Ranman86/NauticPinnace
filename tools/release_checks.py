@@ -23,8 +23,9 @@ Every check returns a list of problem strings; an empty list means clean.
             catches a build made under a different login.
   brand     names this project must not carry, in project-built files only
             (firmware, LittleFS image, merged image, generated text).
-            Third-party material is exempt: the bundled esptool source, for
-            one, uses the same letters in an unrelated Xtensa config macro.
+            Third-party archives are exempt: they are compressed, so a raw
+            scan of them proves nothing, and third-party source may use the
+            same letters in unrelated identifiers.
   data      data/ is packed WHOLE into littlefs.bin, git-ignored files
             included: only the four known files, blank WiFi credentials, and
             an index.html.gz that decompresses to index.html. The device
@@ -41,6 +42,50 @@ Every check returns a list of problem strings; an empty list means clean.
             which the 7B/5B build itself rewrites.
   version   firmware.bin must contain FW_VERSION from src/Version.h, and a
             release version, where one is given, must be that same version.
+  descriptor firmware.bin carries the firmware descriptor that updates over
+            NMEA 2000 rely on (docs/N2K-UPDATE.md 8.1): 0xE9 at 0, the app
+            description at 0x20, "NPFWDESC" at 0x120, with the board id,
+            panel size and board name of the board it is released for, the
+            OTAGUARD flag and FW_VERSION. The app description itself must
+            carry FW_VERSION and the project name "NauticPinnace"
+            (tools/app_desc.py). Prints the image id (8.3). The data
+            check also refuses an index.html.gz larger than one update region
+            (128 KB) - over NMEA 2000 it could then never be installed.
+  psram     7B and 5B only, in the release scripts: the firmware.elf next to
+            firmware.bin must leave room for the full canvas arena beside the
+            frame buffer (tools/psram_budget.py). Short, the device still
+            boots, but the screens built last stay empty. The same ELF must
+            define __wrap_esp_panic_handler_enable_rtc_wdt (the panic
+            handler's RTC watchdog re-arm through src/LoopWatchdog.cpp).
+  hwaes     7B and 5B only (the board is taken from the descriptor when it is
+            not given): firmware.bin must not carry the log tags of IDF's
+            hardware AES driver ("esp-aes", "esp-aes-gcm"). platformio.ini
+            switches it off (CONFIG_MBEDTLS_HARDWARE_AES=n in
+            custom_sdkconfig) because with the TLS records in PSRAM it broke
+            the tide download off on most tries; an image that still has it
+            was linked against Arduino IDF libs compiled from an older list.
+  libs      7B and 5B, in the release scripts, BEFORE they build: the Arduino
+            IDF libs in the PlatformIO core that is about to build them must
+            have been compiled with every option of custom_sdkconfig in
+            platformio.ini (check_hybrid_libs). pioarduino only compares a
+            hash in the first line of sdkconfig.defaults, a file every core
+            building this project shares - after a change of the list, the
+            core that builds first rewrites it, and any other core then
+            takes the hash for its own and keeps its old libs. A libs
+            package without the sdkconfig that a libs build leaves (a fresh
+            install) passes: the next build compiles them from the list.
+  testbuild no firmware image built with a test flag that must never ship:
+            -DPANIC_PATH_TEST (a web request crashes or hangs the display),
+            -DLOOP_WDT_OFF (no loop watchdog), -DLOOP_WDT_USB_OK (the
+            watchdog stays armed with a USB host and cuts a flash through
+            ESP Web Tools), or any of -DLOOP_WDT_MS, -DSETUP_WDT_MS,
+            -DRTC_STAGE_MS, -DUSB_REARM_MS (watchdog times other than the
+            release ones), -DBSH_BENCH_POS (the tide download always asks
+            for Cuxhaven, wherever the boat is) or -DBSH_BENCH_EVERY_S (the
+            430 KB tide download on a short fixed period). Each prints a fixed
+            line at boot (src/LoopWatchdog.cpp, bootReport(); for the two
+            BSH flags src/net/BshTide.cpp, bshTideBegin()), which is what
+            is searched for in every .bin.
 
 Paths in the output are shown relative to the repository, or with the home
 directory replaced by "~", and the account name only ever appears masked -
@@ -48,6 +93,7 @@ the report itself is meant to be pasteable.
 """
 import argparse
 import codecs
+import configparser
 import getpass
 import gzip
 import io
@@ -62,7 +108,51 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(ROOT, 'data')
 PARTITIONS_CSV = os.path.join(ROOT, 'partitions_16MB.csv')
 
-ALL_CHECKS = ('personal', 'brand', 'data', 'littlefs', 'fresh', 'version')
+ALL_CHECKS = ('personal', 'brand', 'data', 'littlefs', 'fresh', 'version',
+              'descriptor', 'hwaes', 'testbuild')
+
+# Log tags of IDF's hardware AES driver (mbedtls/port/aes): in a 7B/5B image
+# exactly when it was linked against libs built with MBEDTLS_HARDWARE_AES=y.
+# Matched as whole NUL-terminated strings.
+HWAES_TAGS = re.compile(rb'\x00(esp-aes(?:-gcm)?)\x00')
+
+# The env that owns custom_sdkconfig (the 5B extends it), and where a
+# PlatformIO core keeps the Arduino IDF libs that both are linked against.
+HYBRID_ENV = 'waveshare_esp32s3_7b'
+HYBRID_LIBS = os.path.join('packages', 'framework-arduinoespressif32-libs')
+
+# The boot lines of the test flags (src/LoopWatchdog.cpp, bootReport(); the
+# BSH bench flags in src/net/BshTide.cpp, bshTideBegin()): the string is in
+# the image exactly when the flag was set. Keep both sides in step.
+TESTBUILD_MARKERS = (
+    (b'TEST BUILD PANIC_PATH_TEST', '-DPANIC_PATH_TEST',
+     'GET /api/panic-test crashes or hangs the display'),
+    (b'TEST BUILD LOOP_WDT_OFF', '-DLOOP_WDT_OFF',
+     'the loop watchdog is never armed'),
+    (b'TEST BUILD LOOP_WDT_USB_OK', '-DLOOP_WDT_USB_OK',
+     'the loop watchdog stays armed with a USB host, so a flash through '
+     'ESP Web Tools is cut off'),
+    (b'TEST BUILD LOOP_WDT_TIMES',
+     '-DLOOP_WDT_MS / -DSETUP_WDT_MS / -DRTC_STAGE_MS / -DUSB_REARM_MS',
+     'the watchdog times are not the release ones'),
+    (b'TEST BUILD BSH_BENCH_POS', '-DBSH_BENCH_POS',
+     'the tide forecast is always fetched for Cuxhaven, wherever the boat is'),
+    (b'TEST BUILD BSH_BENCH_EVERY_S', '-DBSH_BENCH_EVERY_S',
+     'the 430 KB tide download runs on a short fixed period instead of every '
+     '3 h'),
+)
+
+# docs/N2K-UPDATE.md 4.1 / 8.1: board id -> (release folder, FW_BOARD_NAME,
+# panel width, panel height). Board ids are only ever added.
+DESC_BOARDS = {
+    1: ('4',  'waveshare-4inch-480x480', 480, 480),
+    2: ('7b', 'waveshare-7b-1024x600', 1024, 600),
+    3: ('5b', 'waveshare-5b-1024x600', 1024, 600),
+}
+DESC_OFFSET = 0x120
+# The smallest update region (src/n2kupdate/UpdRegions.h, UPD_REGION_BYTES):
+# the largest web UI the display can take over NMEA 2000 (11.6).
+WEBUI_MAX = 131072
 
 # The only files data/ may hold - everything in it lands in littlefs.bin.
 DATA_ALLOWED = ('config.json', 'index.html', 'index.html.gz', 'polar.json')
@@ -97,7 +187,9 @@ SKIP_DIRS = ('.git', '__pycache__')
 
 # Not built by this project: no brand check, no any-account path check.
 # Archives are compressed, so a raw scan of them would prove nothing anyway.
-ARCHIVE_EXT = ('.zip', '.tar.gz', '.tgz', '.whl', '.exe')
+# No .exe: since 1.3.0 no package carries esptool.exe (or any other
+# executable), so an .exe that turns up gets the full checks.
+ARCHIVE_EXT = ('.zip', '.tar.gz', '.tgz', '.whl')
 BRAND_EXEMPT_NAMES = ('bootloader.bin', 'boot_app0.bin')
 
 # The two words are stored ROT13-encoded on purpose: written out, this file
@@ -150,13 +242,7 @@ def _when(t):
 
 def is_third_party(path):
     """True for material this project does not build (see ARCHIVE_EXT)."""
-    parts = os.path.abspath(path).replace('\\', '/').split('/')
-    name = parts[-1].lower()
-    if name.endswith(ARCHIVE_EXT):
-        return True
-    # esptool-<ver>/ in a release package: esptool's own source, notices and
-    # the source distributions of what is frozen into esptool.exe
-    return any(p.lower().startswith('esptool-') for p in parts[:-1])
+    return os.path.basename(path).lower().endswith(ARCHIVE_EXT)
 
 
 def brand_applies(path):
@@ -462,6 +548,12 @@ def check_data_dir(data_dir=DATA_DIR, gzip_sync=True):
                 problems.append('%s: does not decompress to index.html - the '
                                 'device serves the .gz; run any pio build '
                                 '(extra_script.py regenerates it)' % shown(gz))
+            # N2K-UPDATE.md 11.6: it has to fit one update region, or the
+            # display can neither cache it nor take it over NMEA 2000.
+            if os.path.getsize(gz) > WEBUI_MAX:
+                problems.append('%s: %d bytes, larger than one update region (%d) - '
+                                'it could not be installed over NMEA 2000'
+                                % (shown(gz), os.path.getsize(gz), WEBUI_MAX))
 
     for e in DATA_ALLOWED:
         p = os.path.join(data_dir, e)
@@ -638,12 +730,203 @@ def check_version(firmware, release_version=None, root=ROOT, data=None):
     return problems
 
 
+# ---- firmware descriptor (docs/N2K-UPDATE.md 8.1) ---------------------------
+
+def check_descriptor(firmware, board=None, root=ROOT, data=None, quiet=False):
+    """firmware.bin carries a descriptor that matches its board and
+    src/Version.h. board: the release folder key ('4', '7b', '5b'), or None
+    to take the board from the descriptor and check it is consistent."""
+    if data is None:
+        data = _read(firmware)
+    where = shown(firmware)
+    problems = []
+    if len(data) < DESC_OFFSET + 64:
+        return ['%s: too short for a firmware image' % where]
+    if data[0] != 0xE9:
+        problems.append('%s: no 0xE9 at offset 0 - not an ESP32 image' % where)
+    if int.from_bytes(data[0x20:0x24], 'little') != 0xABCD5432:
+        problems.append('%s: no app description at 0x20' % where)
+    else:
+        # IDF's app description: version and project name are written into
+        # the ELF after the link (tools/app_desc.py, extra_script.py); an
+        # image without that still says what the framework's libs said.
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import app_desc   # tools/, next to this module
+        app_ver = data[0x30:0x50].split(b'\0')[0].decode('ascii', 'replace')
+        app_proj = data[0x50:0x70].split(b'\0')[0].decode('ascii', 'replace')
+        try:
+            if app_ver != fw_version(root) or app_proj != app_desc.PROJECT_NAME:
+                problems.append('%s: app description at 0x20 says version "%s", '
+                                'project "%s" - expected FW_VERSION and "%s" '
+                                '(tools/app_desc.py runs after every link; was '
+                                'the ELF relinked?)'
+                                % (where, app_ver, app_proj, app_desc.PROJECT_NAME))
+        except (OSError, ValueError):
+            pass                            # reported below with the descriptor
+
+    d = data[DESC_OFFSET:DESC_OFFSET + 64]
+    if d[:8] != b'NPFWDESC':
+        problems.append('%s: no firmware descriptor at 0x120 - this image cannot be '
+                        'updated over NMEA 2000, nor offered by the updater '
+                        '(src/n2kupdate/FwDesc.c, -Wl,-u,np_fw_desc)' % where)
+        return problems
+    desc_version, board_id = d[8], d[9]
+    desc_size = int.from_bytes(d[10:12], 'little')
+    panel_w = int.from_bytes(d[12:14], 'little')
+    panel_h = int.from_bytes(d[14:16], 'little')
+    proto, flags = d[16], d[17]
+    version = d[0x14:0x24].split(b'\0')[0].decode('ascii', 'replace')
+    name = d[0x24:0x40].split(b'\0')[0].decode('ascii', 'replace')
+    if desc_version < 1 or desc_size < 64:
+        problems.append('%s: descriptor version %d / size %d' % (where, desc_version, desc_size))
+    if proto < 1:
+        problems.append('%s: descriptor names no update protocol' % where)
+    if not flags & 0x01:
+        problems.append('%s: OTAGUARD flag not set in the descriptor' % where)
+    expect = DESC_BOARDS.get(board_id)
+    if expect is None:
+        problems.append('%s: unknown board id %d in the descriptor' % (where, board_id))
+    else:
+        key, bname, w, h = expect
+        if board is not None and board != key:
+            problems.append('%s: descriptor says board %d (%s), released as %s/'
+                            % (where, board_id, bname, board))
+        if name != bname or (panel_w, panel_h) != (w, h):
+            problems.append('%s: descriptor board %d is "%s" %dx%d, expected "%s" %dx%d'
+                            % (where, board_id, name, panel_w, panel_h, bname, w, h))
+    try:
+        fw = fw_version(root)
+        if version != fw:
+            problems.append('%s: descriptor version "%s", src/Version.h says "%s"'
+                            % (where, version, fw))
+    except (OSError, ValueError) as e:
+        problems.append('src/Version.h: %s' % e)
+    if not quiet:
+        print('  %s: board %d (%s), version %s, image id %s'
+              % (where, board_id, name, version, data[0xB0:0xB8].hex()))
+    return problems
+
+
+# ---- test builds ------------------------------------------------------------
+
+def check_test_build(image, data=None):
+    """An image (firmware.bin, or a merged image holding it) built with a
+    test flag: its fixed boot line is in the bytes."""
+    if data is None:
+        data = _read(image)
+    problems = []
+    for marker, flag, why in TESTBUILD_MARKERS:
+        at = data.find(marker)
+        if at >= 0:
+            problems.append('%s: test build (%s) at 0x%x - %s; rebuild without it'
+                            % (shown(image), flag, at, why))
+    return problems
+
+
+# ---- 7B/5B: software AES, and the libs it takes ------------------------------
+
+def descriptor_board(data):
+    """The release folder key ('4', '7b', '5b') named by the firmware
+    descriptor at 0x120, or None without a (known) descriptor."""
+    d = data[DESC_OFFSET:DESC_OFFSET + 16]
+    if len(d) < 16 or d[:8] != b'NPFWDESC':
+        return None
+    entry = DESC_BOARDS.get(d[9])
+    return entry[0] if entry else None
+
+
+def check_hw_aes(firmware, board=None, data=None):
+    """A 7B/5B firmware.bin that still carries IDF's hardware AES driver.
+    board: the release folder key; None takes it from the descriptor. The
+    4-inch keeps hardware AES (IDF 4.4, its TLS records in DRAM)."""
+    if data is None:
+        data = _read(firmware)
+    if board is None:
+        board = descriptor_board(data)
+    if board not in ('7b', '5b'):
+        return []
+    m = HWAES_TAGS.search(data)
+    if not m:
+        return []
+    return ['%s: hardware AES driver linked (log tag "%s" at 0x%x) - '
+            'platformio.ini sets CONFIG_MBEDTLS_HARDWARE_AES=n for the 7B/5B, '
+            'because with it the tide download breaks off with "esp-aes: '
+            'Failed to allocate memory". The Arduino IDF libs this was linked '
+            'against were compiled from an older custom_sdkconfig: rebuild '
+            'them in that PlatformIO core (check_hybrid_libs says how), then '
+            'the image'
+            % (shown(firmware), m.group(1).decode('ascii'), m.start(1))]
+
+
+def custom_sdkconfig(ini=None, env=HYBRID_ENV):
+    """{CONFIG_name: value} of custom_sdkconfig in platformio.ini, as
+    pioarduino merges it ('y', 'n', a number or a quoted string). Full-line
+    comments inside the value are skipped, as PlatformIO's parser does."""
+    ini = ini or os.path.join(ROOT, 'platformio.ini')
+    cp = configparser.ConfigParser(interpolation=None, strict=False)
+    with io.open(ini, encoding='utf-8') as f:
+        cp.read_file(f)
+    opts = {}
+    for line in cp.get('env:' + env, 'custom_sdkconfig', fallback='').splitlines():
+        m = re.match(r'\s*(CONFIG_\w+)=(.*?)\s*$', line)
+        if m:
+            opts[m.group(1)] = m.group(2)
+    return opts
+
+
+def sdkconfig_values(path):
+    """{CONFIG_name: value} of an sdkconfig file; '# CONFIG_X is not set'
+    reads as 'n'. The first entry of a name wins (the compatibility block
+    at the end repeats old names)."""
+    vals = {}
+    with io.open(path, encoding='utf-8', errors='replace') as f:
+        for line in f:
+            m = (re.match(r'(CONFIG_\w+)=(.*?)\s*$', line)
+                 or re.match(r'# (CONFIG_\w+) is not set\s*$', line))
+            if m and m.group(1) not in vals:
+                vals[m.group(1)] = m.group(2) if m.lastindex == 2 else 'n'
+    return vals
+
+
+def check_hybrid_libs(core_dir, ini=None, env=HYBRID_ENV):
+    """Before a 7B/5B build in PlatformIO core core_dir: were its Arduino IDF
+    libs compiled with every option custom_sdkconfig lists? An option the
+    libs' sdkconfig does not name at all is not visible in this IDF
+    configuration (CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM with static TX
+    buffers, for one) and cannot be compared."""
+    libs = os.path.join(core_dir, HYBRID_LIBS)
+    cfg = os.path.join(libs, 'sdkconfig')
+    if not os.path.isfile(cfg):
+        return []       # never built from a list: the next build compiles them
+    try:
+        want = custom_sdkconfig(ini, env)
+    except (OSError, configparser.Error) as e:
+        return ['platformio.ini: custom_sdkconfig of env:%s unreadable: %s' % (env, e)]
+    have = sdkconfig_values(cfg)
+    differ = ['%s=%s (the libs have %s)' % (k, v, have[k])
+              for k, v in sorted(want.items())
+              if k in have and have[k].lower() != v.lower()]
+    if not differ:
+        return []
+    return ['%s: the Arduino IDF libs of this PlatformIO core were compiled '
+            'from another custom_sdkconfig than platformio.ini lists - %s. '
+            'pioarduino will not notice: it compares only the hash in the '
+            'first line of sdkconfig.defaults, which every core building this '
+            'project shares. Delete %s, and the next build in this core '
+            'compiles the libs from the list (about 30 min); then run again'
+            % (shown(libs), '; '.join(differ), shown(cfg))]
+
+
 # ---- combined entry points for the release scripts --------------------------
 
-def check_build_output(images, release_version=None, data_dir=DATA_DIR):
+def check_build_output(images, release_version=None, data_dir=DATA_DIR, board=None):
     """All checks on one board's flash images before they are packaged.
 
-    images: {'bootloader.bin': path, 'partitions.bin': path, ...}"""
+    images: {'bootloader.bin': path, 'partitions.bin': path, ...}
+    board:  the release folder key ('4', '7b', '5b') for the descriptor
+            check; None takes the board from the descriptor itself."""
     problems = []
     for name in sorted(images):
         path = images[name]
@@ -654,6 +937,8 @@ def check_build_output(images, release_version=None, data_dir=DATA_DIR):
         problems += check_personal_paths(path, data, any_account=True)
         if name.lower() not in BRAND_EXEMPT_NAMES:
             problems += check_brand(path, data)
+        if name.lower().endswith('.bin'):
+            problems += check_test_build(path, data)
     lfs = images.get('littlefs.bin')
     if lfs and os.path.isfile(lfs):
         problems += check_littlefs(lfs, data_dir)
@@ -661,6 +946,13 @@ def check_build_output(images, release_version=None, data_dir=DATA_DIR):
     fw = images.get('firmware.bin')
     if fw and os.path.isfile(fw):
         problems += check_version(fw, release_version)
+        problems += check_descriptor(fw, board)
+        problems += check_hw_aes(fw, board)
+        if board in ('7b', '5b'):
+            import psram_budget   # tools/, next to this module
+            elf = os.path.join(os.path.dirname(fw), 'firmware.elf')
+            problems += psram_budget.problems(elf, shown(elf))
+            psram_budget.report(elf, tag='  %s psram:' % board)
     return _unique(problems)
 
 
@@ -771,6 +1063,12 @@ def main(argv=None):
             add('fresh', check_freshness([p]))
         if 'version' in checks and name == 'firmware.bin':
             add('version', check_version(p, a.release_version, data=data))
+        if 'descriptor' in checks and name == 'firmware.bin':
+            add('descriptor', check_descriptor(p, data=data))
+        if 'hwaes' in checks and name == 'firmware.bin':
+            add('hwaes', check_hw_aes(p, data=data))
+        if 'testbuild' in checks and name.endswith('.bin'):
+            add('testbuild', check_test_build(p, data=data))
 
     for line in problems:
         print('  - ' + line)

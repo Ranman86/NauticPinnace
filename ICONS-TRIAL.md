@@ -2,8 +2,39 @@
 
 NauticPinnace can draw the maritime icons of the **OpenBridge Icon Pack** (CC BY 4.0) instead
 of the Font Awesome glyphs built into LVGL - the same icon for the same meaning as NauticPi.
-It is a **trial**: switchable at runtime, `classic` by default, and removable in one go. Every
-place that belongs to it carries the comment `OpenBridge icon trial`.
+It began as a **trial** and has been the **default since 1.3.0**; `classic` stays selectable
+at runtime, and the whole feature is still removable in one go. Every place that belongs to
+it carries the comment `OpenBridge icon trial`.
+
+## Attribution
+
+```
+"OpenBridge Icon Pack" by OpenBridge
+https://www.figma.com/community/file/1445713209741917748/openbridge-icon-pack
+Licence: Creative Commons Attribution 4.0 International (CC BY 4.0)
+https://creativecommons.org/licenses/by/4.0/
+Provided as is, without warranties of any kind (see Section 5 of the licence).
+```
+
+Exported from the Figma Community file on 2026-09-29. **Changes:** in the firmware
+(`src/display/fonts/ob_icons_<px>.c`) the icons are rasterised into 4-bpp bitmap fonts and
+reduced to one colour; in the web configuration (the inline SVG sprite in `data/index.html`)
+they are reduced to one colour (currentColor) with coordinates rounded. Both are generated
+by `tools/gen_icons.py`; no other changes were made. The generated files remain under
+CC BY 4.0, not MIT; the generator script is MIT. Screenshots under `docs/img/` show some of
+these icons as the firmware renders them.
+
+The icons whose names end in `-google`, and these others drawn on the same geometry, are
+based on **Google Material Icons** / Material Symbols, © Google LLC, Apache License 2.0
+(`LICENSES/Apache-2.0.txt`): in the display fonts `home`, `time`, `anchorwatch`, `trend`,
+`settings-iec`, `simulation`, `media-play`, `media-pause`, `media-skip-next`,
+`media-skip-previous`; in the web sprite `clipboard`, `save-proposal`, `delete`, `image`,
+`palette-night`, `simulation`. The icons ending in `-iec` are OpenBridge redrawings of
+symbols specified in IEC 62288, except the gear outline of `settings-iec`, which is
+Material geometry; no rights of the IEC are granted by the licence above. NauticPinnace is not affiliated with or endorsed by OpenBridge, the Ocean
+Industries Concept Lab or AHO; no OpenBridge logo is used. Licence text:
+`LICENSES/CC-BY-4.0.txt`; the full notice is section 4 of
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## The switch
 
@@ -11,8 +42,12 @@ place that belongs to it carries the comment `OpenBridge icon trial`.
 
 | Value | Panel | Web configuration |
 |---|---|---|
-| `"classic"` (default, also when the key is missing or unknown) | the Font Awesome glyphs, **pixel-identical** to the firmware before the trial | the emoji, as before |
-| `"openbridge"` | the OpenBridge icons | the OpenBridge icons, plus the attribution line at the bottom |
+| `"openbridge"` (default, also when the key is missing or unknown) | the OpenBridge icons | the OpenBridge icons, plus the attribution line at the bottom |
+| `"classic"` | the Font Awesome glyphs, **pixel-identical** to the firmware before the trial | the emoji, as before |
+
+Until 1.3.0 every display stored `"classic"`, the old default, whether anyone had picked it or
+not. `Config::load()` therefore switches a stored `"classic"` once, when `ui.icons_migrated`
+is missing, and saves the marker; a set picked after that stays.
 
 Set it in the web configuration with the selector in the header, next to theme and language.
 It takes effect **at once**: saving triggers the same live rebuild as a theme or language
@@ -138,11 +173,12 @@ dropping them later saves up to about 284 KB (4-inch) / 188 KB (7B/5B).
 
 The web sprite adds about 16 KB to `index.html` (about 6 KB gzipped).
 
-## Removing the trial
+## Adopting or removing it
 
-**If the OpenBridge icons stay** (the trial becomes the default): set the default of
-`AppConfig::iconSet` to `ICON_SET_OPENBRIDGE`, decide whether `classic` remains selectable,
-and only then consider taking the Font Awesome glyphs out of Montserrat.
+**The OpenBridge icons stayed** (1.3.0): `AppConfig::iconSet` defaults to
+`ICON_SET_OPENBRIDGE`, `classic` remains selectable, and a stored `classic` from before is
+switched once (`ui.icons_migrated`, see above). The Font Awesome glyphs stay in Montserrat as
+long as `classic` is selectable.
 
 **If the trial goes:**
 
@@ -172,4 +208,4 @@ and only then consider taking the Font Awesome glyphs out of Montserrat.
    - `README.md`, section "Licence": the clause naming the OpenBridge Icon Pack.
    - `.gitignore`: the `*figma-export*.json` and `Provenance/` lines may stay; they only
      keep a stray copy of the export out of the repository.
-4. A stored `ui.icons` key in a device's `config.json` is then simply ignored.
+4. Stored `ui.icons` and `ui.icons_migrated` keys in a device's `config.json` are then simply ignored.

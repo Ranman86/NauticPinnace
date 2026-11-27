@@ -35,6 +35,39 @@ static inline lv_coord_t bootVShift() {
     return uiPortrait() ? (uiScreenH() - SCREEN_H) / 2 : 0;
 }
 
+// Width of the status line: the screen less 20 px each side, at most 640 px
+// so a line on the 1024 px panel stays readable at a glance.
+static inline lv_coord_t statusWidth() {
+    const lv_coord_t w = uiScreenW() - 40;
+    return w > 640 ? 640 : w;
+}
+
+// One line "<prefix><quote><name><quote><suffix>" that has to stay ONE line:
+// the fallback message is three of them, and a fourth would run into the
+// boat name on the 4" (measured: a 31-character network name made line 1
+// wrap). So the NAME gives way - shortened character by character, never
+// inside a UTF-8 sequence, with "..." - until the line fits. Prefix, reason
+// and address are the parts that must survive; the full name is in the
+// settings anyway.
+static void lineWithName(char *out, size_t n, const char *prefix, const char *name,
+                         const char *suffix, const lv_font_t *font, lv_coord_t maxW) {
+    const char *qo = T(STR_QUOTE_OPEN);
+    const char *qc = T(STR_QUOTE_CLOSE);
+    char nm[40];
+    strlcpy(nm, name ? name : "", sizeof nm);
+    size_t len = strlen(nm);
+    bool cut = false;
+    for (;;) {
+        snprintf(out, n, "%s%s%s%s%s%s", prefix, qo, nm, cut ? "..." : "", qc, suffix);
+        if (len == 0 ||
+            lv_txt_get_width(out, strlen(out), font, 0, LV_TEXT_FLAG_NONE) <= maxW)
+            return;
+        do { len--; } while (len > 0 && ((uint8_t)nm[len] & 0xC0) == 0x80);
+        nm[len] = '\0';
+        cut = true;
+    }
+}
+
 // ---- Custom logo loader -----------------------------------------------------
 
 bool BootScreen::loadCustomLogo() {
@@ -284,15 +317,48 @@ void BootScreen::show(const char *boatName) {
     lv_label_set_text(_statusLbl, T(STR_BOOT_INIT));
     lv_obj_set_style_text_font(_statusLbl, FONT_MED, 0);
     lv_obj_set_style_text_color(_statusLbl, CLR_TEXT_DIM, 0);
+    // Up to three centred lines, growing UPWARD from the bar: the alignment is
+    // a style in LVGL 8, re-applied whenever the label's height changes, so
+    // the bottom edge stays put at -70. Three lines is what the WiFi fallback
+    // message needs (reason / own hotspot / address); they end below the boat
+    // name on every panel (4": lines from y 356, name ends ~347). Wider than
+    // the 340 px bar, because a network name can be 32 characters long; the
+    // old LONG_DOT cut every one of those messages off after a few words.
     lv_obj_align(_statusLbl, LV_ALIGN_BOTTOM_MID, 0, -70 - vShift);
-    lv_label_set_long_mode(_statusLbl, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(_statusLbl, 340);
+    lv_label_set_long_mode(_statusLbl, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(_statusLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(_statusLbl, statusWidth());
+    // ...but only with the DEFAULT fonts. The medium and large fonts can be
+    // enlarged in the web interface, and with FONT_MED at 20 px the three
+    // lines reach into the boat name on the 4"; at 24 px the third wraps as
+    // well. So the room is measured here - from the bottom of the boat name
+    // (or of the title, without one) down to the label's bottom edge, less a
+    // small gap - and setStatusFitted() steps down to FONT_SMALL for a text
+    // that does not fit it.
+    {
+        const bool hasName = boatName && boatName[0];
+        const lv_coord_t clusterBottom = hasName
+            ? 318 + vShift + lv_font_get_line_height(FONT_LARGE)
+            : 278 + vShift + lv_font_get_line_height(FONT_XL);
+        _statusMaxH = (uiScreenH() - 70 - vShift) - clusterBottom - 6;
+    }
 
     _bar = lv_bar_create(_scr);
     lv_obj_set_size(_bar, 340, 8);
-    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, -50 - vShift);
+    // Right above the percentage below it, measured from that label's font
+    // (+2: the line box carries a little room above the digits). That is the
+    // old fixed -50 on the 4" (14 px font, line 16); with the 18 px font of
+    // the 1024x600 boards -50 put the bar 7 px into "100%" - unnoticed for as
+    // long as the bar was never drawn at all (see pump()).
+    const lv_coord_t barBottom = -36 + 2 - lv_font_get_line_height(FONT_SMALL);
+    lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, barBottom - vShift);
     lv_bar_set_range(_bar, 0, 100);
     lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
+    // The track opaque, in the spinner ring's colour: the default theme gives
+    // a bar's MAIN part only 20 % opacity, and at 20 % CLR_SURFACE all but
+    // vanishes into CLR_BG - the 10-30 % indicator then read as a stray stub
+    // left of centre instead of the start of a 340 px rail.
+    lv_obj_set_style_bg_opa(_bar, LV_OPA_COVER, 0);
     lv_obj_set_style_bg_color(_bar, CLR_SURFACE, 0);
     lv_obj_set_style_bg_color(_bar, CLR_ACCENT,  LV_PART_INDICATOR);
     lv_obj_set_style_radius(_bar, 4, 0);
@@ -305,17 +371,163 @@ void BootScreen::show(const char *boatName) {
     lv_obj_align(_pctLbl, LV_ALIGN_BOTTOM_MID, 0, -36 - vShift);
 
     tick(30);
+    // From here on pump() keeps the LVGL clock itself (real elapsed time), so
+    // it needs a starting point - and the status line and the bar get drawn
+    // at all: until now nothing rendered them on the device (see pump()).
+    _lastPumpMs = millis();
+    pump();
 }
 
 void BootScreen::update(const char *statusMsg, uint8_t progress) {
     if (!_scr) return;
-    if (_statusLbl) lv_label_set_text(_statusLbl, statusMsg);
+    setStatusFitted(statusMsg);
     if (_bar)       lv_bar_set_value(_bar, progress, LV_ANIM_OFF);
     if (_pctLbl) {
         char buf[8]; snprintf(buf, sizeof(buf), "%d%%", progress);
         lv_label_set_text(_pctLbl, buf);
     }
+    pump();
     vTaskDelay(pdMS_TO_TICKS(10));
+}
+
+void BootScreen::setStatus(const char *text) {
+    if (!_statusLbl || !text) return;
+    // Called every ~50 ms with the same text while WiFi waits. Setting it
+    // anyway would invalidate the label and redraw it on every frame.
+    if (strcmp(lv_label_get_text(_statusLbl), text) != 0)
+        lv_label_set_text(_statusLbl, text);
+}
+
+// Does `text` fit the status label's room (see show()) in `font`?
+bool BootScreen::statusFits(const char *text, const lv_font_t *font) const {
+    lv_point_t sz;
+    lv_txt_get_size(&sz, text, font, 0, 0, statusWidth(), LV_TEXT_FLAG_NONE);
+    return sz.y <= _statusMaxH;
+}
+
+void BootScreen::setStatusFont(const lv_font_t *font) {
+    if (_statusLbl && lv_obj_get_style_text_font(_statusLbl, LV_PART_MAIN) != font)
+        lv_obj_set_style_text_font(_statusLbl, font, 0);
+}
+
+void BootScreen::setStatusFitted(const char *text) {
+    if (!_statusLbl || !text) return;
+    setStatusFont(statusFits(text, FONT_MED) ? FONT_MED : FONT_SMALL);
+    setStatus(text);
+}
+
+// The text for one WiFi phase, laid out for `font`; returns the bar's percent.
+// Composed from fragments, so the format specifiers stay here and out of the
+// translation tables (I18n.h). Word order is the same in both languages; only
+// the quotes differ, and those come from the table too.
+static uint8_t wifiText(char *txt, size_t n, const WifiProgress &p, const lv_font_t *f) {
+    const char *qo = T(STR_QUOTE_OPEN);
+    const char *qc = T(STR_QUOTE_CLOSE);
+    uint8_t pct = 10;
+    switch (p.phase) {
+        case WifiProgress::CONNECTING:
+            snprintf(txt, n, "%s %s%s%s ... (%s %u/%u)",
+                     T(STR_BOOT_WIFI_CONNECTING), qo, p.ssid, qc,
+                     T(STR_BOOT_WIFI_ATTEMPT), (unsigned)p.attempt, (unsigned)p.attempts);
+            break;
+        case WifiProgress::SCANNING:
+            snprintf(txt, n, "%s %s%s%s ...", T(STR_BOOT_WIFI_SCANNING), qo, p.ssid, qc);
+            break;
+        case WifiProgress::CONNECTED:
+            // With the scheme: it is what has to go into the browser, and a
+            // bare IP typed into a phone's address bar often ends up as a
+            // search instead.
+            snprintf(txt, n, "%s: http://%s", T(STR_CFG_WIFI_CONNECTED), p.ip);
+            pct = 20;
+            break;
+        case WifiProgress::FALLBACK: {
+            // Three lines: why, what instead, where to reach it - and that it
+            // is not final. The code is printed whenever the driver gave one;
+            // it is what a forum answer needs. Lines 1 and 2 are kept to one
+            // line each (lineWithName), three is all the space there is. The
+            // hotspot is called what the settings call the section with its
+            // password and QR code, so the user finds it there.
+            const lv_coord_t w = statusWidth();
+            char pre[40], suf[64], l1[96], l2[96];
+            snprintf(pre, sizeof pre, "%s ", T(STR_CFG_WIFI_SHORT));
+            if (p.reason)
+                snprintf(suf, sizeof suf, ": %s (%u)", WifiReason::text(p.reason, p.seen),
+                         (unsigned)p.reason);
+            else
+                snprintf(suf, sizeof suf, ": %s", WifiReason::text(p.reason, p.seen));
+            lineWithName(l1, sizeof l1, pre, p.ssid, suf, f, w);
+            snprintf(pre, sizeof pre, "%s ", T(STR_CFG_HOTSPOT_SECTION));
+            snprintf(suf, sizeof suf, " %s", T(STR_BOOT_WIFI_ACTIVE));
+            lineWithName(l2, sizeof l2, pre, p.apSsid, suf, f, w);
+            snprintf(txt, n, "%s\n%s\nhttp://%s – %s %u s", l1, l2, p.ip,
+                     T(STR_BOOT_WIFI_RETRY_IN), (unsigned)p.retryInS);
+            pct = 20;
+            break;
+        }
+    }
+    return pct;
+}
+
+void BootScreen::wifi(const WifiProgress &p) {
+    if (!_scr) return;
+    // Laid out in FONT_MED; only if that does not fit the room between the
+    // boat name and the bar (enlarged fonts, see show()) once more in
+    // FONT_SMALL - the fallback lines are shortened per font, so they are
+    // composed again rather than just drawn smaller.
+    char txt[256];
+    const lv_font_t *f = FONT_MED;
+    uint8_t pct = wifiText(txt, sizeof txt, p, f);
+    if (!statusFits(txt, f)) {
+        f = FONT_SMALL;
+        pct = wifiText(txt, sizeof txt, p, f);
+    }
+    setStatusFont(f);
+    setStatus(txt);
+    if (_bar) lv_bar_set_value(_bar, pct, LV_ANIM_OFF);
+    if (_pctLbl) {
+        char buf[8]; snprintf(buf, sizeof(buf), "%u%%", (unsigned)pct);
+        if (strcmp(lv_label_get_text(_pctLbl), buf) != 0) lv_label_set_text(_pctLbl, buf);
+    }
+    pump();
+}
+
+void BootScreen::hold(uint32_t ms) {
+    if (!_scr) return;
+    const uint32_t t0 = millis();
+    while (millis() - t0 < ms) {
+        pump();
+        delay(40);
+    }
+}
+
+// One frame of the boot screen, from setup().
+//
+// Until now the boot screen rendered only during its intro (playIntro() runs
+// lv_timer_handler() for ~1 s). Everything after it - the status line, the
+// bar, "Lade Bildschirme...", "Bereit." - was set but never drawn: the panel
+// kept showing the last intro frame until the main UI replaced it. That was
+// tolerable while the boot screen came up AFTER the WiFi join; now it comes
+// first and has to say what the device is waiting for.
+//
+// lv_refr_now(), NOT lv_timer_handler(): it runs exactly two things, the
+// animations (the spinner) and the display refresh. lv_timer_handler() would
+// also read the touch controller and run every other LVGL timer - and the
+// touch callback acts on the instruments (a swipe calls dispMgr.nextScreen()),
+// which do not exist yet. That is the "spurious events scramble object
+// state" that tick() below warns about; lv_refr_now() cannot cause it.
+//
+// The LVGL clock: on the 7B LV_TICK_CUSTOM reads millis() itself; on the 4"
+// the tick task only starts after setup(), so the clock is advanced here by
+// the time that really passed, which keeps the spinner at its true speed no
+// matter how long the WiFi code took between two calls.
+void BootScreen::pump() {
+    if (!_scr) return;
+#if !LV_TICK_CUSTOM
+    const uint32_t now = millis();
+    BOOT_TICK(now - _lastPumpMs);
+    _lastPumpMs = now;
+#endif
+    lv_refr_now(NULL);
 }
 
 void BootScreen::dismiss() {
@@ -340,7 +552,8 @@ void BootScreen::tick(uint32_t ms) {
     // The flush callback sends pixels from DRAM buffers, which is safe, but
     // calling lv_timer_handler() from setup() (before the LVGL task is running)
     // causes spurious events that can scramble object internal state.
-    // Rendering starts from loop() via displayTick() after activate().
+    // Frames before activate() come from pump() (lv_refr_now, no input
+    // processing); from loop() on, displayTick() renders.
     BOOT_TICK(ms);
     delay(ms);
 }

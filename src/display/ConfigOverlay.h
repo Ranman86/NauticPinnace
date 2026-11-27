@@ -14,6 +14,10 @@
 //   * WLAN connection: SSID + password via an on-screen keyboard -> save+reboot
 //   * Internal hotspot (AP): switch to AP mode (SSID/pw derived from MAC, shown
 //     in plaintext) -> save+reboot
+//   * QR codes: one to join the hotspot and, whenever the web interface has an
+//     address, one with that address (http://<ip>). 1024x600: two cards side by
+//     side (landscape) or stacked (portrait), each with a caption. 4": the one
+//     card of the released layout, switched between the two by a tap.
 //   * Light/Dark override: applied live (no reboot) via dispMgr theme reload
 // ============================================================
 class ConfigOverlay {
@@ -34,6 +38,17 @@ private:
     lv_obj_t *_kb     = nullptr;   // on-screen keyboard (child of _root)
     lv_obj_t *_taSsid = nullptr;
     lv_obj_t *_taPass = nullptr;
+#if !defined(BOARD_PANEL_1024X600)
+    // 4": the QR canvas, the hint label above the hotspot button, which of the
+    // two codes is shown, and the web interface's address. Set in open() only
+    // when there is an address; children of _root, so close() just forgets them.
+    lv_obj_t *_qr      = nullptr;
+    lv_obj_t *_qrHint  = nullptr;
+    bool      _qrIsUrl = false;
+    char      _url[24] = "";
+    void showQr4(bool url);
+    static void cbQrToggle(lv_event_t *e);   // tap on the QR card
+#endif
 
     void showKeyboard(lv_obj_t *ta);
     void hideKeyboard();
@@ -54,6 +69,7 @@ private:
     static void cbRootGesture(lv_event_t *e);
     static void cbWifiToggle(lv_event_t *e);   // WiFi radio on/off (save + reboot)
     static void cbN2kListenToggle(lv_event_t *e);  // listen-only (save + reboot)
+    static void cbN2kUpdatesToggle(lv_event_t *e); // accept updates over N2K (live)
 };
 
 extern ConfigOverlay configOverlay;

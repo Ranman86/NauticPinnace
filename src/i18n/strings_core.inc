@@ -30,9 +30,39 @@
     X(ALARM_ANCHOR_DRAG,    "ANKERALARM",               "ANCHOR ALARM")           \
     X(BANNER_DEMO_MODE,     "DEMO-MODUS  -  Keine echten Sensordaten",            \
                             "DEMO MODE  -  No real sensor data")                  \
+    /* The bus has delivered no data value for 10 s (BusWatch.h). The age in   */ \
+    /* seconds is appended in code behind BANNER_SINCE.                         */ \
+    X(BANNER_NO_BUS_DATA,   "KEINE DATEN VOM NMEA-2000-BUS",                      \
+                            "NO DATA FROM NMEA 2000 BUS")                         \
+    X(BANNER_SINCE,         "seit",                     "for")                    \
+    /* Anchor watch armed, but no current position: it cannot see a drag.     */ \
+    X(BANNER_ANCHOR_NO_POS, "ANKERWACHE OHNE POSITION", "ANCHOR WATCH: NO FIX")   \
     /* ── Boot progress ───────────────────────────────────────────────────── */ \
     X(BOOT_LOADING_SCREENS, "Lade Bildschirme...",      "Loading screens...")     \
     X(BOOT_READY,           "Bereit.",                  "Ready.")                 \
+    /* WiFi start on the boot screen (BootScreen::wifi). Fragments, not format */ \
+    /* strings: the specifiers stay in the code, see the rule in I18n.h. "..."  */ \
+    /* is three dots - the panel fonts have no ellipsis glyph.                  */ \
+    X(BOOT_WIFI_CONNECTING, "Verbinde mit WLAN",        "Connecting to WiFi")     \
+    X(BOOT_WIFI_ATTEMPT,    "Versuch",                  "attempt")                \
+    X(BOOT_WIFI_SCANNING,   "Suche WLAN",               "Looking for WiFi")       \
+    /* The hotspot itself is named with CFG_HOTSPOT_SECTION, the heading of   */ \
+    /* the settings section that holds its password and QR code.              */ \
+    X(BOOT_WIFI_ACTIVE,     "aktiv",                    "active")                 \
+    X(BOOT_WIFI_RETRY_IN,   "neuer Versuch in",         "retrying in")            \
+    /* Quotes around a network name: German „…“, English “…” (both in the     */ \
+    /* latin_suppl fallback fonts; the single ‚…‘ pair is not).                 */ \
+    X(QUOTE_OPEN,           "„",                        "“")                      \
+    X(QUOTE_CLOSE,          "“",                        "”")                      \
+    /* Why the station did not join (config/WifiStatus.h). Short: the settings */ \
+    /* line carries one next to the hotspot address, and on 1024x600 landscape */ \
+    /* (18 px, 494 px) the longer "Sicherheitsart passt nicht" / "Verbindung   */ \
+    /* abgelehnt" left room for the code only.                                  */ \
+    X(WIFI_RSN_NOT_FOUND,   "nicht gefunden",           "not found")              \
+    X(WIFI_RSN_AUTH,        "Passwort falsch?",         "wrong password?")        \
+    X(WIFI_RSN_SECURITY,    "Sicherheitsart?",          "security type?")         \
+    X(WIFI_RSN_REFUSED,     "abgelehnt",                "refused")                \
+    X(WIFI_RSN_OTHER,       "nicht verbunden",          "not connected")          \
     /* ── Shared units: only those that genuinely differ by language ──────── */ \
     /* German nautical charts abbreviate the nautical mile as "sm" (Seemeile). */ \
     X(UNIT_NM,              "sm",                       "NM")                     \

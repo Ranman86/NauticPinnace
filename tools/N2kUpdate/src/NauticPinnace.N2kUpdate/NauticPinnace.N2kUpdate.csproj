@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Shared sender library for updates over NMEA 2000 (docs/N2K-UPDATE.md, section 12).
+    Used by the standalone Windows updater and by NauticPi on Linux, so it must
+    stay free of Windows-only APIs. Everything platform-specific (port
+    auto-detection through the registry, the high-resolution waitable timer,
+    keeping the laptop awake) lives in the host applications and is injected.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>NauticPinnace.N2kUpdate</RootNamespace>
+    <AssemblyName>NauticPinnace.N2kUpdate</AssemblyName>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <!-- Missing XML comments on public members are not worth a warning each. -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.IO.Ports" Version="10.0.5" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NauticPinnace.N2kUpdate.Tests" />
+    <InternalsVisibleTo Include="NauticPinnace.N2kUpdate.Testing" />
+  </ItemGroup>
+</Project>

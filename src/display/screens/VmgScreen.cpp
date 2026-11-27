@@ -104,12 +104,20 @@ void VmgScreen::update() {
     }
     char b[24];
 
-    bool ok = !isnan(twa) && !isnan(tws) && !isnan(stw) && tws > 1.0f;
-    if (!ok) {
+    // Two reasons for "--", kept apart: an input that is not known (no wind
+    // or log on the bus, or BusWatch blanked it after 10 s without a reading)
+    // and a KNOWN wind too light to sail by. They used to be one test, so a
+    // missing value - a silent bus included - was reported as "Low wind".
+    const bool have    = !isnan(twa) && !isnan(tws) && !isnan(stw);
+    const bool lowWind = !isnan(tws) && tws <= 1.0f;
+    if (!have || lowWind) {
         lv_label_set_text(_vmg, "-- kn");
         lv_label_set_text(_vmgCap, "VMG");
         lv_label_set_text(_perf, "--%");
-        lv_label_set_text(_guide, T(STR_VMG_LOW_WIND));
+        // Neutral, not the green/orange/red of the last reading: "--%" in red
+        // still said "slow".
+        lv_obj_set_style_text_color(_perf, CLR_TEXT, 0);
+        lv_label_set_text(_guide, lowWind ? T(STR_VMG_LOW_WIND) : "");
         lv_obj_set_style_text_color(_guide, CLR_TEXT_DIM, 0);
         lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
         for (int i = 0; i < 4; i++) lv_label_set_text(_t[i], "--");
@@ -149,8 +157,11 @@ void VmgScreen::update() {
 
     // Performance = current VMG / best VMG.
     float perf = (optVmg > 0.05f) ? (vmgMag / optVmg * 100.f) : NAN;
-    if (isnan(perf)) { lv_label_set_text(_perf, "--%"); lv_bar_set_value(_bar, 0, LV_ANIM_OFF); }
-    else {
+    if (isnan(perf)) {
+        lv_label_set_text(_perf, "--%");
+        lv_obj_set_style_text_color(_perf, CLR_TEXT, 0);   // as above
+        lv_bar_set_value(_bar, 0, LV_ANIM_OFF);
+    } else {
         snprintf(b, sizeof(b), "%d%%", (int)(perf + 0.5f));
         lv_label_set_text(_perf, b);
         lv_bar_set_value(_bar, (int)clampf(perf, 0.f, 120.f), LV_ANIM_OFF);

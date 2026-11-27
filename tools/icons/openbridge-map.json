@@ -13,7 +13,7 @@
     "exportSha256": "a4e1b843c8006e7e37edb4f94294e27bee5c36526d5992375a044bb9fe1fdc2e"
   },
   "notes": [
-    "Icons ending in -google are based on Google Material Icons (Google LLC, Apache-2.0).",
+    "Icons ending in -google, and home, time, anchorwatch, trend, settings-iec, simulation, media-play, media-pause, media-skip-next, media-skip-previous, image, clipboard, save-proposal, delete, palette-night and attachment (same geometry; settings-iec despite its suffix), are based on Google Material Icons / Material Symbols (Google LLC, Apache-2.0). tools/gen_icons.py MATERIAL_GEOMETRY holds the list the generated files use.",
     "Icons ending in -iec are OpenBridge redrawings of IEC 62288 symbols; no IEC rights are granted.",
     "Never take icons from the OpenBridge GitHub repository (AGPL) or from npm releases for this map; the geometry here is the Figma export under CC BY 4.0.",
     "Do not use the logo-openbridge or logo-oicl components."

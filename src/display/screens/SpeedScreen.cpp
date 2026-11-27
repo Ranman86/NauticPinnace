@@ -55,9 +55,13 @@ void SpeedScreen::create(lv_obj_t *parent) {
 
     // Perf % label – very large
     lv_obj_t *perfCard = lv_obj_create(container);
-    lv_obj_set_size(perfCard, SCREEN_W - 2*gap, botH);
+    const int perfW = SCREEN_W - 2*gap;
+    lv_obj_set_size(perfCard, perfW, botH);
     lv_obj_set_pos(perfCard, gap, botY);
     styleCard(perfCard);
+    // A large card padding (web interface) lets the bar reach into it; the
+    // card must then neither scroll nor take the screen's swipe.
+    lv_obj_clear_flag(perfCard, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t *perfTitle = lv_label_create(perfCard);
     lv_label_set_text(perfTitle, "Perf %");
@@ -70,9 +74,11 @@ void SpeedScreen::create(lv_obj_t *parent) {
     lv_obj_set_style_text_color(_lblPerf, CLR_YELLOW, 0);
     lv_obj_align(_lblPerf, LV_ALIGN_CENTER, 0, UI_S(-10));
 
-    // Horizontal performance bar – wide and tall
+    // Horizontal performance bar – wide and tall. Sized from perfW: LVGL
+    // applies a size only at the next layout pass, so lv_obj_get_width(perfCard)
+    // is still 0 here - the bar was created 0 px wide and never showed.
     _bar = lv_bar_create(perfCard);
-    lv_obj_set_size(_bar, lv_obj_get_width(perfCard) - UI_S(24), UI_SPEED_BAR_H);
+    lv_obj_set_size(_bar, perfW - UI_S(24), UI_SPEED_BAR_H);
     lv_obj_align(_bar, LV_ALIGN_BOTTOM_MID, 0, UI_S(UI_SPEED_BAR_BOTTOM));
     lv_bar_set_range(_bar, 0, 120);
     lv_bar_set_value(_bar, 0, LV_ANIM_OFF);

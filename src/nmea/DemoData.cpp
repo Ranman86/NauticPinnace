@@ -4,7 +4,11 @@
 #include "DemoData.h"
 #include "DataModel.h"
 #include "MediaN2k.h"
+#include "WindCalc.h"
+#include "WindPipeline.h"
+#include "ApPipeline.h"
 #include "../SunCalc.h"
+#include "../PolarTable.h"
 #include <math.h>
 #include <string.h>
 #include <lvgl.h>              // lv_timer_get_idle() for the "cpu" field
@@ -13,6 +17,11 @@
 #endif
 
 DemoDataSource demoData;
+
+#ifdef SIMULATOR
+float g_simFreezeT = NAN;                              // --freeze-demo T
+void (*g_simDemoOverride)(uint32_t, float) = nullptr;  // --set, --ais-seed
+#endif
 
 // Resolve a config field key to its live DataModel value (locks internally).
 float dmFieldByKey(const char *key) {
@@ -61,7 +70,6 @@ float dmFieldByKey(const char *key) {
 // ── Constants ─────────────────────────────────────────────────────────────────
 static constexpr float PI_F  = (float)M_PI;
 static constexpr float D2R   = PI_F / 180.f;
-static constexpr float R2D   = 180.f / PI_F;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -97,6 +105,12 @@ void DemoDataSource::tick() {
     lastMs = now;
 
     float t = now / 1000.f;     // seconds since boot
+#ifdef SIMULATOR
+    // --freeze-demo T: the scenario stands at T. Only t changes - `now` stays
+    // the real clock for every freshness stamp below - so the values are a
+    // pure function of T and still count as live.
+    if (!isnan(g_simFreezeT)) t = g_simFreezeT;
+#endif
 
     // ── Scenario clock (480 s = 8-min full cycle) ─────────────────────────
     float tCycle = fmodf(t, 480.f);
@@ -113,27 +127,29 @@ void DemoDataSource::tick() {
     tws = clamp(tws, 8.f, 18.f);
 
     // ── Boat speed (polar model) ──────────────────────────────────────────
-    float stw = polarStw(absTwa, tws);
+    // 92 % of the polar the display has loaded (the device loads /polar.json,
+    // the simulator data/polar.json), so Speed & Polar, Wind & Trim and VMG
+    // show a plausible performance. The analytic curve alone - wind-blind -
+    // put the demo boat at 30-55 % of the shipped example polar. Without a
+    // polar, the curve as before.
+    const float pol = (polarPtr && polarPtr->loaded) ? polarPtr->speedAt(absTwa, tws) : NAN;
+    float stw = (pol > 0.1f) ? 0.92f * pol : polarStw(absTwa, tws);
     // Add gentle oscillation (~turbulence / waves)
     stw += 0.4f * sinf(t * 2.f * PI_F / 17.f);
     stw  = clamp(stw, 0.1f, 9.f);
 
-    // ── Apparent wind (vector calculation) ───────────────────────────────
-    // In boat frame: x = Stb, y = Fwd
-    // True wind velocity: (TWS*sin(TWA), -TWS*cos(TWA))
-    // Apparent: subtract boat velocity (0, STW)
-    float twaRad = twa * D2R;
-    float awx    = tws * sinf(twaRad);
-    float awy    = -tws * cosf(twaRad) - stw;   // fwd component + boat speed headwind
-    float aws    = sqrtf(awx * awx + awy * awy);
-    float awa    = atan2f(awx, -awy) * R2D;      // positive = Stb, negative = Port
+    // ── Apparent wind: what a masthead unit would measure on this boat ────
+    // TWS/TWA above are the scenario; the demo hands over ONLY the apparent
+    // wind, like the real bus, and the display works out true wind and TWD
+    // from it, STW and the heading (WindPipeline, below) - so the demo runs
+    // the very path a boat does, damping included, instead of writing the
+    // finished numbers into the model.
+    float aws, awa;
+    WindCalc::trueToApparent(tws, twa, stw, aws, awa);
 
-    // ── Heading (slow oscillation ±8° around 215°) ───────────────────────
+    // ── Heading (slow oscillation ±8° around 215°), TRUE ─────────────────
     float hdg = 215.f + 8.f * sinf(t * 2.f * PI_F / 45.f);
     hdg = fmodf(hdg + 360.f, 360.f);
-
-    // ── True wind direction (compass) ────────────────────────────────────
-    float twd = fmodf(hdg + twa + 360.f, 360.f);
 
     // ── SOG / COG (≈ STW/HDG, small leeway) ──────────────────────────────
     float leeway = (absTwa < 50.f) ? 3.f * sinf(t / 11.f) : 0.f;
@@ -175,22 +191,29 @@ void DemoDataSource::tick() {
     {
         auto lk = data.lock();
 
-        data.twa  = twa;
-        data.tws  = tws;
-        data.awa  = awa;
-        data.aws  = aws;
-        data.twd  = twd;
-        // Demo wind is wind: stamp it like N2kHandler::onWind does, or every
-        // freshness test downstream sees a sensor that died five seconds after
-        // boot. Nothing else in the tree reads lastWindUpdate.
-        data.lastWindUpdate = now;
+        // Boat values first, stamped like the bus handlers stamp them: the
+        // wind pipeline below reads them, and an unstamped STW or heading
+        // counts as missing there.
         data.stw  = stw;
         data.sog  = sog;
         data.cog  = cog;
         data.hdg  = hdg;
+        data.hdgMagnetic   = false;          // the scenario heading is true
+        data.cogMagnetic   = false;          // ... and so is its COG
+        data.lastStwUpdate = data.lastStwRx = now;
+        data.lastSogUpdate = data.lastSogRx = now;
+        data.lastHdgUpdate = data.lastHdgRx = now;
+        data.lastCogUpdate = data.lastCogRx = now;
+        // Then the wind, through the same door as PGN 130306 reference 2. It
+        // stamps lastWindUpdate itself, and the 1 Hz wind history is taken by
+        // the display clock in every mode (WindPipeline::tick).
+        WindPipeline::apparent(aws, awa, now);
+        // Every value the demo writes is stamped, so BusWatch's 10 s rule
+        // finds it current (and the bus counts as alive while the demo runs).
         data.depth      = depth;
         data.rudderAngle = rudder;
         data.batteryVoltage = battV;
+        data.lastDepthUpdate = data.lastRudderUpdate = data.lastBattUpdate = now;
         // Gentle anchor-swing wander (~±18 m, elliptical) so the Ankerwache shows
         // a realistic swing in demo mode; also keeps the GPS fix "fresh".
         {
@@ -199,6 +222,8 @@ void DemoDataSource::tick() {
             data.lat = OWN_LAT + wN / (60.f * 1852.f);
             data.lon = OWN_LON + wE / (60.f * 1852.f * cosf(OWN_LAT * D2R));
             data.lastGpsUpdate = now;
+            data.lastKnownLat = data.lat;
+            data.lastKnownLon = data.lon;
         }
 
         // Attitude / motion + wave estimate (lock already held → push directly).
@@ -207,7 +232,8 @@ void DemoDataSource::tick() {
         data.yaw        = hdg;
         data.rateOfTurn = rotDegMin;
         data.heave      = heave;
-        data.lastAttitudeUpdate = now;
+        data.lastAttitudeUpdate = data.lastYawUpdate = now;
+        data.lastRotUpdate      = now;
         data.lastHeaveUpdate    = now;
         data.pushHeaveSample(heave, now);
 
@@ -233,7 +259,8 @@ void DemoDataSource::tick() {
         auto setBatt = [&](uint8_t inst, float v, float a, float soc, float trMin) {
             BatteryBank *b = data.findOrCreateBattery(inst);
             if (b) { b->voltage = v; b->current = a; b->soc = soc;
-                     b->timeRemMin = trMin; b->temperature = 24.f; b->lastUpdate = now; }
+                     b->timeRemMin = trMin; b->temperature = 24.f;
+                     b->lastUpdate = b->lastStatusUpdate = now; }
         };
         setBatt(0, 12.55f + svcA * 0.03f, svcA, svcSoc, svcMin);   // Service 200 Ah
         setBatt(1, 13.1f, 0.3f, 100.f, NAN);                       // Starter (floating, full)
@@ -253,12 +280,13 @@ void DemoDataSource::tick() {
         data.airTemp   = 18.f + 5.f*sinf(t*2.f*PI_F/240.f);
         data.waterTemp = 16.f + 2.f*sinf(t*2.f*PI_F/300.f + 1.f);
         data.humidity  = clamp(66.f + 16.f*sinf(t*2.f*PI_F/180.f + 2.f), 30.f, 99.f);
-        data.lastEnvUpdate = now;
+        data.lastPressureUpdate = data.lastAirTempUpdate = now;
+        data.lastWaterTempUpdate = data.lastHumidityUpdate = now;
         data.pushPressureSample(press, now);
 
         // Time/date (demo): 2024-06-21 (summer solstice), noon UTC + real-time
         // tick, CEST (+2 h). Lets the clock run and sunrise/sunset compute.
-        // Skipped once a real clock (SNTP/GPS) has set data.timeIsReal — then the
+        // Skipped once the SNTP sync has set data.timeIsReal — then the
         // genuine current time stands so the BSH tide forecast lines up.
         if (!data.timeIsReal) {
             data.sysDays        = (uint16_t)scDaysFromCivil(2024, 6, 21);
@@ -276,7 +304,7 @@ void DemoDataSource::tick() {
         data.navXte    = 14.f * sinf(t * 2.f * PI_F / 45.f);                  // m, L/R
         data.navVmc    = clamp(sog * cosf((btw - cog) * D2R), 0.1f, 12.f);
         data.navWpNum  = 3;
-        data.lastNavUpdate = now;
+        data.lastNavUpdate = data.lastXteUpdate = now;
 
         // Engine (motor-sailing demo): RPM swings 700 ↔ 2200 over a 25 s cycle.
         float rpm     = 1450.f + 750.f * sinf(t * 2.f * PI_F / 25.f);
@@ -286,17 +314,21 @@ void DemoDataSource::tick() {
         data.coolantTemp  = 76.f + 11.f * rpmNorm + 1.5f * sinf(t / 30.f);// ~76–88 °C
         data.fuelFlow     = 0.8f + 9.0f * rpmNorm;                        // ~0.8–9.8 L/h
         data.engineHours  = 1287.4f + t / 3600.f;                         // creeps up
+        data.lastEngineUpdate = data.lastOilUpdate = data.lastCoolantUpdate = now;
+        data.lastFuelFlowUpdate = data.lastEngineHoursUpdate = now;
 
-        // AP: standby
-        data.apEngaged    = false;
+        // Autopilot: engaged, holding 215° - the course the scenario's heading
+        // wanders round, so the deviation card has something to show. The
+        // mode goes in through ApPipeline like the bus's does (it sets
+        // apMode/apEngaged/apSetpoint), the heading-to-steer as PGN 127237's.
+        data.apTargetHeading = 215.f;
+        data.lastApUpdate    = now;
+        ApPipeline::demo(ApDecode::MODE_AUTO, ApDecode::STATUS_AUTOMATIC,
+                         ApDecode::SP_HEADING, 215.f, now);
 
-        // Autopilot target: follow current COG
-        data.apTargetHeading = hdg;
-
-        // Push ring-buffer histories every ~5 s
+        // Depth history every ~5 s (the wind history has its own clock).
         static uint32_t lastHist = 0;
         if (now - lastHist >= 5000) {
-            data.pushWindSample(twd, tws);
             data.pushDepthSample(depth);
             lastHist = now;
         }
@@ -325,6 +357,11 @@ void DemoDataSource::tick() {
                 break;
             }
         }
+#ifdef SIMULATOR
+        // The sim's --set / --ais-seed values go over the demo's here, while
+        // the lock is still held (see DemoData.h).
+        if (g_simDemoOverride) g_simDemoOverride(now, t);
+#endif
     }
 
     // ── Media demo (source list, now-playing, volumes) ────────────────────

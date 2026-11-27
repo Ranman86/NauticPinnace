@@ -1,12 +1,17 @@
 #include "DisplayManager.h"
 #include "Icons.h"   // OpenBridge icon trial
 #include "../nmea/AnchorSyncNode.h"
+#include "../nmea/WindPipeline.h"
+#include "../nmea/ApPipeline.h"
+#include "../nmea/BusWatch.h"
 #include "SideBar.h"
 #include "Theme.h"
 #include "../i18n/I18n.h"
 #include "../config/Config.h"
 #include "../PolarTable.h"
 #include "../DisplaySetup.h"
+#include "../LoopWatchdog.h"   // phase marker before the deferred restart
+#include "../UsbConsole.h"     // consoleFlushFull() before that restart
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
@@ -32,9 +37,97 @@
 #include "HomeOverlay.h"
 #include "LicenseOverlay.h"
 #include "LanguageOverlay.h"
+#include "UpdateOverlay.h"
+#include "../n2kupdate/UpdateGate.h"
 #include <string.h>
 
 DisplayManager dispMgr;
+
+#ifndef SIMULATOR
+extern volatile bool g_n2kTaskRunning;   // main.cpp: the N2K task exists
+#endif
+
+// The alarm state for other tasks: one byte, written by the display task.
+static volatile bool s_alarmActive = false;
+bool DisplayManager::alarmActive() { return s_alarmActive; }
+
+// Demo mode is switched on, but an update session or the verify window keeps
+// the N2K task parsing the bus until it is over (N2K-UPDATE.md 5.1 rule 6).
+// Booted in demo mode there is no N2K task and nothing to wait for.
+static bool demoDeferred() {
+#ifdef SIMULATOR
+    return false;
+#else
+    return appConfig.cfg.demoMode && g_n2kTaskRunning && !UpdateGate::demoAllowed();
+#endif
+}
+
+// ---- Chrome writes only on a change -----------------------------------------
+// Three LVGL calls this manager used to repeat with an unchanged argument, and
+// each of them costs a redraw although it changes nothing:
+//   lv_label_set_text()       frees, re-allocates and re-measures the text and
+//                             invalidates the label, same string or not;
+//   lv_obj_clear_flag(HIDDEN) invalidates an object that is already visible
+//                             (lv_obj.c, lv_obj_clear_flag);
+//   lv_obj_move_foreground()  invalidates the WHOLE parent whenever it moves
+//                             anything (lv_obj_tree.c, lv_obj_move_to_index).
+// The helpers below compare against the object's own state first, so there is
+// no cache that could go stale - a rebuild brings new objects - and leave the
+// call out only when the state already is what the call would make it. What
+// is left out is therefore never a change, only the redraw of pixels that stay
+// as they are: LVGL repaints an invalidated area from the same objects, so a
+// frame without the invalidation shows exactly what the redraw would have.
+static void setLabelIfChanged(lv_obj_t *lbl, const char *txt) {
+    if (!lbl) return;
+    const char *cur = lv_label_get_text(lbl);
+    if (cur && strcmp(cur, txt) == 0) return;
+    lv_label_set_text(lbl, txt);
+}
+static void setHidden(lv_obj_t *o, bool hide) {
+    if (!o || lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN) == hide) return;
+    if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else      lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+// lv_obj_move_foreground() on each of objs[] in turn, nullptrs skipped - but
+// only when that changes the order. Moving k objects to the front one after
+// the other always ends with exactly those k as the last children, in that
+// order, and everything else in its old relative order. So when the last k
+// children ALREADY are these k, in this order, the sequence would only rotate
+// them once round and put each one back where it was: leaving it out gives the
+// identical order. In every other case the original sequence runs unchanged.
+// Either way the z-order afterwards is the one the plain calls produce.
+//
+// Why: showScreen() lifts the demo banner and then the perf overlay on every
+// screen change. The two were each other's obstacle - the banner moved past
+// the overlay, then the overlay moved past the banner - so BOTH moves were real
+// on every call, and each one invalidated the whole screen root. On the
+// 1024x600 boards that redrew the rail and the sidebar on every switch, 614,400
+// px instead of the 360,000 of the instrument block (~185 ms for the switch
+// tick). Nothing outside the incoming and outgoing containers changes on a
+// switch - the rail and the sidebar carry no per-screen state - and both
+// containers invalidate their own area through the HIDDEN flag, so the frame
+// after the switch is the same pixel for pixel. On the 4" the containers fill
+// the whole 480x480 screen anyway; there the change only saves the calls.
+// One switch still redraws everything: the first after the anchor alarm banner
+// came up, or after a menu closed while it was up. Both put the banner last on
+// the root, so the two moves are real again, as the plain calls would be.
+static void moveToFrontInOrder(lv_obj_t *const *objs, int n) {
+    int k = 0;
+    lv_obj_t *parent = nullptr;
+    for (int i = 0; i < n; i++)
+        if (objs[i]) { if (!k) parent = lv_obj_get_parent(objs[i]); k++; }
+    if (!parent) return;
+    // lv_obj_get_child() counts from the end for a negative index and returns
+    // nullptr before the first child, so a parent with fewer than k children,
+    // or an object that lives somewhere else, simply fails the test.
+    bool inPlace = true;
+    for (int i = 0, j = 0; inPlace && i < n; i++)
+        if (objs[i]) inPlace = lv_obj_get_child(parent, (j++) - k) == objs[i];
+    if (inPlace) return;
+    for (int i = 0; i < n; i++)
+        if (objs[i]) lv_obj_move_foreground(objs[i]);
+}
 
 #if defined(BOARD_PANEL_1024X600)
 // Where the 600x600 instrument block sits, per orientation. Landscape puts the
@@ -192,12 +285,17 @@ void DisplayManager::showScreen(int idx) {
     _lastScreenPending = _cur;
     _lastScreenAtMs    = millis();
     _forceUpdate = true;
-    // Bring overlay arrows to top so they stay visible over screen content
-    if (_btnPrev) lv_obj_move_foreground(_btnPrev);
-    if (_btnNext) lv_obj_move_foreground(_btnNext);
-    if (_btnSettings) lv_obj_move_foreground(_btnSettings);
-    if (_demoBanner) lv_obj_move_foreground(_demoBanner);
-    if (_perfOverlay) lv_obj_move_foreground(_perfOverlay);
+    // Bring overlay arrows to top so they stay visible over screen content.
+    // The same order as five lv_obj_move_foreground() calls in this sequence,
+    // without the two full-screen invalidations those cost when the order is
+    // right already - see moveToFrontInOrder().
+    // The anchor alarm belongs in this list too: without it the demo banner -
+    // and now the bus strip, in the same slot - came back ABOVE the 30 px
+    // alarm on the next swipe and covered its text. Left out while it is lifted
+    // to lv_layer_top(), where it is above everything anyway.
+    lv_obj_t *const front[] = { _btnPrev, _btnNext, _btnSettings, _demoBanner, _busBanner,
+                                _alarmOnTop ? nullptr : _alarmBanner, _perfOverlay };
+    moveToFrontInOrder(front, (int)(sizeof(front) / sizeof(front[0])));
 }
 
 // ---- Screen catalog ---------------------------------------------------------
@@ -305,6 +403,19 @@ void DisplayManager::reloadThemeLive() {
         _screens[i]->create(_content);              // rebuilds with new theme; reuses _cbuf
         if (_screens[i]->container && i != _cur)
             lv_obj_add_flag(_screens[i]->container, LV_OBJ_FLAG_HIDDEN);
+#if defined(BOARD_PANEL_1024X600)
+        // The treatment activate() gives every container (see stripChrome()).
+        // Missing here, a live reload - the automatic day/night switch is one -
+        // left each rebuilt container with the theme's radius and border_post
+        // until the next restart: a radius mask and a second border pass on
+        // every draw-buffer pass. Nobody saw it because it shows nothing: the
+        // container's CLR_BG lies on the CLR_BG of _content, so its anti-aliased
+        // corners mix a colour with itself (lv_color_mix returns that colour
+        // exactly), its border width is 0, and every screen clears SCROLLABLE
+        // in create() already. So this changes what a frame costs after a
+        // reload, not one pixel of it.
+        stripChrome(_screens[i]->container);   // as in activate()
+#endif
     }
 
     // Persistent chrome (not recreated) — re-apply its theme colours.
@@ -313,6 +424,7 @@ void DisplayManager::reloadThemeLive() {
     if (_btnPrev) lv_obj_set_style_bg_color(_btnPrev, uiTheme.navBtnBg, 0);
     if (_btnNext) lv_obj_set_style_bg_color(_btnNext, uiTheme.navBtnBg, 0);
     if (_demoBanner) lv_obj_set_style_bg_color(_demoBanner, uiTheme.demoBanner, 0);
+    styleBusBanner();
     if (_perfOverlay) {
         lv_obj_set_style_text_color(_perfOverlay, uiTheme.perfText, 0);
         lv_obj_set_style_bg_color(_perfOverlay, uiTheme.perfBg, 0);
@@ -369,6 +481,26 @@ void DisplayManager::update() {
     _forceUpdate = false;
     languageOverlay.update();  // deferred open in the LVGL context
     licenseOverlay.update();   // deferred open in the LVGL context
+    // Update over NMEA 2000: dialog, banners, countdown, notices. Everything the
+    // N2K task posted since the last tick is drawn here, in the LVGL context.
+    updateOverlay.tick();
+    // A restart queued during an update (7.8): the note, and the restart itself
+    // once the session or the verify window is over.
+    if (_rebootDeferNote) {
+        _rebootDeferNote = false;
+        updateOverlay.restartDeferred(UpdateGate::restartBlockedSeconds());
+    }
+    if (_rebootQueuedMsg && !_rebootPending && UpdateGate::canRestart()) {
+        const char *m = _rebootQueuedMsg;
+        _rebootQueuedMsg = nullptr;
+        requestReboot(m);
+    }
+    // Demo mode switched on during an update: say why it does not start yet.
+    {
+        const bool dd = demoDeferred();
+        if (dd && !_demoDeferShown) updateOverlay.demoDeferred();
+        _demoDeferShown = dd;
+    }
     // Apply a pending screen-config change (set by the web handler) here, in the
     // LVGL-safe loop context rather than the async TCP task.
     if (_screenCfgPending) { _screenCfgPending = false; applyScreenConfig();
@@ -411,7 +543,8 @@ void DisplayManager::update() {
     // once the grace period elapses (config changes that need a clean WiFi re-init).
     if (_rebootPending && (int32_t)(millis() - _rebootAtMs) >= 0) {
 #ifndef SIMULATOR
-        Serial.println("[cfg] rebooting to apply settings"); Serial.flush();
+        Serial.println("[cfg] rebooting to apply settings"); consoleFlushFull();
+        LoopWatchdog::phase(LoopWatchdog::PH_RESTART);   // a hang in there: the loop watch
         ESP.restart();
 #else
         _rebootPending = false;
@@ -426,8 +559,11 @@ void DisplayManager::update() {
     // The home launcher belongs in this list as well. It was built after the
     // other three and never added here, so the instrument kept rendering at
     // full cost behind its tiles.
+    // The update dialog, the restart countdown and the identify screen are
+    // full-screen and opaque like the others.
     const bool modalOpen = configOverlay.isOpen() || licenseOverlay.isOpen() ||
-                           languageOverlay.isOpen() || homeOverlay.isOpen();
+                           languageOverlay.isOpen() || homeOverlay.isOpen() ||
+                           updateOverlay.modalOpen();
     // Suppressing the PAINT above is only half of it. LVGL still DRAWS the whole
     // screen behind the overlay and the overlay then paints over the result:
     // lv_refr.c searches for an object that covers the redraw area only inside
@@ -471,14 +607,41 @@ void DisplayManager::update() {
     // Apply any pending nav-arrow show request first (safe: called outside lv_timer_handler)
     applyNavArrowsPending();
 
-    // Wind trace sampler. Deliberately OUTSIDE the modalOpen guard and not tied
-    // to the wind screen being visible: the curve is a history, and it would be
-    // a poor one if it grew a minute-long hole every time somebody opened the
-    // settings or looked at the depth page. Costs one comparison per tick and
-    // does nothing until WIND_TRACE_MS is up.
+    // Wind clock: stale-wind blanking, the 1 Hz wind history and the wind
+    // trace sampler. Deliberately OUTSIDE the modalOpen guard and not tied to
+    // a wind screen being visible: both rings are histories, and they would be
+    // poor ones if they grew a hole every time somebody opened the settings or
+    // looked at the depth page - and a dead sensor must go blank whichever
+    // page is showing. This tick runs in every mode (bus, demo, PC simulator),
+    // which is why the clock lives here and not in the bus task. Costs a few
+    // comparisons per tick until something is due.
+    BusWatch::Change busChange;
     {
         auto lk = data.lock();
-        data.pushWindTraceDue(millis());
+        const uint32_t nowW = millis();   // read under the lock, like every stamp
+        WindPipeline::tick(nowW);
+        data.pushWindTraceDue(nowW);
+        // Same reasoning for the autopilot: a pilot computer that falls silent
+        // must turn into "--" on its own, with no frame arriving to say so.
+        ApPipeline::tick(nowW);
+        // And for every other bus value, and the bus as a whole (BusWatch.h).
+        // Last, so it sees what the two pipelines have just published.
+        busChange    = BusWatch::tick(data, nowW);
+        _busPosFresh = BusWatch::positionFresh(data, nowW);
+    }
+    // Logged here, with the lock released: a Serial write under it would hold
+    // up the N2K task.
+    if (busChange.changed) {
+        const char *what = busChange.what ? busChange.what : "?";
+        if (busChange.to == BusWatch::State::Ok && busChange.from == BusWatch::State::Silent)
+            Serial.printf("[bus] data again (%s), %u s without\n", what,
+                          (unsigned)(busChange.quietMs / 1000));
+        else if (busChange.to == BusWatch::State::Ok)
+            Serial.printf("[bus] first data (%s) %u s after start\n", what,
+                          (unsigned)(busChange.quietMs / 1000));
+        else if (busChange.to != BusWatch::State::Starting)
+            Serial.printf("[bus] %s: no data for %u s - values blanked\n",
+                          BusWatch::stateKey(busChange.to), (unsigned)(busChange.quietMs / 1000));
     }
 
     // This brace measures the CANVAS PAINT of the current screen and nothing
@@ -512,11 +675,26 @@ void DisplayManager::update() {
     // running and the next reading simply spans the time the menu was open.
     if (!modalOpen) {
         updateDemoBanner();
+        updateBusBanner();
         updatePerfOverlay();
     }
     // Deliberately NOT suspended: the anchor watch is a safety function and has
     // to keep running while the user is standing in a menu.
     evaluateAnchorAlarm();
+    // Alarm banners stay above every piece of update UI (N2K-UPDATE.md 7.1) -
+    // and above the menus too: the anchor watch is a safety function. The
+    // banner lives on the main screen, which lv_layer_top() covers - and
+    // which is hidden altogether behind a full-screen overlay - so while an
+    // overlay is up it moves to the top layer, in front of everything. It is
+    // not clickable, so a menu's controls under it still take touches.
+    if (_alarmBanner) {
+        const bool top = _anchorAlarmActive && (modalOpen || updateOverlay.anyVisible());
+        if (top != _alarmOnTop) {
+            lv_obj_set_parent(_alarmBanner, top ? lv_layer_top() : _mainScreen);
+            _alarmOnTop = top;
+        }
+        if (top) lv_obj_move_foreground(_alarmBanner);
+    }
     evaluateAutoTheme();
     // Deferred flash write for "remember the screen". Runs on every tick but
     // does nothing until the delay is up, and is deliberately outside the
@@ -547,7 +725,10 @@ void DisplayManager::evaluateAutoTheme() {
     {
         auto lk = data.lock();
         days = data.sysDays; secOfDay = data.sysSecOfDay; offMin = data.localOffsetMin;
-        lastUpd = data.lastTimeUpdate; valid = data.timeValid; lat = data.lat; lon = data.lon;
+        // Where the boat last was is good enough for sunrise and sunset; the
+        // current position goes blank when the GPS stops (BusWatch.h).
+        lastUpd = data.lastTimeUpdate; valid = data.timeValid;
+        lat = data.lastKnownLat; lon = data.lastKnownLon;
     }
     if (!valid || isnan(lat) || isnan(lon)) return;
 
@@ -597,18 +778,34 @@ void DisplayManager::evaluateAnchorAlarm() {
                       cosf(appConfig.cfg.anchorLat * 0.017453292f);
             distM = sqrtf(n*n + e*e);
             alarming = distM > appConfig.cfg.anchorRadius;
+        } else if (_anchorAlarmActive) {
+            // The position went while the alarm was up: the boat was outside
+            // the circle when last seen, and nothing says it is back. It used
+            // to clear the alarm - banner, buzzer and all - exactly when the
+            // GPS or the whole bus dropped out. It stays now, with the
+            // distance unknown, until a fix inside the circle or the watch is
+            // switched off.
+            alarming = true;
+            distM = NAN;
         }
     }
 
     if (alarming) {
-        lv_obj_clear_flag(_alarmBanner, LV_OBJ_FLAG_HIDDEN);
+        // Flag and text on a change only (setHidden/setLabelIfChanged). The
+        // blink below invalidates the banner on every call anyway, so the
+        // repeats never cost a redraw of their own - only the calls, and the
+        // text's free/re-allocate/re-measure ten times a second.
+        setHidden(_alarmBanner, false);
         if (!_anchorAlarmActive) lv_obj_move_foreground(_alarmBanner);   // on trigger
         char b[40];
         // LV_SYMBOL_* glyphs exist in the Montserrat build; U+2693 (⚓) does NOT
         // and rendered as an empty box. See the font-coverage note below.
-        snprintf(b, sizeof(b), "%s %s  %d m", npSym(NP_ICON_WARNING),   // OpenBridge icon trial
-                 T(STR_ALARM_ANCHOR_DRAG), (int)(distM + 0.5f));
-        lv_label_set_text(_alarmLbl, b);
+        if (isnan(distM))
+            snprintf(b, sizeof(b), "%s %s  -- m", npSym(NP_ICON_WARNING), T(STR_ALARM_ANCHOR_DRAG));
+        else
+            snprintf(b, sizeof(b), "%s %s  %d m", npSym(NP_ICON_WARNING),   // OpenBridge icon trial
+                     T(STR_ALARM_ANCHOR_DRAG), (int)(distM + 0.5f));
+        setLabelIfChanged(_alarmLbl, b);
         _alarmBlink++;
         lv_obj_set_style_bg_opa(_alarmBanner, (_alarmBlink & 1) ? LV_OPA_COVER : LV_OPA_50, 0);
 #ifndef SIMULATOR
@@ -622,20 +819,93 @@ void DisplayManager::evaluateAnchorAlarm() {
 #endif
     }
     _anchorAlarmActive = alarming;
+    s_alarmActive = alarming;   // the copy other tasks read (alarmActive())
 }
 
 void DisplayManager::updateDemoBanner() {
     if (!_demoBanner) return;
-    if (appConfig.cfg.demoMode) {
-        lv_obj_clear_flag(_demoBanner, LV_OBJ_FLAG_HIDDEN);
+    // The HIDDEN flag on a change only (setHidden). While the banner shows,
+    // the blink below invalidates it on every call regardless, so dropping the
+    // repeated clear_flag changes no redraw; while it is hidden, add_flag on a
+    // hidden object never invalidated anything. The blink itself is untouched.
+    // A deferred demo mode is not running yet: the values are still real.
+    if (appConfig.cfg.demoMode && !demoDeferred()) {
+        setHidden(_demoBanner, false);
         // Blink: alternate between full and half opacity every second
         _demoBlink++;
         lv_obj_set_style_bg_opa(_demoBanner,
             (_demoBlink & 1) ? LV_OPA_COVER : LV_OPA_70, 0);
     } else {
-        lv_obj_add_flag(_demoBanner, LV_OBJ_FLAG_HIDDEN);
+        setHidden(_demoBanner, true);
         _demoBlink = 0;
     }
+}
+
+// The bus strip (BusWatch.h). Built once in activate() and only shown,
+// hidden and relabelled here, each on a change only: a steady strip costs no
+// redraw, the text changes at most once a second (the age), and it does not
+// blink - it may stay up for hours at the dock, and a blink would redraw its
+// 600 x 25 px on every frame for all that time.
+//
+// Hidden while the demo feeds the model (the demo banner owns the slot then)
+// and during the start-up grace. The anchor text wins over the bus text: an
+// armed anchor watch without a current position cannot see a drag, whatever
+// the reason, and the drag alarm simply went quiet in that case. It stays a
+// notice like the other: no buzzer, and not DisplayManager::alarmActive().
+void DisplayManager::updateBusBanner() {
+    if (!_busBanner) return;
+    const bool demoLive = appConfig.cfg.demoMode && !demoDeferred();
+    const BusWatch::State st = BusWatch::state();
+    const bool armed = appConfig.cfg.anchorSet && appConfig.cfg.anchorAlarmOn &&
+                       !isnan(appConfig.cfg.anchorLat);
+    uint8_t kind = 0;
+    // Not under a sounding anchor alarm: it sits in the same slot, blinks
+    // down to half opacity, and the strip showed through it. Its "-- m"
+    // already says the position is gone.
+    if (!demoLive && st != BusWatch::State::Starting && !_anchorAlarmActive) {
+        if (armed && !_busPosFresh) kind = 2;
+        else if (BusWatch::silent()) kind = 1;
+    }
+    if (kind != _busKind) {
+        _busKind = kind;
+        styleBusBanner();
+    }
+    if (!kind) { setHidden(_busBanner, true); return; }
+
+    char b[96];
+    if (kind == 2) {
+        snprintf(b, sizeof(b), "%s  %s", npSym(NP_ICON_WARNING), T(STR_BANNER_ANCHOR_NO_POS));
+    } else if (st == BusWatch::State::Silent) {
+        const uint32_t quiet = BusWatch::quietMs(millis()) / 1000;
+        if (quiet < 120) snprintf(b, sizeof(b), "%s  %s  %s %u s", npSym(NP_ICON_WARNING),
+                                  T(STR_BANNER_NO_BUS_DATA), T(STR_BANNER_SINCE), (unsigned)quiet);
+        else             snprintf(b, sizeof(b), "%s  %s  %s %u min", npSym(NP_ICON_WARNING),
+                                  T(STR_BANNER_NO_BUS_DATA), T(STR_BANNER_SINCE), (unsigned)(quiet / 60));
+    } else {
+        snprintf(b, sizeof(b), "%s  %s", npSym(NP_ICON_WARNING), T(STR_BANNER_NO_BUS_DATA));
+    }
+    setLabelIfChanged(_busLbl, b);
+    setHidden(_busBanner, false);
+}
+
+// Colours and font of the bus strip for the current kind and theme. Amber
+// for "no data", red for the anchor case. On amber the darker of the theme's
+// background and text colour - dark navy in the dark theme, the dark text in
+// the light one, near-black at night - reads best everywhere; amber and red
+// themselves come from the theme, so the night palette keeps them dim.
+void DisplayManager::styleBusBanner() {
+    if (!_busBanner || !_busLbl) return;
+    lv_color_t bg, fg;
+    if (_busKind == 2) {
+        bg = CLR_RED;
+        fg = CLR_ON_ACCENT;
+    } else {
+        bg = CLR_YELLOW;
+        fg = (lv_color_brightness(CLR_BG) < lv_color_brightness(CLR_TEXT)) ? CLR_BG : CLR_TEXT;
+    }
+    lv_obj_set_style_bg_color(_busBanner, bg, 0);
+    lv_obj_set_style_text_color(_busLbl, fg, 0);
+    lv_obj_set_style_text_font(_busLbl, FONT_SMALL, 0);
 }
 
 void DisplayManager::handleButtons() {
@@ -827,6 +1097,19 @@ void DisplayManager::cbSettings(lv_event_t *e) {
 // ticks later (handled in update()). Safe to call from an LVGL event callback:
 // it only CREATES objects (no reentrant refresh, no blocking delay).
 void DisplayManager::requestReboot(const char *msg) {
+    // N2K-UPDATE.md 7.8 / 10.4: during an update session a restart would cut
+    // the transfer, and during the verify window it would roll the new
+    // firmware back ("restarted during the check"). So it waits until
+    // UpdateGate allows it - update() then comes back here. Only flags are
+    // set on this path: the web task calls it too, and LVGL belongs to the
+    // display task.
+    if (!UpdateGate::canRestart()) {
+        _rebootQueuedMsg = msg;
+        _rebootDeferNote = true;
+        _forceUpdate     = true;
+        Serial.println("[cfg] restart postponed until the update has finished");
+        return;
+    }
     lv_obj_t *p = lv_obj_create(lv_layer_top());
 #if defined(BOARD_PANEL_1024X600)
     // Cover the whole LOGICAL screen (portrait swaps w/h). This backdrop is a
@@ -950,12 +1233,15 @@ void DisplayManager::buildPerfOverlay(lv_obj_t *parent) {
 void DisplayManager::updatePerfOverlay() {
     if (!_perfOverlay) return;
 
-    // Show/hide based on current config (can be toggled live via WebUI)
+    // Show/hide based on current config (can be toggled live via WebUI).
+    // On a change only (setHidden): clearing HIDDEN on the visible overlay
+    // invalidated it on every call, so its strip was redrawn ten times a
+    // second for a text that changes once a second.
     if (!appConfig.cfg.showPerfOverlay) {
-        lv_obj_add_flag(_perfOverlay, LV_OBJ_FLAG_HIDDEN);
+        setHidden(_perfOverlay, true);
         return;
     }
-    lv_obj_clear_flag(_perfOverlay, LV_OBJ_FLAG_HIDDEN);
+    setHidden(_perfOverlay, false);
 
     // Update at most once per second
     uint32_t now = millis();
@@ -991,7 +1277,7 @@ void DisplayManager::updatePerfOverlay() {
 
     char buf[48];
     snprintf(buf, sizeof(buf), "%.0ffps  CPU%.0f%%  %uk", fps, cpu, freeDram);
-    lv_label_set_text(_perfOverlay, buf);
+    setLabelIfChanged(_perfOverlay, buf);
 
     // Reset counters
     _perfFrames  = 0;
@@ -1160,6 +1446,34 @@ void DisplayManager::activate() {
     lv_obj_align(bannerLbl, LV_ALIGN_CENTER, 0, 0);
     Serial.println("[ACT] 8: demoBanner created"); Serial.flush();
 
+    // "No data from the bus" strip (updateBusBanner): the demo banner's slot
+    // and height, so it covers exactly what the demo banner covers, and below
+    // the anchor alarm (created next, and kept above it in showScreen()).
+    _busBanner = lv_obj_create(root);
+#if defined(BOARD_PANEL_1024X600)
+    const lv_coord_t busW = UI7_CENTER_W;
+    lv_obj_set_pos(_busBanner, contentX(), contentY());
+#else
+    const lv_coord_t busW = SCREEN_W;
+    lv_obj_set_pos(_busBanner, 0, 0);
+#endif
+    lv_obj_set_size(_busBanner, busW, uiSz.demoBannerH);
+    lv_obj_set_style_bg_opa(_busBanner, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(_busBanner, 0, 0);
+    lv_obj_set_style_radius(_busBanner, 0, 0);       // no radius mask from the LVGL pool
+    lv_obj_set_style_pad_all(_busBanner, 2, 0);
+    lv_obj_clear_flag(_busBanner, LV_OBJ_FLAG_SCROLLABLE);
+    // A notice, not a control: touches go through, as on the alarm banner.
+    lv_obj_clear_flag(_busBanner, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(_busBanner, LV_OBJ_FLAG_HIDDEN);
+    _busLbl = lv_label_create(_busBanner);
+    lv_obj_set_width(_busLbl, busW - 8);
+    lv_label_set_long_mode(_busLbl, LV_LABEL_LONG_DOT);
+    lv_obj_set_style_text_align(_busLbl, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(_busLbl, "");
+    lv_obj_align(_busLbl, LV_ALIGN_CENTER, 0, 0);
+    styleBusBanner();
+
     // Global anchor-drag alarm banner – red, blinking, top of screen, floats above
     // all content (created last + moved to foreground when active). Fires on ANY
     // screen so the watch is effective even when another instrument is shown.
@@ -1177,6 +1491,9 @@ void DisplayManager::activate() {
     lv_obj_set_style_radius(_alarmBanner, 0, 0);
     lv_obj_set_style_pad_all(_alarmBanner, 2, 0);
     lv_obj_clear_flag(_alarmBanner, LV_OBJ_FLAG_SCROLLABLE);
+    // A notice, not a control: touches go through to whatever is below,
+    // also when the banner is lifted above a menu (update()).
+    lv_obj_clear_flag(_alarmBanner, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_add_flag(_alarmBanner, LV_OBJ_FLAG_HIDDEN);
     _alarmLbl = lv_label_create(_alarmBanner);
     lv_label_set_text(_alarmLbl, T(STR_ALARM_ANCHOR_DRAG));

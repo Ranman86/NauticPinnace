@@ -1,0 +1,18 @@
+<Project>
+  <!-- Shared settings for every project under tools/N2kUpdate. -->
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Authors>Ranman86</Authors>
+    <Company>NauticPinnace</Company>
+    <Product>NauticPinnace N2K updater</Product>
+    <Copyright>Copyright (c) 2026 Ranman86, MIT License</Copyright>
+    <Version>1.0.0</Version>
+    <!-- Keep the build log quiet but honest: no warning may be suppressed globally. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <Deterministic>true</Deterministic>
+    <!-- Absolute source paths would otherwise end up in the PDBs and stack traces. -->
+    <PathMap>$(MSBuildThisFileDirectory)=/N2kUpdate/</PathMap>
+  </PropertyGroup>
+</Project>

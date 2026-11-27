@@ -154,6 +154,48 @@ void gt911Diag();
 uint32_t getTickFps(bool reset = false);
 
 void displayInit();
+
+#if defined(BOARD_PANEL_1024X600)
+#include <esp_heap_caps.h>
+// The PSRAM the panel's frame buffer needs. main.cpp holds this much before
+// the canvas arena takes its share (PsramArena::initLeavingRoom), and
+// displayInit() gives it back a moment before the panel allocates - so a
+// short PSRAM costs canvases, never the picture. The kilobyte on top covers
+// the panel driver's alignment and the heap's own header (see PsramArena.cpp
+// for why the hold has to be a little larger than the frame buffer itself).
+//
+// NOT MALLOC_CAP_DMA, although the panel asks with it: IDF 5 sends every
+// DMA-capable request through its aligned path, which cuts the block to the
+// bytes asked for - and a freed block that size is 16 KB short of what the
+// panel's own request looks for (measured 03.11.2026: the panel got no
+// memory). Without the flag the hold takes its whole size class. It is the
+// same heap either way; IDF drops MALLOC_CAP_DMA for PSRAM itself.
+constexpr size_t   DISPLAY_FB_ROOM      = (size_t)LCD_WIDTH * LCD_HEIGHT * 2 + 1024;
+constexpr uint32_t DISPLAY_FB_ROOM_CAPS = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+#endif
+
+// How displayInit()'s wait for the IO expander went - it replaced a blind
+// 8 s at the start of setup(). Kept so main.cpp can repeat it in a boot
+// summary once a terminal is attached: on the USB-console boards (4", 5B)
+// the line printed at the time is often lost, and it is the one a cold-start
+// test is about.
+struct ExpanderWait {
+    uint32_t atMs       = 0;     // millis() when the wait ended
+    uint32_t tookMs     = 0;     // how long it took
+    uint32_t firstAckMs = 0;     // first ACK of its address, from the start of the wait
+    uint16_t rounds     = 0;     // write/readback rounds
+    bool     acked      = false; // it ACKed at all
+    bool     confirmed  = false; // a write read back - false: ran into the 8 s cap
+    int8_t   late       = -1;    // displayLateCheck(): 1 held, 0 had to be re-applied
+};
+const ExpanderWait &displayExpanderWait();
+
+// Once, ~10 s after start (main.cpp, from loop()): has the expander KEPT what
+// displayInit() told it? The wait proves it listened at one moment; the old
+// blind 8 s also covered a firmware that applies its own defaults later.
+// Writes everything again on a mismatch, and logs either way.
+void displayLateCheck();
+
 // Apply the configured screen rotation. MUST be called AFTER the config is
 // loaded: displayInit() runs before that (LVGL has to exist first), so it
 // would only ever see the default of 0 - which is exactly the bug that made

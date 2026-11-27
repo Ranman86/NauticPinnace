@@ -16,6 +16,7 @@ LicenseOverlay licenseOverlay;
 
 void LicenseOverlay::update() {
     if (_pendingFirstRun) { _pendingFirstRun = false; openFirstRun(); }
+    if (_pendingOpen)     { _pendingOpen = false;     open(); }
 }
 
 #if defined(PERF_LICENSE_SCROLL)
@@ -281,7 +282,7 @@ void LicenseOverlay::cbAccept(lv_event_t *e) {
     if (WiFi.getMode() == WIFI_MODE_NULL) {
         Entropy::generateApPassword(appConfig.cfg.apPass,
                                     sizeof(appConfig.cfg.apPass));
-        Serial.println("[wifi] Hotspot-Passwort mit Touch-Entropie erneuert");
+        Serial.println("[wifi] hotspot password renewed with touch entropy");
     }
 #endif
     appConfig.save();                       // no longer appears afterwards

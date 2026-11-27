@@ -5,19 +5,21 @@ Produces under release/:
   NauticPinnace-<version>/  and  NauticPinnace-<version>.zip of it
     4/  7b/  5b/   one folder per board, each holding the five flash images
                    (bootloader, partition table, boot_app0, firmware,
-                   LittleFS), a merged full-flash image nauticpinnace-full.bin
-                   and manifest.json for ESP Web Tools (browser flashing)
-    flash.bat      Windows, zero-install (uses the bundled esptool.exe):
-                   flash.bat [4|7b|5b] [COMx] - without a board it lists the
-                   three and asks
+                   LittleFS), a merged full-flash image nauticpinnace-full.bin,
+                   manifest.json for ESP Web Tools (browser flashing) and
+                   index.html.gz (the web interface on its own, for the WiFi
+                   and NMEA 2000 updates)
+    flash.bat      Windows: flash.bat [4|7b|5b] [COMx] - without a board it
+                   lists the three and asks. It runs Espressif's own
+                   esptool.exe, which the user downloads (ESPTOOL_WIN_URL)
+                   and puts next to it, and refuses one whose SHA-256 is not
+                   ESPTOOL_EXE_SHA256
     flash.sh       Linux/macOS (pip-installed esptool):
                    sh flash.sh <4|7b|5b> [port] - without a board it asks
     FLASHING.md, LICENSE, THIRD-PARTY-NOTICES.md, LICENSES/   once, at the top
-    esptool.exe plus esptool-<ver>/ (its source, its upstream notices, the
-      notices of everything frozen into the exe and the source distributions
-      of the Python packages it contains)
+    No esptool: the package carries none since 1.3.0 (see the licence note)
   NauticPinnace-<version>-sources/
-    the six src-*.zip archives: the corresponding source of the LGPL libraries
+    the seven src-*.zip archives: the corresponding source of the LGPL libraries
     in exactly the versions the 4-inch AND the 7-inch/5-inch firmware link
 
 THE BOARDS CANNOT BE TOLD APART OVER USB. All three are ESP32-S3, so neither
@@ -41,7 +43,7 @@ package what the first has just built; the release gate below still refuses
 any image that is older than the sources.
 
 Nothing is uploaded. The script ends with the list of files to attach to the
-GitHub Release: the ZIP and the six source archives.
+GitHub Release: the ZIP and the seven source archives.
 
 Usage (from the repo root):
   python tools/make_release.py [--version vX.Y.Z] [--skip-build]
@@ -59,15 +61,18 @@ new version number.
 Licence note: firmware.bin links LGPL libraries statically (Arduino-ESP32
 core, AsyncTCP, ESPAsyncWebServer - different versions on the 4-inch and on
 the 7B/5B). The package carries their notices and licence texts; their
-corresponding source goes to the same GitHub Release as the six src-*.zip
+corresponding source goes to the same GitHub Release as the seven src-*.zip
 archives (FLASHING.md lists them with the upstream URLs), and the application
-source needed to relink is this repository at the release tag. esptool.exe
-(GPL-2.0-or-later) is an unmodified standalone tool distributed alongside,
-not linked. Because the binary is redistributed, its complete source is in
-the package too (GPLv2 section 3a - a link would not be enough), together
-with tools/esptool-exe-notices/ and the pyserial/intelhex source
-distributions that file lists. Every download is cached in release/.cache/,
-so a re-run is offline-capable.
+source needed to relink is this repository at the release tag. Every
+download (those source archives) is cached in release/.cache/, so a re-run
+is offline-capable.
+
+esptool is NOT redistributed. Up to 1.2.0 the package carried esptool.exe
+(GPL-2.0-or-later, a PyInstaller bundle) with esptool's source, but the exe
+also contains GPL flasher stubs, a Python runtime, OpenSSL and more whose
+complete source never travelled with it. Since 1.3.0 flash.bat expects the
+user's own copy from Espressif's release instead and checks its SHA-256;
+the web flasher remains the main route.
 """
 import argparse
 import hashlib
@@ -110,18 +115,21 @@ if sorted(BOARD_INFO) != sorted(b['key'] for b in gwf.BOARDS):
     sys.exit('make_release.py: BOARD_INFO does not match '
              'gen_web_flasher.BOARDS - update both together')
 
+# The esptool that flash.bat runs: Espressif's standalone Windows build,
+# which the user downloads from the official release. Nothing of it goes into
+# the package. The release publishes no digest, so the SHA-256 of the
+# esptool.exe inside that ZIP is pinned here, as it shipped unchanged in the
+# packages v1.0.0, v1.1.0 and v1.2.0 (6,760,840 bytes, Authenticode-signed by
+# Espressif; the ZIP itself, 33,608,517 bytes, had sha256 2483d409e241d882
+# 6ae0ff023eecf31a7d4de6c10ca5ee855b1420cdfd53aaf6). flash.bat refuses any
+# other exe. Change version, URL and hash only together.
 ESPTOOL_VERSION = '4.8.1'
 ESPTOOL_WIN_URL = ('https://github.com/espressif/esptool/releases/download/'
                    'v4.8.1/esptool-v4.8.1-win64.zip')
-# The release publishes no digest, so this pins the asset as downloaded for
-# v1.0.0, v1.1.0 and v1.2.0 (33,608,517 bytes; the esptool.exe inside it has
-# sha256 069db0f1...aaad2f664 in all three packages). The binary is
-# redistributed, so a changed download must stop the run, not ship.
-ESPTOOL_WIN_SHA256 = ('2483d409e241d8826ae0ff023eecf31a'
-                      '7d4de6c10ca5ee855b1420cdfd53aaf6')
-ESPTOOL_SRC_URL = ('https://github.com/espressif/esptool/archive/refs/tags/'
-                   'v4.8.1.zip')
-ESPTOOL_NOTICES = os.path.join(ROOT, 'tools', 'esptool-exe-notices')
+# The folder Espressif's ZIP unpacks to; flash.bat also looks in there.
+ESPTOOL_WIN_DIR = 'esptool-win64'
+ESPTOOL_EXE_SHA256 = ('069db0f1e4d8f929f36d0f60243499eb'
+                      '670626c03a686376728998aaaad2f664')
 
 REPO_URL = 'https://github.com/Ranman86/NauticPinnace'
 WEB_FLASHER_URL = 'https://ranman86.github.io/NauticPinnace/flash.html'
@@ -132,10 +140,29 @@ CH343_DRIVER_URL = 'https://www.wch-ic.com/downloads/CH343SER_EXE.html'
 # what it is, licence, which boards. The release ZIP carries all three boards
 # (and the web flasher of the same release serves the same images), so every
 # entry here belongs to it.
+#
+# A repo of the form "pio:<package>" is not on GitHub: the archive is packed
+# from the installed PlatformIO package (pack_pio_package()), and ref is the
+# package version its .piopm must name. The 4-inch's Arduino core is such a
+# case. Up to 1.2.0 the release attached the 2.0.17 tag, but the 4-inch links
+# PlatformIO's package framework-arduinoespressif32 3.20017.241212, and that
+# is the tag plus backports PlatformIO applied itself: seven files of cores/
+# and libraries/ differ (Arduino.h, Esp.cpp, HardwareSerial.cpp, the RMT, SPI
+# and UART HAL, HTTPClient.cpp). Its base commit dcc1105b in
+# espressif/arduino-esp32 is the tag plus one CI script, so the exact source
+# exists only in the package.
 LGPL_SOURCES = [
+    ('src-framework-arduinoespressif32-3.20017.241212.zip',
+     'pio:framework-arduinoespressif32', '3.20017.241212+sha.dcc1105b',
+     'Arduino-ESP32 core 2.0.17 as PlatformIO package '
+     'framework-arduinoespressif32 3.20017.241212 (the 2.0.17 tag plus '
+     "PlatformIO's backports; ESP-IDF 4.4.7)",
+     'LGPL-2.1-or-later', '4-inch'),
+    # The upstream tag that package is based on, attached as before, for
+    # reference - the 4-inch links the package above.
     ('src-arduino-esp32-2.0.17.zip', 'espressif/arduino-esp32', '2.0.17',
-     'Arduino-ESP32 core 2.0.17 (PlatformIO package '
-     'framework-arduinoespressif32 3.20017.241212, ESP-IDF 4.4.7)',
+     'Arduino-ESP32 2.0.17, the upstream tag the package above is based on '
+     '(for reference; the 4-inch links the package)',
      'LGPL-2.1-or-later', '4-inch'),
     ('src-AsyncTCP-ef448a8.zip', 'me-no-dev/AsyncTCP',
      'ef448a8a1dffe4ec1b72326dd5a26211ff227b49',
@@ -174,9 +201,7 @@ def sha256_of(path):
     return h.hexdigest()
 
 
-def _valid_download(path, sha256):
-    if sha256:
-        return sha256_of(path) == sha256.lower()
+def _valid_download(path):
     # no published hash (GitHub archives): at least an intact ZIP, not an
     # HTML error page saved under a .zip name
     try:
@@ -186,7 +211,7 @@ def _valid_download(path, sha256):
         return False
 
 
-def fetch_cached(url, fname, sha256=None):
+def fetch_cached(url, fname):
     """Download url once into release/.cache/fname and return that path.
 
     A cached file is re-verified on every use; a missing network or a failed
@@ -194,7 +219,7 @@ def fetch_cached(url, fname, sha256=None):
     os.makedirs(CACHE, exist_ok=True)
     dst = os.path.join(CACHE, fname)
     if os.path.exists(dst):
-        if _valid_download(dst, sha256):
+        if _valid_download(dst):
             return dst
         os.remove(dst)
     tmp = dst + '.part'
@@ -206,78 +231,106 @@ def fetch_cached(url, fname, sha256=None):
         if os.path.exists(tmp):
             os.remove(tmp)
         sys.exit('download failed: %s (%s)' % (url, e))
-    if not _valid_download(tmp, sha256):
+    if not _valid_download(tmp):
         os.remove(tmp)
-        sys.exit('download failed verification (%s): %s'
-                 % ('sha256 mismatch' if sha256 else 'not an intact ZIP', url))
+        sys.exit('download failed verification (not an intact ZIP): %s' % url)
     os.replace(tmp, dst)
     return dst
 
 
-def load_esptool_notices():
-    """tools/esptool-exe-notices/sources.json, validated. Without it the
-    bundled esptool.exe would ship without the notices of the components
-    frozen into it, so a missing or malformed file stops the run."""
-    if not os.path.isdir(ESPTOOL_NOTICES):
-        sys.exit('tools/esptool-exe-notices/ is missing - esptool.exe cannot '
-                 'be bundled without the notices of what is frozen into it')
-    sj = os.path.join(ESPTOOL_NOTICES, 'sources.json')
-    if not os.path.isfile(sj):
-        sys.exit('tools/esptool-exe-notices/sources.json is missing')
-    try:
-        with io.open(sj, encoding='utf-8') as fh:
-            doc = json.load(fh)
-    except ValueError as e:
-        sys.exit('tools/esptool-exe-notices/sources.json: invalid JSON (%s)' % e)
-    sdists = doc.get('sdists') if isinstance(doc, dict) else None
-    if not isinstance(sdists, list) or not sdists:
-        sys.exit('tools/esptool-exe-notices/sources.json: no "sdists" list')
-    for i, s in enumerate(sdists):
-        bad = [k for k in ('name', 'version', 'url', 'sha256', 'licence')
-               if not isinstance(s, dict) or not isinstance(s.get(k), str) or not s.get(k)]
-        if bad:
-            sys.exit('tools/esptool-exe-notices/sources.json: sdists[%d] lacks %s'
-                     % (i, ', '.join(bad)))
-        if not s['url'].startswith('https://'):
-            sys.exit('tools/esptool-exe-notices/sources.json: sdists[%d] url is '
-                     'not https' % i)
-        if not re.match(r'^[0-9a-fA-F]{64}$', s['sha256']):
-            sys.exit('tools/esptool-exe-notices/sources.json: sdists[%d] sha256 '
-                     'is not 64 hex digits' % i)
-    if not os.path.isfile(os.path.join(ESPTOOL_NOTICES, 'NOTICE.md')):
-        print('  WARNING: tools/esptool-exe-notices/NOTICE.md not found')
-    return sdists
-
-
-def sdist_filename(s):
-    name = s['url'].split('?', 1)[0].rstrip('/').rsplit('/', 1)[-1]
-    return name or '%s-%s.tar.gz' % (s['name'], s['version'])
-
-
-def fetch_all(sdists):
+def fetch_all():
     """Every download, BEFORE the build: a missing network then fails in
     seconds instead of after three full compiles. Returns the cached paths."""
     print('== fetching downloads (cached in release/.cache) ==')
-    got = {
-        'esptool-win': fetch_cached(ESPTOOL_WIN_URL,
-                                    'esptool-v%s-win64.zip' % ESPTOOL_VERSION,
-                                    ESPTOOL_WIN_SHA256),
-        'esptool-src': fetch_cached(ESPTOOL_SRC_URL,
-                                    'esptool-%s-source.zip' % ESPTOOL_VERSION),
-    }
-    for s in sdists:
-        got['sdist:' + s['name']] = fetch_cached(s['url'], sdist_filename(s),
-                                                 s['sha256'])
+    got = {}
     for asset, repo, ref, _what, _lic, _boards in LGPL_SOURCES:
-        got[asset] = fetch_cached('https://github.com/%s/archive/%s.zip'
-                                  % (repo, ref), asset)
+        if repo.startswith('pio:'):
+            got[asset] = pack_pio_package(asset, repo[4:], ref)
+        else:
+            got[asset] = fetch_cached('https://github.com/%s/archive/%s.zip'
+                                      % (repo, ref), asset)
     return got
+
+
+def upstream_url(repo, ref):
+    """Where a recipient finds an LGPL source upstream (FLASHING.md)."""
+    if repo.startswith('pio:'):
+        return ('https://registry.platformio.org/tools/platformio/%s (version %s)'
+                % (repo[4:], ref.split('+', 1)[0]))
+    return 'https://github.com/%s/tree/%s' % (repo, ref)
+
+
+# What of an installed PlatformIO framework package is its source: the
+# library itself, its variants, the build scripts that compile it and the
+# package's metadata. tools/sdk (ESP-IDF's precompiled libraries and their
+# headers, Apache-2.0, from ESP-IDF 4.4.7) and the bundled executables are not
+# - the 7B/5B core's GitHub archive does not carry its IDF libraries either.
+PIO_PKG_DIRS = ('cores', 'libraries', 'variants')
+PIO_PKG_TOOLS = re.compile(r'^tools/(?:[^/]+\.py|partitions/[^/]+)$')
+PIO_PKG_DATE = (2024, 12, 12, 0, 0, 0)    # the package's release, 3.20017.241212
+
+
+def pack_pio_package(asset, name, version):
+    """Archive the source of the installed PlatformIO package `name` - the
+    one the 4-inch build links - into release/.cache/asset. The .piopm must
+    name `version`, or the run stops: the archive would not be the source of
+    what was linked. Deterministic (sorted entries, fixed timestamps and
+    attributes), so an unchanged package gives the same bytes every run."""
+    roots = [b['pkgs'] for b in gwf.BOARDS if b['key'] == '4' and b['pkgs']]
+    pkg = os.path.join(roots[0], name) if roots else ''
+    meta = os.path.join(pkg, '.piopm')
+    try:
+        with io.open(meta, encoding='utf-8') as fh:
+            have = json.load(fh).get('version')
+    except (OSError, ValueError) as e:
+        sys.exit('%s: cannot read the package version (%s) - build the 4-inch '
+                 'once so the package is installed' % (release_checks.shown(meta), e))
+    if have != version:
+        sys.exit('%s: installed package is %s, LGPL_SOURCES names %s - the '
+                 'archive would not be the source of what the 4-inch links'
+                 % (release_checks.shown(pkg), have, version))
+    files = []
+    for base, dirs, names in os.walk(pkg):
+        dirs.sort()
+        for n in sorted(names):
+            rel = os.path.relpath(os.path.join(base, n), pkg).replace('\\', '/')
+            top = rel.split('/', 1)[0]
+            if ('/' not in rel or top in PIO_PKG_DIRS or PIO_PKG_TOOLS.match(rel)):
+                files.append(rel)
+    os.makedirs(CACHE, exist_ok=True)
+    dst = os.path.join(CACHE, asset)
+    tmp = dst + '.part'
+    prefix = '%s-%s/' % (name, version.split('+', 1)[0])
+    # The package carries no licence file of its own (package.json names
+    # LGPL-2.1-or-later); the text goes in, so the archive stands on its own.
+    extra = {'LICENSE-LGPL-2.1.txt': os.path.join(ROOT, 'LICENSES', 'LGPL-2.1.txt')}
+    with zipfile.ZipFile(tmp, 'w', zipfile.ZIP_DEFLATED) as z:
+        entries = [(rel, os.path.join(pkg, rel)) for rel in files] + sorted(extra.items())
+        for rel, src in sorted(entries):
+            with open(src, 'rb') as fh:
+                data = fh.read()
+            # Built here, from a local directory: no other release check
+            # looks into this archive, so its members are checked one by one.
+            bad = release_checks.check_personal_paths(prefix + rel, data, any_account=True)
+            if bad:
+                z.close()
+                os.remove(tmp)
+                release_checks.report(bad, asset)
+                sys.exit('%s not written' % asset)
+            zi = zipfile.ZipInfo(prefix + rel, PIO_PKG_DATE)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zi.external_attr = 0o644 << 16
+            z.writestr(zi, data)
+    os.replace(tmp, dst)
+    print('  packed %s from the installed package (%d files)' % (asset, len(files)))
+    return dst
 
 
 def merge_tool():
     """The esptool that merge_bin runs with: this interpreter's own if it has
     one, else PlatformIO's copy from the 4-inch board's package directory
-    (esptool 4.x - the same command syntax as the bundled esptool.exe).
+    (esptool 4.x - the same command syntax as the esptool.exe that flash.bat
+    runs).
     Looked up once, before release/ is touched."""
     probe = subprocess.run([sys.executable, '-c', 'import esptool'],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -314,10 +367,16 @@ def manifest_for(board, version):
 
 
 def assemble_board(dest, board, images, version, esptool):
-    """dest/: the five images, the merged full-flash image, manifest.json."""
+    """dest/: the five images, the merged full-flash image, manifest.json,
+    and the web interface as index.html.gz."""
     os.makedirs(dest)
     for _, fn in PARTS:
         shutil.copy(images[fn], os.path.join(dest, fn))
+    # The web interface on its own, next to its firmware: what the WiFi update
+    # (?target=webui) and the update over NMEA 2000 install - the updater
+    # takes firmware and companion web UI from one folder (N2K-UPDATE.md 11.6).
+    # data/ was checked to equal littlefs.bin before this point.
+    shutil.copy(os.path.join(DATA, 'index.html.gz'), os.path.join(dest, 'index.html.gz'))
     # merged single image (flash everything at offset 0x0). It spans the
     # whole 16 MB - LittleFS ends at the end of the flash - and the gaps are
     # filled with 0xFF, so writing it leaves the same state as erase + write.
@@ -329,64 +388,6 @@ def assemble_board(dest, board, images, version, esptool):
     run(esptool + tail)
     with io.open(os.path.join(dest, 'manifest.json'), 'w') as fh:
         json.dump(manifest_for(board, version), fh, indent=1)
-
-
-def bundle_esptool(dest_dir, sdists, got):
-    """Bundle the standalone Windows esptool so flash.bat needs zero installs.
-
-    esptool is GPL-2.0-or-later. Shipping the binary therefore also means
-    shipping its licence AND its complete source (GPLv2 section 3a) — a link
-    would not be enough, so the source archive goes into the package next to
-    the exe, in esptool-<ver>/. The exe is a PyInstaller build: the notices
-    of what is frozen into it (Python runtime and the libraries it carries)
-    come from tools/esptool-exe-notices/ into esptool-<ver>/notices/, and the
-    source distributions listed there next to the esptool source.
-    """
-    exe = os.path.join(dest_dir, 'esptool.exe')
-    sub = os.path.join(dest_dir, 'esptool-' + ESPTOOL_VERSION)
-    os.makedirs(sub, exist_ok=True)
-    with zipfile.ZipFile(got['esptool-win']) as z:
-        for n in z.namelist():
-            base = os.path.basename(n)
-            if base == 'esptool.exe':
-                with z.open(n) as s, open(exe, 'wb') as out:
-                    shutil.copyfileobj(s, out)
-            # keep the upstream notices instead of stripping them
-            elif base.upper().startswith(('LICENSE', 'NOTICE', 'README')):
-                with z.open(n) as s, open(os.path.join(sub, base), 'wb') as out:
-                    shutil.copyfileobj(s, out)
-    if not os.path.isfile(exe):
-        sys.exit('esptool.exe not found in %s' % ESPTOOL_WIN_URL)
-
-    shutil.copy(got['esptool-src'],
-                os.path.join(sub, 'esptool-%s-source.zip' % ESPTOOL_VERSION))
-    # .gitattributes there only keeps git from touching the line ends of the
-    # licence texts - a repository setting, not a notice
-    shutil.copytree(ESPTOOL_NOTICES, os.path.join(sub, 'notices'),
-                    ignore=shutil.ignore_patterns('.git*'))
-    sdist_lines = ''
-    for s in sdists:
-        fn = sdist_filename(s)
-        shutil.copy(got['sdist:' + s['name']], os.path.join(sub, fn))
-        sdist_lines += '  %s  (%s %s, %s)\n' % (fn, s['name'], s['version'],
-                                                s['licence'])
-
-    io.open(os.path.join(sub, 'README-WHY-THIS-IS-HERE.txt'), 'w',
-            encoding='utf-8').write(
-        'esptool.exe in the parent directory is an unmodified build of\n'
-        'esptool %s (https://github.com/espressif/esptool), licensed\n'
-        'GPL-2.0-or-later. It is a separate program that NauticPinnace only\n'
-        'invokes — it is not linked into the firmware.\n\n'
-        'Because the binary is redistributed here, its complete\n'
-        'corresponding source accompanies it:\n'
-        '  esptool-%s-source.zip\n'
-        'and the licence text is in ../LICENSES/GPL-2.0.txt.\n\n'
-        'esptool.exe is a PyInstaller bundle: it also contains a Python\n'
-        'runtime and the libraries esptool uses. Their notices and licence\n'
-        'texts are in notices/, and the source distributions of the Python\n'
-        'packages frozen into it are here:\n'
-        '%s'
-        % (ESPTOOL_VERSION, ESPTOOL_VERSION, sdist_lines))
 
 
 # ---- flash scripts ------------------------------------------------------------
@@ -446,16 +447,32 @@ def flash_bat(version):
     i.e. before a set in it runs, and a ')' in the folder name (an unzipped
     "NauticPinnace-v1.2.0 (1)") would end the block early. Lines with
     Windows paths are raw strings - _script() refuses the control character
-    that a plain string would turn '5b\\nauticpinnace' into.
+    that a plain string would turn '5b\\nauticpinnace' into. Delayed
+    expansion stays off, so a '!' in the folder name is just a character.
+
+    esptool is not in the package: the script looks for Espressif's
+    esptool.exe next to itself (or in the folder the ZIP unpacks to), stops
+    with download instructions when there is none, and runs it only when
+    certutil (part of Windows) gives ESPTOOL_EXE_SHA256 for it.
     """
     keys = _keys()
     choice = ', '.join(keys[:-1]) + ' or ' + keys[-1]
     table = ['echo     %-4s %-8s %-28s %10s' % row for row in _board_rows()]
     write_args = ' '.join('%s %%BOARD%%\\%s' % (off, fn) for off, fn in PARTS)
+    win_dir = ESPTOOL_WIN_DIR
+    # where Explorer's "Extract all" puts it when the ZIP is unpacked here
+    zip_dir = ESPTOOL_WIN_URL.rsplit('/', 1)[-1][:-len('.zip')] + '\\' + win_dir
     L = [
         '@echo off',
-        'setlocal',
-        'rem NauticPinnace ' + version + ' flasher for Windows - uses the bundled esptool.exe.',
+        'setlocal EnableExtensions DisableDelayedExpansion',
+        'rem NauticPinnace ' + version + ' flasher for Windows.',
+        'rem',
+        "rem It runs Espressif's esptool.exe " + ESPTOOL_VERSION + ', which is NOT part of this',
+        'rem package: download',
+        'rem   ' + ESPTOOL_WIN_URL,
+        'rem and put the esptool.exe from it next to this script (its folder',
+        'rem ' + win_dir + ' works too). The script checks the SHA-256 of that file',
+        'rem with certutil before it runs it, and refuses any other file.',
         'rem',
         'rem   flash.bat BOARD [PORT]',
         'rem',
@@ -481,10 +498,32 @@ def flash_bat(version):
         'set RC=0',
         'echo(',
         'echo  NauticPinnace ' + version + ' flasher',
+        'rem Started from inside the ZIP, Explorer copies only this file to a',
+        'rem temporary folder: say "unpack" before asking for esptool.exe.',
+        ' '.join('if not exist "%s\\firmware.bin"' % k for k in keys) + ' goto :not_unpacked',
+        'rem ---- esptool: present, and exactly the published file? ------------',
+        'rem Looked up and hashed relative to this folder (the pushd above), so',
+        'rem the certutil command line holds no path that could need quoting.',
+        'set "ESPTOOL_URL=' + ESPTOOL_WIN_URL + '"',
+        'set ESPTOOL_SHA256=' + ESPTOOL_EXE_SHA256,
+        'set TOOL_FILE=',
+        'if exist "esptool.exe" set TOOL_FILE=esptool.exe',
+        'if not defined TOOL_FILE if exist "' + win_dir + '\\esptool.exe" set TOOL_FILE='
+        + win_dir + '\\esptool.exe',
+        'if not defined TOOL_FILE if exist "' + zip_dir + '\\esptool.exe" set TOOL_FILE='
+        + zip_dir + '\\esptool.exe',
+        'if not defined TOOL_FILE goto :no_tool',
+        'rem certutil prints a header line, then the hash - with blanks between',
+        'rem the bytes on older Windows, hence their removal. A certutil error',
+        'rem leaves text there that matches no hash, so it is refused as well.',
+        'set GOT=',
+        'for /f "skip=1 delims=" %%h in (\'certutil -hashfile "%TOOL_FILE%" SHA256\')'
+        ' do if not defined GOT set "GOT=%%h"',
+        'if defined GOT set "GOT=%GOT: =%"',
+        'if /i not "%GOT%"=="%ESPTOOL_SHA256%" goto :bad_tool',
         'rem Full path to the tool because some environments drop the cwd from',
         'rem the search path.',
-        'set TOOL=python -m esptool',
-        'if exist "%~dp0esptool.exe" set TOOL="%~dp0esptool.exe"',
+        'set TOOL="%~dp0%TOOL_FILE%"',
         'set RUN=',
         'if defined NP_FLASH_DRYRUN set RUN=echo  [dry run]',
         'set BOARD=',
@@ -542,6 +581,7 @@ def flash_bat(version):
         'echo(',
         'echo  Board:   %MODEL%',
         r'echo  Folder:  %BOARD%\   Baud: %BAUD%',
+        'echo  esptool: %TOOL_FILE% (' + ESPTOOL_VERSION + ', SHA-256 checked)',
         'echo  Connect the display via USB-C. Takes about a minute.',
         r'echo  Wrong port picked? Run:  .\flash.bat %BOARD% COMx',
         'echo(',
@@ -595,11 +635,48 @@ def flash_bat(version):
         'echo     image instead: it covers all 16 MB, so the board ends up just',
         'echo     as clean. From a command prompt in this folder (slower, allow',
         'echo     a few minutes):',
-        r'if defined PORT echo     .\esptool.exe --chip esp32s3 %PORT% --no-stub write_flash --compress 0x0 5b\nauticpinnace-full.bin',
-        r'if not defined PORT echo     .\esptool.exe --chip esp32s3 --no-stub write_flash --compress 0x0 5b\nauticpinnace-full.bin',
+        r'if defined PORT echo     .\%TOOL_FILE% --chip esp32s3 %PORT% --no-stub write_flash --compress 0x0 5b\nauticpinnace-full.bin',
+        r'if not defined PORT echo     .\%TOOL_FILE% --chip esp32s3 --no-stub write_flash --compress 0x0 5b\nauticpinnace-full.bin',
         ':failed_end',
         'echo  If the erase already succeeded the display stays blank until a',
         'echo  write completes - just run this script again.',
+        'goto :end',
+        '',
+        ':not_unpacked',
+        'echo(',
+        'echo  The board folders are missing next to this script. Unpack the',
+        'echo  whole ZIP first and run flash.bat from the unpacked folder.',
+        'set RC=1',
+        'goto :end',
+        '',
+        ':no_tool',
+        'echo(',
+        "echo  esptool.exe is missing. flash.bat runs Espressif's esptool "
+        + ESPTOOL_VERSION + ' for',
+        'echo  Windows, which does not come with this package. To get it:',
+        'echo    1. download  %ESPTOOL_URL%',
+        'echo    2. unpack it and put esptool.exe next to flash.bat',
+        'echo       (the unpacked folder ' + win_dir + ' next to it works too)',
+        'echo    3. run flash.bat again - it checks the file before using it.',
+        'echo  Nothing to install at all: flash from Chrome or Edge at',
+        'echo    ' + WEB_FLASHER_URL,
+        'set RC=1',
+        'goto :end',
+        '',
+        ':bad_tool',
+        'echo(',
+        'echo  %TOOL_FILE% is not esptool ' + ESPTOOL_VERSION
+        + ' as Espressif publishes it: its SHA-256',
+        'echo  does not match, so flash.bat does not run it. Nothing was flashed.',
+        'echo(',
+        'echo  expected:  %ESPTOOL_SHA256%',
+        'echo  found:',
+        'certutil -hashfile "%TOOL_FILE%" SHA256',
+        'echo(',
+        'echo  Download the ZIP again, unpack it and put its esptool.exe next to',
+        'echo  flash.bat in place of this one:',
+        'echo    %ESPTOOL_URL%',
+        'set RC=1',
         'goto :end',
         '',
         ':end',
@@ -811,8 +888,8 @@ def write_flash_scripts(dest, version):
 
 def flashing_md(version):
     """FLASHING.md for the package."""
-    rows = ''.join('| %s | %s | %s | `%s` | https://github.com/%s/tree/%s |\n'
-                   % (what, boards, lic, asset, repo, ref)
+    rows = ''.join('| %s | %s | %s | `%s` | %s |\n'
+                   % (what, boards, lic, asset, upstream_url(repo, ref))
                    for asset, repo, ref, what, lic, boards in LGPL_SOURCES)
     usb = {'4': "the ESP32-S3's own USB",
            '7b': 'WCH CH343 USB-serial bridge (Windows needs a driver, see '
@@ -837,10 +914,27 @@ def flashing_md(version):
         'The wrong firmware leaves the screen dark, because its panel driver does\n'
         'not match the hardware. That is not fatal — flashing the right one fixes\n'
         'it — but there is no warning before it happens.\n\n'
-        '## Windows (zero install)\n'
-        'Double-click `flash.bat`. It lists the three boards and asks which one is\n'
-        'connected: type `4`, `7b` or `5b` and press Enter. It uses the bundled\n'
-        '`esptool.exe`; the port is detected automatically.\n\n'
+        '## Browser (easiest, nothing to install)\n'
+        'Chrome/Edge can flash over WebSerial: the web flasher at\n'
+        '%(web)s offers all three boards\n'
+        'and is the recommended way. The scripts below are for flashing from\n'
+        'this package instead.\n\n'
+        '## Windows\n'
+        '`flash.bat` runs esptool, the flashing tool by Espressif, which is not\n'
+        'part of this package. Get it once from Espressif\'s esptool %(e)s\n'
+        'release:\n\n'
+        '1. Download `%(ezip)s`:\n'
+        '   %(eurl)s\n'
+        '2. Unpack it and put the `esptool.exe` from it next to `flash.bat`\n'
+        '   (the unpacked folder `%(edir)s\\` next to `flash.bat` works too).\n\n'
+        'Before every run `flash.bat` checks the SHA-256 of that `esptool.exe`\n'
+        'with `certutil`, which comes with Windows, and refuses any file other\n'
+        'than the one Espressif published:\n'
+        '`%(esha)s`\n'
+        'Without `esptool.exe` it stops and says where to get it.\n\n'
+        'Then double-click `flash.bat`. It lists the three boards and asks which\n'
+        'one is connected: type `4`, `7b` or `5b` and press Enter. The port is\n'
+        'detected automatically.\n\n'
         'From a command prompt or PowerShell in this folder the board can be\n'
         'given directly, and the port as well if the wrong one is picked:\n'
         '`.\\flash.bat 7b` or `.\\flash.bat 7b COM5`\n\n'
@@ -848,10 +942,6 @@ def flashing_md(version):
         '`pip install "esptool>=4.8,<6"`, then `sh flash.sh` with your board — `4`, `7b` or\n'
         '`5b` — and optionally the port: `sh flash.sh 7b /dev/ttyACM0` (on macOS\n'
         'e.g. `/dev/cu.usbmodem1101`). Without a board the script asks.\n\n'
-        '## Browser\n'
-        'Chrome/Edge can flash over WebSerial: the web flasher at\n'
-        '%(web)s offers all three boards\n'
-        '(see also the "Flashing" section of the project README).\n\n'
         '## Board notes\n'
         '- **7-inch:** it talks through a WCH CH343 USB-serial bridge rather than\n'
         "  the ESP32's own USB. Windows needs the\n"
@@ -869,7 +959,8 @@ def flashing_md(version):
         '  rate, and leaving it out also skips a baud change, which is suspected\n'
         '  in the stalls.\n'
         '  Put in your port, or leave `--port ...` out to let esptool find it:\n'
-        '  - Windows, from a command prompt in this folder:\n'
+        '  - Windows, from a command prompt in this folder, with `esptool.exe`\n'
+        '    next to `flash.bat` (see "Windows" above):\n'
         '    `.\\esptool.exe --chip esp32s3 --port COM5 --no-stub write_flash --compress 0x0 5b\\nauticpinnace-full.bin`\n'
         '  - Linux/macOS:\n'
         '    `python3 -m esptool --chip esp32s3 --port /dev/ttyACM0 --no-stub write_flash --compress 0x0 5b/nauticpinnace-full.bin`\n'
@@ -895,15 +986,56 @@ def flashing_md(version):
         '## Updating without losing your settings\n'
         'The scripts above always start from scratch. The settings live in the\n'
         'LittleFS area, so an update of the firmware alone keeps them. Take\n'
-        "`firmware.bin` from **your board's** folder: nothing checks this route\n"
-        'either, and the wrong board leaves the screen dark here too. Export your\n'
+        "`firmware.bin` from **your board's** folder: over USB nothing checks\n"
+        'this, nor does the WiFi update of a board still running 1.1.0 or 1.2.0,\n'
+        'and the wrong board leaves the screen dark here too (from 1.3.0 on, the\n'
+        'WiFi update refuses a firmware for another board). Export your\n'
         'configuration first anyway (web interface, **Import / Export**).\n\n'
-        '**Over WiFi, no cable:** web interface, tab **Update**, choose\n'
-        "`firmware.bin` from your board's folder, then **Install firmware**.\n\n"
+        '**Over WiFi, board running 1.3.0 or later:** web interface, tab\n'
+        "**Update**, choose `firmware.bin` from your board's folder, then\n"
+        '**Install firmware**. The display restarts and then checks the new\n'
+        'firmware for one to three minutes ("Checking update" on the display):\n'
+        'leave the power on — cut during the check, the board goes back to the\n'
+        'old firmware — and expect uploads to be refused until then ("Not\n'
+        'possible right now"). If the release changes the web interface (see\n'
+        'the release notes), install it afterwards in the same tab, once\n'
+        '"Checking update" has gone from the display: **Install web\n'
+        "interface**, `index.html.gz` from your board's folder. The settings\n"
+        'stay as they are, and no restart is needed.\n\n'
+        '**Over WiFi, board running 1.1.0 or 1.2.0** (once; their Update tab\n'
+        'has no web interface field yet, and they cannot report success). The\n'
+        'old page says to install the filesystem first, labels its second field\n'
+        '"Filesystem (littlefs.bin)" and warns that the settings get\n'
+        'overwritten. Ignore all three: the firmware goes first, never put\n'
+        '`littlefs.bin` into that field, and once 1.3.0 runs the field installs\n'
+        'only the web interface.\n\n'
+        '1. Export the settings (**Import / Export**) anyway.\n'
+        "2. Tab **Update**, choose `firmware.bin` from your board's folder,\n"
+        '   **Install firmware**. About a minute later the page says "Update\n'
+        '   failed" although the update worked: the board restarts before its\n'
+        '   answer leaves. Do not try again, and leave the power on.\n'
+        '3. Wait about three minutes, until the display no longer shows\n'
+        '   "Checking update", then reload the page. On the **Update** tab,\n'
+        '   "Currently installed" must now read v1.3.0. If it still names 1.1.0\n'
+        '   or 1.2.0, the firmware did not take: restart the display and begin\n'
+        '   again at step 2 — and do NOT go on with step 4, because on those\n'
+        '   versions its field overwrites the whole file system.\n'
+        '4. Still on the old page: in the **Install filesystem** field choose\n'
+        "   `index.html.gz` from your board's folder (file type \"all files\")\n"
+        '   and install it. The new firmware installs it as the web interface;\n'
+        '   settings, polar table and boot logo stay. Reload the page: the\n'
+        '   Update tab now has a **Web interface (index.html.gz)** field.\n'
+        '   Do this right after step 3. If the page answers "Update failed"\n'
+        '   with BUSY in it, the check is still running: wait a minute and try\n'
+        '   again, but do not restart or switch off the display. If it has\n'
+        '   restarted since step 3, reload the page and repeat step 3 first.\n\n'
+        'If the firmware upload in step 2 breaks off, restart the display\n'
+        'before trying again. v1.0.0 has no update over WiFi: use USB.\n\n'
         '**Over USB:** write the firmware together with the partition table and\n'
         '`boot_app0.bin` — here the 7-inch:\n\n'
         '`python3 -m esptool --chip esp32s3 --baud 921600 write_flash 0x8000 7b/partitions.bin 0xe000 7b/boot_app0.bin 0x10000 7b/firmware.bin`\n\n'
-        'On Windows, from a command prompt in this folder:\n'
+        'On Windows, from a command prompt in this folder, with `esptool.exe`\n'
+        'next to `flash.bat` (see "Windows" above):\n'
         '`.\\esptool.exe --chip esp32s3 --baud 921600 write_flash 0x8000 7b\\partitions.bin 0xe000 7b\\boot_app0.bin 0x10000 7b\\firmware.bin`\n\n'
         'For the 4-inch use the files from `4/`, for the 5-inch those from `5b/`\n'
         'with `--baud 460800`. `boot_app0.bin` makes the board start the\n'
@@ -914,18 +1046,25 @@ def flashing_md(version):
         'it brings the layout of v1.1.0 and later (with the core-dump area);\n'
         'everywhere else it is identical to what the board already has. The\n'
         'settings area stays where it was in every version.\n\n'
-        'Either way the board keeps the web interface it has: that lives in\n'
+        'A USB update keeps the web interface the board has: that lives in\n'
         'LittleFS, next to the settings. If the release changes the web\n'
-        'interface (see the release notes), its new options appear only once\n'
-        '`littlefs.bin` from the same folder is installed too — and that\n'
-        'replaces the stored settings with the factory ones, WiFi off included\n'
-        '(the 7-inch and 5-inch keep a network they had joined). So export the\n'
-        'settings, install `littlefs.bin` as well, and import them again:\n'
-        '- over WiFi before the firmware (tab **Update**, **Install\n'
-        '  filesystem**); if the board comes back without WiFi, switch it on at\n'
-        '  the display as described under "First boot" below;\n'
-        "- over USB by adding `0xA10000` and the folder's `littlefs.bin` to the\n"
-        '  command above.\n\n'
+        'interface, install it afterwards over WiFi — with **Install web\n'
+        "interface** on 1.3.0's own page, or as in step 4 above on a page from\n"
+        '1.1.0 or 1.2.0; after a USB update there is no check to wait for — or\n'
+        'over USB by adding\n'
+        "`0xA10000` and the folder's `littlefs.bin` to the command above. That\n"
+        'replaces the stored settings, the polar table and an uploaded boot\n'
+        'logo with the factory ones, WiFi off included (the 7-inch and 5-inch\n'
+        'keep a network they had joined), and a hotspot gets a new password\n'
+        '(shown on the display). So export the settings, and on the **Polar**\n'
+        'tab the polar table as CSV, keep your logo file (the display serves\n'
+        'it at `/logo.bin`), and import / upload them again afterwards. This is\n'
+        'also the way for a board coming from v1.0.0, whose web interface has\n'
+        'no Update tab.\n\n'
+        'With a CANable USB-CAN adapter, firmware and web interface can also\n'
+        'go over NMEA 2000, without WiFi: see "Updates over NMEA 2000" in the\n'
+        'README, %(repo)s/blob/%(v)s/README.md#updates-over-nmea-2000 .\n'
+        'The display has to be running this release already.\n\n'
         '## Single-image alternative\n'
         "Each board's folder also holds `nauticpinnace-full.bin`: everything\n"
         'merged into a single image of the whole 16 MB flash, with the space\n'
@@ -934,12 +1073,28 @@ def flashing_md(version):
         'separate erase is needed. Use the folder of your board (`4/`, `7b/` or\n'
         '`5b/`); for the 7-inch:\n\n'
         '`python3 -m esptool --chip esp32s3 write_flash 0x0 7b/nauticpinnace-full.bin`\n\n'
-        'On Windows, from a command prompt in this folder:\n'
+        'On Windows, from a command prompt in this folder, with `esptool.exe`\n'
+        'next to `flash.bat` (see "Windows" above):\n'
         '`.\\esptool.exe --chip esp32s3 write_flash 0x0 7b\\nauticpinnace-full.bin`\n\n'
+        '## Safety\n'
+        'NauticPinnace is a hobby project. It is **not NMEA-certified**, and it\n'
+        'is not sold or supported as a product: you build it, you are\n'
+        'responsible for it. This display is an aid, **not a navigation\n'
+        'device** — never rely on it as your primary source for depth, position\n'
+        'or collision avoidance.\n\n'
+        'Connecting a self-built device to an NMEA 2000 backbone may have\n'
+        'warranty implications for the certified equipment on that network.\n'
+        'For that case the firmware has a **listen-only mode**: it sends no\n'
+        'messages, not even an address claim, and opens the CAN controller in\n'
+        'hardware listen-only mode, so it does not even drive ACK bits.\n'
+        'Listen-only is **off by default**. If you want it, power the display\n'
+        'from USB-C first and switch it on in the settings (on the display, or\n'
+        'on the **NMEA 2000** tab of the web interface) before you connect the\n'
+        'drop cable.\n\n'
         '## First boot\n'
-        'The panel stays dark for about 8 seconds (USB serial and the onboard\n'
-        'IO controller need that long), then the display starts in English, asks\n'
-        'for your language and shows the licences.\n\n'
+        'The panel lights up within a few seconds (at most about 8, while the\n'
+        'onboard IO controller wakes up), then the display starts in English,\n'
+        'asks for your language and shows the licences.\n\n'
         '**Demo mode is OFF by default**: the screens show live data from the\n'
         'NMEA 2000 bus, and "--" for anything nothing on the bus sends. To try\n'
         'the display on a desk without a bus, open the web interface (below),\n'
@@ -960,13 +1115,13 @@ def flashing_md(version):
         'This package contains the built firmware of all three boards; the\n'
         'notices are in THIRD-PARTY-NOTICES.md, the full licence texts in\n'
         'LICENSES/.\n\n'
-        '`esptool.exe` is an unmodified build of esptool (GPL-2.0-or-later), a\n'
-        'separate program that the flash script invokes — it is not part of the\n'
-        'firmware. Its complete source and upstream notices sit next to it in\n'
-        '`esptool-%(e)s/`, the licence text in `LICENSES/GPL-2.0.txt`. The\n'
-        'notices of the Python runtime and libraries frozen into the exe are in\n'
-        '`esptool-%(e)s/notices/`, the source of its Python packages next to\n'
-        'the esptool source.\n\n'
+        'esptool is not part of this package. `flash.bat` and `flash.sh` run\n'
+        "the copy you install yourself, a separate program by Espressif under\n"
+        "its own licence (GPL-2.0-or-later), whose notices come with\n"
+        "Espressif's download.\n\n"
+        'NMEA 2000 is a registered trademark of the National Marine Electronics\n'
+        'Association; other names belong to their owners; this project is not\n'
+        'affiliated with or endorsed by any of them.\n\n'
         '## Corresponding source\n'
         'The firmware links three LGPL libraries statically: the 4-inch one set\n'
         'of versions, the 7-inch and 5-inch newer ones. Their source, in exactly\n'
@@ -983,7 +1138,9 @@ def flashing_md(version):
         'and links them with the application.\n'
         % {'v': version, 'e': ESPTOOL_VERSION, 'repo': REPO_URL, 'rows': rows,
            'folders': folders, 'web': WEB_FLASHER_URL,
-           'ch343': CH343_DRIVER_URL})
+           'ch343': CH343_DRIVER_URL, 'eurl': ESPTOOL_WIN_URL,
+           'ezip': ESPTOOL_WIN_URL.rsplit('/', 1)[-1],
+           'edir': ESPTOOL_WIN_DIR, 'esha': ESPTOOL_EXE_SHA256})
 
 
 def main():
@@ -1016,8 +1173,7 @@ def main():
     if not release_checks.report(
             release_checks.check_data_dir(DATA, gzip_sync=False), 'data/'):
         sys.exit(1)
-    sdists = load_esptool_notices()
-    got = fetch_all(sdists)
+    got = fetch_all()
 
     # ---- build (or locate) every board, one after the other ----------------
     # Strictly sequential: two PlatformIO runs at once would fight over the
@@ -1036,7 +1192,7 @@ def main():
                                'data/ after the build')
     for b, images in built:
         ok = release_checks.report(
-            release_checks.check_build_output(images, version, DATA),
+            release_checks.check_build_output(images, version, DATA, board=b['key']),
             '%s build output' % board_title(b)) and ok
     if not ok:
         if a.skip_build:
@@ -1067,7 +1223,8 @@ def main():
                      % (board_title(b), e))
 
     # ---- shared, once at the top -------------------------------------------
-    bundle_esptool(rel, sdists, got)
+    # No esptool here (see the licence note at the top): flash.bat runs the
+    # user's own copy of Espressif's esptool.exe and checks its SHA-256.
     write_flash_scripts(rel, version)
     for f in ('LICENSE', 'THIRD-PARTY-NOTICES.md'):
         shutil.copy(os.path.join(ROOT, f), rel)

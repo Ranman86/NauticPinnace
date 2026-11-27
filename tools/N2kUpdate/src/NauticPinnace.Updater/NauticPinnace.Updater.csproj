@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    The standalone Windows updater (docs/N2K-UPDATE.md 12.7): CANable port, display
+    list with Identify, release folder or ZIP, install firmware and web UI with one
+    confirmation on the display, progress, bus share, log file.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <RootNamespace>NauticPinnace.Updater</RootNamespace>
+    <AssemblyName>NauticPinnaceUpdater</AssemblyName>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationVisualStyles>true</ApplicationVisualStyles>
+    <ApplicationDefaultFont>Segoe UI, 9pt</ApplicationDefaultFont>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NauticPinnace.N2kUpdate\NauticPinnace.N2kUpdate.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\Shared\WindowsHostTiming.cs" Link="Shared\WindowsHostTiming.cs" />
+    <Compile Include="..\Shared\CanablePorts.cs" Link="Shared\CanablePorts.cs" />
+    <Compile Include="..\Shared\UpdaterSettings.cs" Link="Shared\UpdaterSettings.cs" />
+  </ItemGroup>
+</Project>

@@ -76,9 +76,20 @@ public:
     // Open the 7B home/launcher overlay on the next update() tick (set by the
     // rail's home button; deferred like the config overlay above).
     void requestOpenHome() { _openHomePending = true; _forceUpdate = true; }
+    // An update() on the very next loop pass, as the two requests above get -
+    // for a deferred open queued elsewhere, e.g. the licences after the config
+    // overlay closed itself (ConfigOverlay::cbLicenses).
+    void requestUpdate() { _forceUpdate = true; }
     // Show a full-screen message and reboot a few ticks later (so the message is
     // visible first). Avoids reentrant lv_refr_now()/blocking delay in an event cb.
+    // During an update session or the verify window after one, the restart is
+    // queued instead and happens once UpdateGate allows it (N2K-UPDATE.md 7.8).
     void requestReboot(const char *msg);
+
+    // Any alarm is active - today the anchor drag alarm. Safe from every task:
+    // the N2K task asks before it accepts an update, and the update dialog,
+    // countdown and banner react to it (N2K-UPDATE.md 5.3.1, 5.6, 7.1).
+    static bool alarmActive();
 
 private:
     BaseScreen *_screens[MAX_SCREENS] = { nullptr };
@@ -95,6 +106,13 @@ private:
     bool        _openHomePending    = false;
     bool        _rebootPending = false;
     uint32_t    _rebootAtMs    = 0;
+    // A restart asked for while UpdateGate did not allow one (7.8): the
+    // message to show once it may happen, and whether the "after the update"
+    // note is still to be shown (the request may come from the web task).
+    const char *volatile _rebootQueuedMsg = nullptr;
+    volatile bool _rebootDeferNote = false;
+    bool        _demoDeferShown = false;   // "Demo mode after the update" shown
+    bool        _alarmOnTop     = false;   // alarm banner lifted to lv_layer_top()
     void applyScreenConfig();          // rebuild _navOrder (call from LVGL-safe ctx)
     void reloadThemeLive();
     void refreshTrialChrome();      // OpenBridge icon trial: relabel persistent chrome            // re-theme + rebuild screens in place (no reboot)
@@ -138,6 +156,16 @@ private:
     bool        _buzzOn       = false;
     void evaluateAnchorAlarm();
     void evaluateAutoTheme();   // solar light/dark switch (cfg.themeAuto)
+
+    // "No data from the bus" (BusWatch.h), in the demo banner's slot: amber
+    // while the bus is silent, red while the anchor watch is armed without a
+    // current position. A notice, not an alarm - see BusWatch.h for why.
+    lv_obj_t   *_busBanner = nullptr;
+    lv_obj_t   *_busLbl    = nullptr;
+    uint8_t     _busKind   = 0;          // shown: 0 none, 1 no data, 2 anchor
+    bool        _busPosFresh = false;    // from the locked tick, for the banner
+    void updateBusBanner();
+    void styleBusBanner();
 
     // Side-overlay navigation arrows + top-centre settings gear (transparent,
     // floating, auto-fade together).

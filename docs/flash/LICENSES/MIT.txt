@@ -5,10 +5,20 @@ notices (component and source of the notice in brackets):
 
 Copyright (C) 2020 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
     [FreeRTOS kernel V10.4.3 - 4-inch, ESP-IDF 4.4.7]
+Copyright (C) 2017 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
+    [FreeRTOS Xtensa port.c - 4-inch, ESP-IDF 4.4.7]
 Copyright (C) 2021 Amazon.com, Inc. or its affiliates.  All Rights Reserved.
-    [FreeRTOS kernel V10.5.1 - 7B/5B, ESP-IDF 5.5.5]
+    [FreeRTOS kernel V10.5.1 and its Xtensa port.c - 7B/5B, ESP-IDF 5.5.5]
 Copyright (c) 2015-2019 Cadence Design Systems, Inc.
-    [FreeRTOS Xtensa port; Xtensa interrupt, vector and context code]
+    [FreeRTOS Xtensa port.c - all boards; on the 7B/5B (ESP-IDF 5.5.5) also
+     portasm.S and the Xtensa vector, context and interrupt code
+     (xtensa_vectors.S, xtensa_context.S, xtensa_intr.c, xtensa_intr_asm.S)]
+Copyright (c) 2006-2015 Cadence Design Systems Inc.
+    [Xtensa vector, context and interrupt code (xtensa_vectors.S,
+     xtensa_context.S, xtensa_intr.c, xtensa_intr_asm.S) - 4-inch,
+     ESP-IDF 4.4.7]
+Copyright (c) 2003-2015 Cadence Design Systems, Inc.
+    [FreeRTOS Xtensa portasm.S - 4-inch, ESP-IDF 4.4.7]
 Copyright (c) 1999-2015 Cadence Design Systems, Inc.
     [Xtensa HAL - libxt_hal, xtensa/hal.h]
 Copyright 2020 Brian Pugh

@@ -1,0 +1,165 @@
+CAN-ID 126720 prio 7, dst 0x2A, src 0xE6 = 0x1DEF2AE6
+CAN-ID 126720 prio 6, dst 0xE6, src 0x2A = 0x19EFE62A
+CAN-ID 126720 prio 6, dst 0xFF, src 0xE6 = 0x19EFFFE6
+crc32(b'123456789') = 0xCBF43926
+
+### QUERY(INFO) broadcast: 12 bytes, 2 frame(s), CAN-ID 0x19EFFFE6
+payload: FE 9F A0 01 00 01 FF FF FF FF FF FF
+  frame  0: 00 0C FE 9F A0 01 00 01   (144 bits on the wire)
+  frame  1: 01 FF FF FF FF FF FF FF   (148 bits on the wire)
+
+### QUERY(INFO) broadcast, unique id filter: 12 bytes, 2 frame(s), CAN-ID 0x19EFFFE6
+payload: FE 9F A0 01 00 01 02 00 00 00 00 01
+  frame  0: 00 0C FE 9F A0 01 00 01   (144 bits on the wire)
+  frame  1: 01 02 00 00 00 00 01 FF   (149 bits on the wire)
+
+### QUERY(RESULT) session 0x5A: 12 bytes, 2 frame(s), CAN-ID 0x19EF2AE6
+payload: FE 9F A0 01 5A 04 FF FF FF FF FF FF
+  frame  0: 00 0C FE 9F A0 01 5A 04   (140 bits on the wire)
+  frame  1: 01 FF FF FF FF FF FF FF   (147 bits on the wire)
+
+sha256(b'NauticPinnace N2K update test image')  = ee2f7fe70fd134410b3e0cdb41ab19309035da79696851fac2ac925cc26262cb
+sha256(b'NauticPinnace N2K update test web UI') = 37558a1a25d09b4d7e46a5ec4ab40666eb9c65f9971659dd34e20ef8d8df03ab
+
+### INFO: 129 bytes, 19 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A1 01 00 01 01 02 3F 02 00 00 00 00 01 00 01 FF FF 00 11 00 F0 4E 00 00 00 02 00 D8 40 31 2E 33 2E 30 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 53 2F 56 20 45 78 61 6D 70 6C 65 00 00 00 00 00 11 22 33 44 55 66 77 88 00 00 00 00 00 00 00 00 00 00 31 2E 33 2E 30 00 00 00 00 00 00 00 00 00 00 00 37 55 8A 1A 25 D0 9B 4D 6F BE 00 00 F2 02 00 00
+  frame  0: 00 81 FE 9F A1 01 00 01   (142 bits on the wire)
+  frame  1: 01 01 02 3F 02 00 00 00   (144 bits on the wire)
+  frame  2: 02 00 01 00 01 FF FF 00   (143 bits on the wire)
+  frame  3: 03 11 00 F0 4E 00 00 00   (142 bits on the wire)
+  frame  4: 04 02 00 D8 40 31 2E 33   (137 bits on the wire)
+  frame  5: 05 2E 30 00 00 00 00 00   (142 bits on the wire)
+  frame  6: 06 00 00 00 00 00 00 00   (145 bits on the wire)
+  frame  7: 07 00 00 00 00 00 00 00   (145 bits on the wire)
+  frame  8: 08 00 00 00 00 00 00 00   (145 bits on the wire)
+  frame  9: 09 00 53 2F 56 20 45 78   (135 bits on the wire)
+  frame 10: 0A 61 6D 70 6C 65 00 00   (138 bits on the wire)
+  frame 11: 0B 00 00 00 11 22 33 44   (139 bits on the wire)
+  frame 12: 0C 55 66 77 88 00 00 00   (139 bits on the wire)
+  frame 13: 0D 00 00 00 00 00 00 00   (145 bits on the wire)
+  frame 14: 0E 31 2E 33 2E 30 00 00   (138 bits on the wire)
+  frame 15: 0F 00 00 00 00 00 00 00   (144 bits on the wire)
+  frame 16: 10 00 00 37 55 8A 1A 25   (138 bits on the wire)
+  frame 17: 11 D0 9B 4D 6F BE 00 00   (139 bits on the wire)
+  frame 18: 12 F2 02 00 00 FF FF FF   (142 bits on the wire)
+
+crc32(b'NauticPinnace N2K update test stream') = 0xD822AEE5
+
+### OFFER firmware with companion web UI: 131 bytes, 19 frame(s), CAN-ID 0x19EF2AE6
+payload: FE 9F A2 01 5A 01 02 01 00 D8 40 42 25 00 AC 0A 14 00 EE 2F 7F E7 0F D1 34 41 0B 3E 0C DB 41 AB 19 30 90 35 DA 79 69 68 51 FA C2 AC 92 5C C2 62 62 CB 02 00 00 00 00 01 31 2E 33 2E 30 00 00 00 00 00 00 00 00 00 00 00 50 43 20 55 70 64 61 74 65 72 00 00 00 00 00 00 02 68 01 E5 AE 22 D8 37 55 8A 1A 25 D0 9B 4D 7E 46 A5 EC 4A B4 06 66 EB 9C 65 F9 97 16 59 DD 34 E2 0E F8 D8 DF 03 AB 6F BE 00 00
+  frame  0: 00 83 FE 9F A2 01 5A 01   (140 bits on the wire)
+  frame  1: 01 02 01 00 D8 40 42 25   (138 bits on the wire)
+  frame  2: 02 00 AC 0A 14 00 EE 2F   (138 bits on the wire)
+  frame  3: 03 7F E7 0F D1 34 41 0B   (137 bits on the wire)
+  frame  4: 04 3E 0C DB 41 AB 19 30   (137 bits on the wire)
+  frame  5: 05 90 35 DA 79 69 68 51   (134 bits on the wire)
+  frame  6: 06 FA C2 AC 92 5C C2 62   (135 bits on the wire)
+  frame  7: 07 62 CB 02 00 00 00 00   (140 bits on the wire)
+  frame  8: 08 01 31 2E 33 2E 30 00   (137 bits on the wire)
+  frame  9: 09 00 00 00 00 00 00 00   (144 bits on the wire)
+  frame 10: 0A 00 00 00 50 43 20 55   (140 bits on the wire)
+  frame 11: 0B 70 64 61 74 65 72 00   (136 bits on the wire)
+  frame 12: 0C 00 00 00 00 00 02 68   (143 bits on the wire)
+  frame 13: 0D 01 E5 AE 22 D8 37 55   (136 bits on the wire)
+  frame 14: 0E 8A 1A 25 D0 9B 4D 7E   (134 bits on the wire)
+  frame 15: 0F 46 A5 EC 4A B4 06 66   (134 bits on the wire)
+  frame 16: 10 EB 9C 65 F9 97 16 59   (134 bits on the wire)
+  frame 17: 11 DD 34 E2 0E F8 D8 DF   (137 bits on the wire)
+  frame 18: 12 03 AB 6F BE 00 00 FF   (142 bits on the wire)
+
+### OFFER_REPLY pending: 10 bytes, 2 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A3 01 5A 00 00 3C 00 00
+  frame  0: 00 0A FE 9F A3 01 5A 00   (139 bits on the wire)
+  frame  1: 01 00 3C 00 00 FF FF FF   (145 bits on the wire)
+
+### OFFER_REPLY accepted: 10 bytes, 2 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A3 01 5A 01 00 00 00 40
+  frame  0: 00 0A FE 9F A3 01 5A 01   (139 bits on the wire)
+  frame  1: 01 00 00 00 40 FF FF FF   (145 bits on the wire)
+
+### DATA chunk 0: 223 bytes, 32 frame(s), CAN-ID 0x1DEF2AE6
+payload: FE 9F A4 5A 00 00 00 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20 21 22 23 24 25 26 27 28 29 2A 2B 2C 2D 2E 2F 30 31 32 33 34 35 36 37 38 39 3A 3B 3C 3D 3E 3F 40 41 42 43 44 45 46 47 48 49 4A 4B 4C 4D 4E 4F 50 51 52 53 54 55 56 57 58 59 5A 5B 5C 5D 5E 5F 60 61 62 63 64 65 66 67 68 69 6A 6B 6C 6D 6E 6F 70 71 72 73 74 75 76 77 78 79 7A 7B 7C 7D 7E 7F 80 81 82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97 98 99 9A 9B 9C 9D 9E 9F A0 A1 A2 A3 A4 A5 A6 A7 A8 A9 AA AB AC AD AE AF B0 B1 B2 B3 B4 B5 B6 B7 B8 B9 BA BB BC BD BE BF C0 C1 C2 C3 C4 C5 C6 C7 C8 C9 CA CB CC CD CE CF D0 D1 D2 D3 D4 D5 D6 D7
+  frame  0: 00 DF FE 9F A4 5A 00 00   (140 bits on the wire)
+  frame  1: 01 00 00 01 02 03 04 05   (143 bits on the wire)
+  ...
+  frame 31: 1F D1 D2 D3 D4 D5 D6 D7   (135 bits on the wire)
+
+### DATA chunk 1: 223 bytes, 32 frame(s), CAN-ID 0x1DEF2AE6
+payload: FE 9F A4 5A D8 00 00 D8 D9 DA DB DC DD DE DF E0 E1 E2 E3 E4 E5 E6 E7 E8 E9 EA EB EC ED EE EF F0 F1 F2 F3 F4 F5 F6 F7 F8 F9 FA FB FC FD FE FF 00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F 10 11 12 13 14 15 16 17 18 19 1A 1B 1C 1D 1E 1F 20 21 22 23 24 25 26 27 28 29 2A 2B 2C 2D 2E 2F 30 31 32 33 34 35 36 37 38 39 3A 3B 3C 3D 3E 3F 40 41 42 43 44 45 46 47 48 49 4A 4B 4C 4D 4E 4F 50 51 52 53 54 55 56 57 58 59 5A 5B 5C 5D 5E 5F 60 61 62 63 64 65 66 67 68 69 6A 6B 6C 6D 6E 6F 70 71 72 73 74 75 76 77 78 79 7A 7B 7C 7D 7E 7F 80 81 82 83 84 85 86 87 88 89 8A 8B 8C 8D 8E 8F 90 91 92 93 94 95 96 97 98 99 9A 9B 9C 9D 9E 9F A0 A1 A2 A3 A4 A5 A6 A7 A8 A9 AA AB AC AD AE AF
+  frame  0: 20 DF FE 9F A4 5A D8 00   (139 bits on the wire)
+  frame  1: 21 00 D8 D9 DA DB DC DD   (135 bits on the wire)
+  ...
+  frame 31: 3F A9 AA AB AC AD AE AF   (135 bits on the wire)
+
+### ACK first credit: 28 bytes, 5 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A5 01 5A 03 00 00 00 00 00 36 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  frame  0: 00 1C FE 9F A5 01 5A 03   (138 bits on the wire)
+  frame  1: 01 00 00 00 00 00 36 00   (145 bits on the wire)
+  frame  2: 02 00 00 00 00 00 00 00   (144 bits on the wire)
+  frame  3: 03 00 00 00 00 00 00 00   (145 bits on the wire)
+  frame  4: 04 00 FF FF FF FF FF FF   (146 bits on the wire)
+
+### ACK with holes (chunks 5 and 17 missing): 28 bytes, 5 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A5 01 5A 03 00 00 00 00 00 36 00 00 DF FF FD FF FF FF FF FF 00 00 00 00 00 00
+  frame  0: 00 1C FE 9F A5 01 5A 03   (138 bits on the wire)
+  frame  1: 01 00 00 00 00 00 36 00   (145 bits on the wire)
+  frame  2: 02 00 DF FF FD FF FF FF   (144 bits on the wire)
+  frame  3: 03 FF FF 00 00 00 00 00   (144 bits on the wire)
+  frame  4: 04 00 FF FF FF FF FF FF   (146 bits on the wire)
+
+crc32(stream[0:13824]) with stream[i] = i & 0xFF = 0xF862F03B
+
+### ACK window 1 complete, processing: 28 bytes, 5 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A5 01 5A 04 00 36 00 00 00 36 00 00 00 00 00 00 00 00 00 00 3B F0 62 F8 90 01
+  frame  0: 00 1C FE 9F A5 01 5A 04   (138 bits on the wire)
+  frame  1: 01 00 36 00 00 00 36 00   (143 bits on the wire)
+  frame  2: 02 00 00 00 00 00 00 00   (144 bits on the wire)
+  frame  3: 03 00 00 3B F0 62 F8 90   (140 bits on the wire)
+  frame  4: 04 01 FF FF FF FF FF FF   (144 bits on the wire)
+
+### ACK window 2 credit: 28 bytes, 5 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A5 01 5A 03 00 36 00 00 00 6C 00 00 00 00 00 00 00 00 00 00 3B F0 62 F8 00 00
+  frame  0: 00 1C FE 9F A5 01 5A 03   (138 bits on the wire)
+  frame  1: 01 00 36 00 00 00 6C 00   (144 bits on the wire)
+  frame  2: 02 00 00 00 00 00 00 00   (144 bits on the wire)
+  frame  3: 03 00 00 3B F0 62 F8 00   (141 bits on the wire)
+  frame  4: 04 00 FF FF FF FF FF FF   (146 bits on the wire)
+
+### STATUS verifying: 25 bytes, 4 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A9 01 5A 05 00 AC 0A 14 00 AC 0A 14 00 40 42 25 00 40 42 25 00 1E 00
+  frame  0: 00 19 FE 9F A9 01 5A 05   (138 bits on the wire)
+  frame  1: 01 00 AC 0A 14 00 AC 0A   (139 bits on the wire)
+  frame  2: 02 14 00 40 42 25 00 40   (138 bits on the wire)
+  frame  3: 03 42 25 00 1E 00 FF FF   (139 bits on the wire)
+
+### RESULT verify ok: 40 bytes, 6 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A6 01 5A 00 01 00 EE 2F 7F E7 0F D1 34 41 0B 3E 0C DB 41 AB 19 30 90 35 DA 79 69 68 51 FA C2 AC 92 5C C2 62 62 CB
+  frame  0: 00 28 FE 9F A6 01 5A 00   (139 bits on the wire)
+  frame  1: 01 01 00 EE 2F 7F E7 0F   (138 bits on the wire)
+  frame  2: 02 D1 34 41 0B 3E 0C DB   (136 bits on the wire)
+  frame  3: 03 41 AB 19 30 90 35 DA   (135 bits on the wire)
+  frame  4: 04 79 69 68 51 FA C2 AC   (134 bits on the wire)
+  frame  5: 05 92 5C C2 62 62 CB FF   (135 bits on the wire)
+
+### APPLY now: 6 bytes, 1 frame(s), CAN-ID 0x19EF2AE6
+payload: FE 9F A7 01 5A 00
+  frame  0: 00 06 FE 9F A7 01 5A 00   (139 bits on the wire)
+
+### ABORT user cancelled on device: 6 bytes, 1 frame(s), CAN-ID 0x19EFE62A
+payload: FE 9F A8 01 5A 17
+  frame  0: 00 06 FE 9F A8 01 5A 17   (139 bits on the wire)
+
+### IDENTIFY 10 s: 12 bytes, 2 frame(s), CAN-ID 0x19EF2AE6
+payload: FE 9F AA 01 00 0A 02 00 00 00 00 01
+  frame  0: 00 0C FE 9F AA 01 00 0A   (141 bits on the wire)
+  frame  1: 01 02 00 00 00 00 01 FF   (145 bits on the wire)
+
+### firmware descriptor at image offset 0x120 (7B, 1.3.0)
+4E 50 46 57 44 45 53 43 01 02 40 00 00 04 58 02 01 01 00 00 31 2E 33 2E 30 00 00 00 00 00 00 00 00 00 00 00 77 61 76 65 73 68 61 72 65 2D 37 62 2D 31 30 32 34 78 36 30 30 00 00 00 00 00 00 00
+
+### inflate self-test: raw deflate (37 B) of b'NauticPinnace inflate self-test ' * 2 (64 B)
+F3 4B 2C 2D C9 4C 0E C8 CC CB 4B 4C 4E 55 C8 CC 4B CB 49 2C 49 55 28 4E CD 49 D3 2D 49 2D 2E 51 F0 23 20 0F 00
+sha256(b'abc') = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+
+frame bits, all-zero data, ID 0x1DEF2AE6: 145
+frame bits, all-0xFF data, ID 0x1DEF2AE6: 145

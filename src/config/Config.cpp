@@ -1,4 +1,5 @@
 #include "Config.h"
+#include "WifiCountry.h"
 #include "../i18n/I18n.h"
 #include "../Entropy.h"
 
@@ -41,6 +42,13 @@ static SpiRamAllocator s_jsonPsram;
 // mirrored there on save and pulled back when a factory config (empty SSID)
 // shows up after a deploy. WiFi only: a full-config mirror will not reliably
 // fit the small nvs partition alongside the WiFi stack's own storage.
+//
+// The WiFi country rides along as "cc". Read through isKey(): every display
+// from before the setting has no "cc", and Preferences::getString() logs an
+// error for a missing key - on every save, for good, since the default ""
+// equals the missing key and is therefore never written. A display in
+// hotspot mode without an SSID mirrors nothing, the country included
+// (acceptable: in hotspot mode it only changes the country the beacon names).
 static void wifiBackupStore(const AppConfig &cfg) {
     if (!cfg.wifiSsid[0]) return;   // never overwrite a good backup with factory-empty
     Preferences p;
@@ -48,11 +56,13 @@ static void wifiBackupStore(const AppConfig &cfg) {
     if (p.getString("ssid") != cfg.wifiSsid ||
         p.getString("pass") != cfg.wifiPassword ||
         p.getBool("en", false) != cfg.wifiEnabled ||
-        p.getBool("ap", true)  != cfg.apMode) {
+        p.getBool("ap", true)  != cfg.apMode ||
+        (p.isKey("cc") ? p.getString("cc") : String()) != cfg.wifiCountry) {
         p.putString("ssid", cfg.wifiSsid);
         p.putString("pass", cfg.wifiPassword);
         p.putBool("en", cfg.wifiEnabled);
         p.putBool("ap", cfg.apMode);
+        p.putString("cc", cfg.wifiCountry);
     }
     p.end();
 }
@@ -66,12 +76,36 @@ static bool wifiBackupRestore(AppConfig &cfg) {
     strlcpy(cfg.wifiPassword, p.getString("pass").c_str(), sizeof(cfg.wifiPassword));
     cfg.wifiEnabled = p.getBool("en", false);
     cfg.apMode      = p.getBool("ap", true);
+    if (p.isKey("cc")) {            // absent in a backup from before the setting
+        String cc = p.getString("cc");
+        if (wifiCountryValid(cc.c_str()))
+            strlcpy(cfg.wifiCountry, cc.c_str(), sizeof(cfg.wifiCountry));
+    }
     p.end();
     return true;
 }
 #endif
 
 Config appConfig;
+
+// "sail.spi_type" <-> SpiType. The strings are the stored and the WebUI's
+// form; the enum values are never written anywhere.
+static const char *spiTypeName(SpiType t) {
+    switch (t) {
+        case SpiType::None:     return "none";
+        case SpiType::Gores:    return "gores";
+        case SpiType::Gennaker: return "gennaker";
+        default:                return "balloon";
+    }
+}
+static bool spiTypeFromName(const char *s, SpiType &out) {
+    if (!s) return false;
+    if (strcmp(s, "none") == 0)     { out = SpiType::None;     return true; }
+    if (strcmp(s, "gores") == 0)    { out = SpiType::Gores;    return true; }
+    if (strcmp(s, "balloon") == 0)  { out = SpiType::Balloon;  return true; }
+    if (strcmp(s, "gennaker") == 0) { out = SpiType::Gennaker; return true; }
+    return false;
+}
 
 // Light-theme defaults (dark defaults live in the ThemeColors struct members).
 void fillLightTheme(ThemeColors &c) {
@@ -171,7 +205,7 @@ bool Config::begin() {
     bool ok = load();
 #if defined(BOARD_PANEL_1024X600) && !defined(SIMULATOR)
     if (wifiBackupRestore(cfg)) {
-        Serial.println("[wifi] Zugangsdaten aus NVS-Backup wiederhergestellt (uploadfs hatte sie geloescht)");
+        Serial.println("[wifi] credentials restored from the NVS backup (uploadfs had erased them)");
         save();   // write them back into config.json on the fresh filesystem
     }
 #endif
@@ -181,18 +215,47 @@ bool Config::begin() {
     if (!cfg.apPass[0]) {
         Entropy::generateApPassword(cfg.apPass, sizeof(cfg.apPass));
         save();
-        Serial.println("[wifi] Hotspot-Passwort erzeugt (Zufall, nicht MAC-abgeleitet)");
+        Serial.println("[wifi] hotspot password generated (random, not MAC-derived)");
     }
     return ok;
 }
 
 bool Config::load() {
-    if (!LittleFS.exists(PATH)) return true;  // use defaults
+    if (!LittleFS.exists(PATH)) {             // use defaults
+        cfg.iconsMigrated = true;             // the default set is the new one
+        cfg.coordMigrated = true;             // ... and so is the default format
+        return true;
+    }
     File f = LittleFS.open(PATH, "r");
     if (!f) return false;
     String json = f.readString();
     f.close();
-    return fromJson(json);
+    const bool ok = fromJson(json);
+    // OpenBridge became the default icon set in 1.3.0. Until then "classic" was
+    // stored on every display whether anyone had picked it or not, so a stored
+    // "classic" without the marker is switched once - here, on the file, never
+    // on a web patch, which goes through fromJson() too. A set picked after
+    // that is saved with the marker and stays.
+    bool migrated = false;
+    if (ok && !cfg.iconsMigrated) {
+        if (cfg.iconSet == ICON_SET_CLASSIC)
+            Serial.println("[cfg] icons: classic -> openbridge (new default, switched once)");
+        cfg.iconSet = ICON_SET_OPENBRIDGE;
+        cfg.iconsMigrated = true;
+        migrated = true;
+    }
+    // The same for the coordinate format: degrees and minutes, what chart
+    // plotters show, is the default from 1.3.0 on; the decimal degrees every
+    // display had stored until then were nobody's choice either.
+    if (ok && !cfg.coordMigrated) {
+        if (cfg.coordFormat == 0)
+            Serial.println("[cfg] coordinates: decimal -> degrees and minutes (new default, switched once)");
+        cfg.coordFormat = 1;
+        cfg.coordMigrated = true;
+        migrated = true;
+    }
+    if (migrated) save();
+    return ok;
 }
 
 bool Config::save() {
@@ -213,11 +276,13 @@ String Config::toJson() const {
     doc["wifi"]["password"] = cfg.wifiPassword;
     doc["wifi"]["ap_mode"]  = cfg.apMode;
     doc["wifi"]["enabled"]  = cfg.wifiEnabled;
+    doc["wifi"]["country"]  = cfg.wifiCountry;   // "" = default, written as well
     doc["wifi"]["ap_pass"]  = cfg.apPass;
     doc["license_ok"]       = cfg.licenseAccepted;
     doc["ui"]["lang"]       = cfg.lang;
     // OpenBridge icon trial
     doc["ui"]["icons"]      = (cfg.iconSet == ICON_SET_OPENBRIDGE) ? "openbridge" : "classic";
+    doc["ui"]["icons_migrated"] = cfg.iconsMigrated;
     doc["boot"]["title"]    = cfg.bootTitle;
     doc["boot"]["name"]     = cfg.bootName;
 
@@ -234,6 +299,7 @@ String Config::toJson() const {
     doc["nmea2000"]["can_tx"] = cfg.canTxPin;
     doc["nmea2000"]["can_rx"] = cfg.canRxPin;
     doc["nmea2000"]["listen_only"] = cfg.n2kListenOnly;
+    doc["nmea2000"]["accept_updates"] = cfg.n2kAcceptUpdates;
 
     // Own group: this is neither a bus nor a display setting, and grouping it
     // with the gauge data keeps room for a station override later.
@@ -260,8 +326,10 @@ String Config::toJson() const {
     doc["depth"]["unit"]  = cfg.depthUnit;
     doc["display"]["rotation"] = cfg.displayRotation;
     doc["display"]["coord_fmt"] = cfg.coordFormat;
+    doc["display"]["coord_migrated"] = cfg.coordMigrated;
 
     doc["ais"]["range"]     = cfg.aisRange;
+    doc["ais"]["north_up"]  = cfg.aisNorthUp;
     doc["ais"]["alarm"]     = cfg.aisAlarm;
     doc["ais"]["cpa"]       = cfg.aisCpaAlarm;
     doc["ais"]["tcpa"]      = cfg.aisTcpaAlarm;
@@ -278,6 +346,13 @@ String Config::toJson() const {
     doc["cal"]["rudder_inv"]   = cfg.calRudderInvert;
     doc["cal"]["wtemp_off"]    = cfg.calWaterTempOffC;
     doc["cal"]["press_off"]    = cfg.calPressureOffHpa;
+    // The four damping keys only - the two they replaced (wind_damp_spd/_dir)
+    // are read by fromJson but never written again (WindDampCfg.h).
+    doc["cal"]["wind_damp_app_spd"]  = cfg.calWindDampAppSpdS;
+    doc["cal"]["wind_damp_app_dir"]  = cfg.calWindDampAppDirS;
+    doc["cal"]["wind_damp_true_spd"] = cfg.calWindDampTrueSpdS;
+    doc["cal"]["wind_damp_true_dir"] = cfg.calWindDampTrueDirS;
+    doc["cal"]["twd_cog"]      = cfg.calTwdFromCog;
     doc["sources"]["pos"]   = cfg.srcPos;
     doc["sources"]["hdg"]   = cfg.srcHdg;
     doc["sources"]["wind"]  = cfg.srcWind;
@@ -285,6 +360,7 @@ String Config::toJson() const {
     doc["sources"]["stw"]   = cfg.srcStw;
     doc["sources"]["env"]   = cfg.srcEnv;
     doc["sources"]["att"]   = cfg.srcAtt;
+    doc["sources"]["ap"]    = cfg.srcAp;
 
     doc["anchor"]["set"]    = cfg.anchorSet;
     doc["anchor"]["lat"]    = cfg.anchorLat;
@@ -327,7 +403,11 @@ String Config::toJson() const {
     doc["show_perf_overlay"] = cfg.showPerfOverlay;
 
     doc["sail"]["lwl_m"]          = cfg.waterlineLengthM;
-    doc["sail"]["spinnaker"]      = cfg.allowSpinnaker;
+    doc["sail"]["spi_type"]       = spiTypeName(cfg.spiType);
+    // Legacy key, kept for a DOWNGRADE: firmware before 1.3.0 reads only this
+    // bool, so after going back it still hides the kite ("none") or shows its
+    // one spinnaker. Never consulted while "spi_type" is valid.
+    doc["sail"]["spinnaker"]      = cfg.spiType != SpiType::None;
     doc["sail"]["code_zero"]      = cfg.allowCodeZero;
     doc["sail"]["foresail_pct"]   = cfg.foresailPercent;
     doc["sail"]["butterfly"]      = cfg.allowButterfly;
@@ -409,6 +489,14 @@ String Config::toJson() const {
     return out;
 }
 
+// A tank or battery name of nothing but blanks is no name - the same rule as
+// the web page, which trims names (saveDisplay() and buildScreenList() in
+// index.html). Used where fromJson() merges an entry listed twice.
+static bool blankName(const char *s) {
+    while (*s == ' ' || (*s >= '\t' && *s <= '\r')) s++;
+    return !*s;
+}
+
 bool Config::fromJson(const String &json) {
     CFG_JSON_DOC();
     DeserializationError err = deserializeJson(doc, json);
@@ -418,14 +506,23 @@ bool Config::fromJson(const String &json) {
     if (doc["wifi"]["password"].is<const char*>()) strlcpy(cfg.wifiPassword, doc["wifi"]["password"], sizeof(cfg.wifiPassword));
     cfg.apMode     = doc["wifi"]["ap_mode"]  | cfg.apMode;
     cfg.wifiEnabled= doc["wifi"]["enabled"]  | cfg.wifiEnabled;
+    // WiFi country: a code from the list (WifiCountry.h) is taken, anything
+    // else becomes "" - the default - so no unknown code ever reaches the WiFi
+    // library. A patch without the key (an older page) leaves it alone.
+    if (doc["wifi"]["country"].is<const char*>()) {
+        const char *cc = doc["wifi"]["country"];
+        if (wifiCountryValid(cc)) strlcpy(cfg.wifiCountry, cc, sizeof(cfg.wifiCountry));
+        else                      cfg.wifiCountry[0] = 0;
+    }
     if (doc["wifi"]["ap_pass"].is<const char*>()) strlcpy(cfg.apPass, doc["wifi"]["ap_pass"], sizeof(cfg.apPass));
     cfg.licenseAccepted = doc["license_ok"] | cfg.licenseAccepted;
     if (doc["ui"]["lang"].is<const char*>()) strlcpy(cfg.lang, doc["ui"]["lang"], sizeof(cfg.lang));
-    // OpenBridge icon trial: anything but "openbridge" is classic, so an unknown value
+    // Icon set: anything but "classic" is the default, OpenBridge - an unknown value
     // can never leave the panel without symbols.
     if (doc["ui"]["icons"].is<const char*>())
-        cfg.iconSet = (strcmp(doc["ui"]["icons"].as<const char*>(), "openbridge") == 0)
-                      ? ICON_SET_OPENBRIDGE : ICON_SET_CLASSIC;
+        cfg.iconSet = (strcmp(doc["ui"]["icons"].as<const char*>(), "classic") == 0)
+                      ? ICON_SET_CLASSIC : ICON_SET_OPENBRIDGE;
+    cfg.iconsMigrated = doc["ui"]["icons_migrated"] | cfg.iconsMigrated;
     if (doc["boot"]["title"].is<const char*>())
         strlcpy(cfg.bootTitle, doc["boot"]["title"], sizeof(cfg.bootTitle));
     if (doc["boot"]["name"].is<const char*>())
@@ -478,6 +575,7 @@ bool Config::fromJson(const String &json) {
         cfg.canRxPin = -1;
     }
     cfg.n2kListenOnly = doc["nmea2000"]["listen_only"] | cfg.n2kListenOnly;
+    cfg.n2kAcceptUpdates = doc["nmea2000"]["accept_updates"] | cfg.n2kAcceptUpdates;
     cfg.tideBshFetch  = doc["tide"]["bsh_fetch"]       | cfg.tideBshFetch;
 
     cfg.engine.rpmIdle    = doc["engine"]["rpm_idle"]     | cfg.engine.rpmIdle;
@@ -500,6 +598,7 @@ bool Config::fromJson(const String &json) {
     cfg.depthAlarm   = doc["depth"]["alarm"]   | cfg.depthAlarm;
     if (doc["depth"]["unit"].is<const char*>()) strlcpy(cfg.depthUnit, doc["depth"]["unit"], 4);
     cfg.aisRange     = doc["ais"]["range"]     | cfg.aisRange;
+    cfg.aisNorthUp   = doc["ais"]["north_up"]  | cfg.aisNorthUp;
     cfg.aisAlarm     = doc["ais"]["alarm"]     | cfg.aisAlarm;
     cfg.aisCpaAlarm  = doc["ais"]["cpa"]       | cfg.aisCpaAlarm;
     // Only the four right angles are legal; anything else falls back to 0
@@ -509,7 +608,8 @@ bool Config::fromJson(const String &json) {
         cfg.displayRotation = (r == 90 || r == 180 || r == 270) ? r : 0;
     }
     cfg.coordFormat = doc["display"]["coord_fmt"] | cfg.coordFormat;
-    if (cfg.coordFormat > 2) cfg.coordFormat = 0;      // unknown value = decimal
+    if (cfg.coordFormat > 2) cfg.coordFormat = 1;      // unknown value = the default
+    cfg.coordMigrated = doc["display"]["coord_migrated"] | cfg.coordMigrated;
     cfg.aisTcpaAlarm = doc["ais"]["tcpa"]      | cfg.aisTcpaAlarm;
 
     // Sensor calibration + N2K source pinning (partial patches merge).
@@ -524,6 +624,28 @@ bool Config::fromJson(const String &json) {
     cfg.calRudderInvert   = doc["cal"]["rudder_inv"]  | cfg.calRudderInvert;
     cfg.calWaterTempOffC  = doc["cal"]["wtemp_off"]   | cfg.calWaterTempOffC;
     cfg.calPressureOffHpa = doc["cal"]["press_off"]   | cfg.calPressureOffHpa;
+    {
+        // Wind damping: the four keys, the two old ones as a stand-in for any
+        // of them that is missing (a config saved before the split), clamped
+        // to the limits; a key that is missing or not a number leaves the
+        // value as it was, so a patch touches only what it names. The rules
+        // are WindDampCfg::apply(), which the host tests check.
+        WindDampCfg::Keys k;
+        k.appSpd  = doc["cal"]["wind_damp_app_spd"]  | (float)NAN;
+        k.appDir  = doc["cal"]["wind_damp_app_dir"]  | (float)NAN;
+        k.trueSpd = doc["cal"]["wind_damp_true_spd"] | (float)NAN;
+        k.trueDir = doc["cal"]["wind_damp_true_dir"] | (float)NAN;
+        k.oldSpd  = doc["cal"]["wind_damp_spd"]      | (float)NAN;
+        k.oldDir  = doc["cal"]["wind_damp_dir"]      | (float)NAN;
+        const WindCalc::WindDamping cur = { cfg.calWindDampAppSpdS, cfg.calWindDampAppDirS,
+                                            cfg.calWindDampTrueSpdS, cfg.calWindDampTrueDirS };
+        const WindCalc::WindDamping d = WindDampCfg::apply(cur, k);
+        cfg.calWindDampAppSpdS  = d.appSpd;
+        cfg.calWindDampAppDirS  = d.appDir;
+        cfg.calWindDampTrueSpdS = d.trueSpd;
+        cfg.calWindDampTrueDirS = d.trueDir;
+    }
+    cfg.calTwdFromCog     = doc["cal"]["twd_cog"]     | cfg.calTwdFromCog;
     cfg.srcPos   = doc["sources"]["pos"]   | cfg.srcPos;
     cfg.srcHdg   = doc["sources"]["hdg"]   | cfg.srcHdg;
     cfg.srcWind  = doc["sources"]["wind"]  | cfg.srcWind;
@@ -531,6 +653,7 @@ bool Config::fromJson(const String &json) {
     cfg.srcStw   = doc["sources"]["stw"]   | cfg.srcStw;
     cfg.srcEnv   = doc["sources"]["env"]   | cfg.srcEnv;
     cfg.srcAtt   = doc["sources"]["att"]   | cfg.srcAtt;
+    cfg.srcAp    = doc["sources"]["ap"]    | cfg.srcAp;
 
     cfg.anchorSet     = doc["anchor"]["set"]    | cfg.anchorSet;
     cfg.anchorLat     = doc["anchor"]["lat"]    | cfg.anchorLat;
@@ -542,37 +665,118 @@ bool Config::fromJson(const String &json) {
     cfg.anchorRevUtc  = doc["anchor"]["rev_utc"]  | cfg.anchorRevUtc;
     cfg.anchorRevNode = doc["anchor"]["rev_node"] | cfg.anchorRevNode;
 
+    // A calibration is taken whole or not at all: 2 to 6 points, as many in
+    // both lists, the level rising, the litres not falling and ending above
+    // where they start. An imported or hand-edited file got here unchecked -
+    // a caln of -1 became 255 and liters() read past the arrays, missing
+    // points became 0 and a cut-off table lost its 100 % end.
+    auto loadTankCal = [](TankCfg &t, JsonObjectConst o) {
+        const int cn = o["caln"] | 0;
+        t.calN = 0;
+        if (cn >= 2 && cn <= 6 && o["calp"].is<JsonArrayConst>() && o["call"].is<JsonArrayConst>()) {
+            JsonArrayConst pa = o["calp"].as<JsonArrayConst>();
+            JsonArrayConst la = o["call"].as<JsonArrayConst>();
+            bool ok = (int)pa.size() >= cn && (int)la.size() >= cn;
+            for (int k = 0; ok && k < cn; k++) {
+                const float pc = pa[k] | (float)NAN, li = la[k] | (float)NAN;
+                ok = !isnan(pc) && !isnan(li) && li >= 0.f
+                     && (k == 0 || (pc > t.calPct[k - 1] && li >= t.calLit[k - 1]));
+                t.calPct[k] = pc; t.calLit[k] = li;
+            }
+            if (ok && t.calLit[cn - 1] > t.calLit[0]) t.calN = (uint8_t)cn;
+        }
+    };
+    // One entry per tank - (instance, fluid) - and per battery bank - instance -,
+    // the keys the panel (TankScreen, BatteryScreen) and the web page match on.
+    // A file edited by hand can list one twice. Index i used to go into slot i,
+    // so the page showed one row for both and its next save dropped the other's
+    // name for good, and a duplicate pushed a real tank or bank past the cut-off.
+    // Now the first entry wins, and what it left empty is filled from the later
+    // one: a name of only blanks (blankName()), no capacity, a bank at 12 V, a
+    // tank without a calibration (the group rule below). The page applies the
+    // same rules to a config that still holds duplicates (buildScreenList()).
+    // ORDER MATTERS: the duplicate search comes BEFORE the 6 / 4 cut-off, so a
+    // duplicate listed after the 6th tank or the 4th bank - e.g. a bank's name
+    // in its 5th entry - still reaches its first entry.
+    // The merges are logged as ONE line per list, after the loop: the loop now
+    // reads every element, and an import of up to 32 KB (POST_BODY_MAX) of
+    // repeated entries, logged one by one, held the web server's task on the
+    // 7B's 115200-baud console for up to a minute. The line counts the repeats
+    // (entries merged into an earlier one) and names the first repeat in the
+    // list - not necessarily the first entry that has one: [2, 1, 1, 2] names 1.
     if (doc["tankcfg"].is<JsonArrayConst>()) {
         for (int i = 0; i < 6; i++) cfg.tankCfg[i] = TankCfg{};
-        JsonArrayConst arr = doc["tankcfg"].as<JsonArrayConst>();
-        for (int i = 0; i < 6 && i < (int)arr.size(); i++) {
-            JsonObjectConst o = arr[i].as<JsonObjectConst>();
-            TankCfg &t = cfg.tankCfg[i];
-            t.used = true;
-            t.instance  = o["inst"] | 0;
-            t.fluidType = o["ft"]   | 0xFF;
-            strlcpy(t.name, o["name"] | "", sizeof(t.name));
-            t.capacity  = o["cap"]  | (float)NAN;
-            int cn = o["caln"] | 0; if (cn > 6) cn = 6; t.calN = (uint8_t)cn;
-            if (o["calp"].is<JsonArrayConst>() && o["call"].is<JsonArrayConst>()) {
-                JsonArrayConst pa = o["calp"].as<JsonArrayConst>();
-                JsonArrayConst la = o["call"].as<JsonArrayConst>();
-                for (int k = 0; k < cn; k++) { t.calPct[k] = pa[k] | 0.f; t.calLit[k] = la[k] | 0.f; }
+        int n = 0, merged = 0;
+        unsigned firstInst = 0, firstFt = 0;
+        for (JsonObjectConst o : doc["tankcfg"].as<JsonArrayConst>()) {
+            const uint8_t inst = o["inst"] | 0, ft = o["ft"] | 0xFF;
+            TankCfg *t = nullptr;
+            for (int k = 0; k < n && !t; k++)
+                if (cfg.tankCfg[k].instance == inst && cfg.tankCfg[k].fluidType == ft) t = &cfg.tankCfg[k];
+            if (t) {
+                const char *nm = o["name"] | "";
+                if (blankName(t->name) && !blankName(nm)) strlcpy(t->name, nm, sizeof(t->name));
+                // Capacity and calibration as ONE group: each entry's pair agrees
+                // with itself (the page takes a table's 100 % point from the
+                // capacity), halves from two entries need not - 150 L with a
+                // table ending at 200 L reads "200/150 L" on the panel, and the
+                // page's next save refuses the table. So a half is taken only
+                // where it matches the half the first entry has.
+                const bool hasCap = !isnan(t->capacity), hasCal = t->calN >= 2;
+                const float cap = o["cap"] | (float)NAN;
+                if (!hasCap && !hasCal) {
+                    t->capacity = cap;
+                    loadTankCal(*t, o);
+                } else if (!hasCap) {
+                    if (!isnan(cap) && cap == t->calLit[t->calN - 1]) t->capacity = cap;
+                } else if (!hasCal) {
+                    loadTankCal(*t, o);
+                    if (t->calN >= 2 && t->calLit[t->calN - 1] != t->capacity) t->calN = 0;
+                }
+                if (!merged++) { firstInst = inst; firstFt = ft; }
+                continue;
             }
+            if (n >= 6) continue;   // as before: what does not fit is dropped
+            t = &cfg.tankCfg[n++];
+            t->used = true;
+            t->instance  = inst;
+            t->fluidType = ft;
+            strlcpy(t->name, o["name"] | "", sizeof(t->name));
+            t->capacity  = o["cap"]  | (float)NAN;
+            loadTankCal(*t, o);
         }
+        if (merged)
+            Serial.printf("[cfg] tankcfg: %d duplicate %s merged (first: tank %u/%u)\n",
+                          merged, merged == 1 ? "entry" : "entries", firstInst, firstFt);
     }
     if (doc["battcfg"].is<JsonArrayConst>()) {
         for (int i = 0; i < 4; i++) cfg.battCfg[i] = BatteryCfg{};
-        JsonArrayConst arr = doc["battcfg"].as<JsonArrayConst>();
-        for (int i = 0; i < 4 && i < (int)arr.size(); i++) {
-            JsonObjectConst o = arr[i].as<JsonObjectConst>();
-            BatteryCfg &b = cfg.battCfg[i];
-            b.used = true;
-            b.instance   = o["inst"] | 0;
-            strlcpy(b.name, o["name"] | "", sizeof(b.name));
-            b.capacityAh = o["ah"]   | (float)NAN;
-            b.nominalV   = o["nv"]   | 12;
+        int n = 0, merged = 0;
+        unsigned firstInst = 0;
+        for (JsonObjectConst o : doc["battcfg"].as<JsonArrayConst>()) {
+            const uint8_t inst = o["inst"] | 0;
+            BatteryCfg *b = nullptr;
+            for (int k = 0; k < n && !b; k++)
+                if (cfg.battCfg[k].instance == inst) b = &cfg.battCfg[k];
+            if (b) {
+                const char *nm = o["name"] | "";
+                if (blankName(b->name) && !blankName(nm)) strlcpy(b->name, nm, sizeof(b->name));
+                if (isnan(b->capacityAh)) b->capacityAh = o["ah"] | (float)NAN;
+                if (b->nominalV == 12)    b->nominalV   = o["nv"] | 12;
+                if (!merged++) firstInst = inst;
+                continue;
+            }
+            if (n >= 4) continue;   // as before: what does not fit is dropped
+            b = &cfg.battCfg[n++];
+            b->used = true;
+            b->instance   = inst;
+            strlcpy(b->name, o["name"] | "", sizeof(b->name));
+            b->capacityAh = o["ah"]   | (float)NAN;
+            b->nominalV   = o["nv"]   | 12;
         }
+        if (merged)
+            Serial.printf("[cfg] battcfg: %d duplicate %s merged (first: bank %u)\n",
+                          merged, merged == 1 ? "entry" : "entries", firstInst);
     }
 
     if (doc["polar_file"].is<const char*>()) strlcpy(cfg.polarFile, doc["polar_file"], sizeof(cfg.polarFile));
@@ -581,7 +785,25 @@ bool Config::fromJson(const String &json) {
     cfg.showPerfOverlay   = doc["show_perf_overlay"]      | cfg.showPerfOverlay;
 
     cfg.waterlineLengthM  = doc["sail"]["lwl_m"]        | cfg.waterlineLengthM;
-    cfg.allowSpinnaker    = doc["sail"]["spinnaker"]     | cfg.allowSpinnaker;
+    // Downwind sail: a valid "spi_type" wins. Without one (a config, export
+    // or web page from before 1.3.0, or a type this firmware does not know)
+    // the legacy bool decides: false = none, true = the balloon, i.e. the one
+    // spinnaker there used to be. A "spi_type" this firmware does not know
+    // and no legacy bool (an export from a newer firmware that has dropped
+    // it) is the balloon as well - the same answer the web page gives for
+    // that document (spiTypeOf() in index.html). Neither key at all keeps
+    // the current value, like every other key here: on a load from flash
+    // that is the Balloon default, and a partial POST that does not touch
+    // the sail must not reset what the user picked.
+    {
+        SpiType t;
+        if (spiTypeFromName(doc["sail"]["spi_type"].as<const char*>(), t))
+            cfg.spiType = t;
+        else if (doc["sail"]["spinnaker"].is<bool>())
+            cfg.spiType = doc["sail"]["spinnaker"].as<bool>() ? SpiType::Balloon : SpiType::None;
+        else if (!doc["sail"]["spi_type"].isNull())
+            cfg.spiType = SpiType::Balloon;
+    }
     cfg.allowCodeZero     = doc["sail"]["code_zero"]     | cfg.allowCodeZero;
     cfg.foresailPercent   = doc["sail"]["foresail_pct"]  | cfg.foresailPercent;
     cfg.allowButterfly    = doc["sail"]["butterfly"]     | cfg.allowButterfly;

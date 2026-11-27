@@ -1,6 +1,7 @@
 #pragma once
 #include <lvgl.h>
 #include "Theme.h"
+#include "../config/WifiStatus.h"
 
 // ============================================================
 // BootScreen – animated boot screen with optional custom logo.
@@ -23,10 +24,35 @@ public:
     void update(const char *statusMsg, uint8_t progress = 0);
     void dismiss();
 
+    // What the WiFi start is doing, as up to three centred lines under the
+    // logo (WebConfig::connect() calls this through main.cpp every ~50 ms
+    // while it waits). Renders a frame each call, so the spinner keeps
+    // turning: a screen that sits still for 20 s reads as a hung device.
+    void wifi(const WifiProgress &p);
+
+    // Keep the current picture for `ms`, still animating - so a line the
+    // user should read ("not found, own hotspot active") is not replaced
+    // by the next step a few milliseconds later.
+    void hold(uint32_t ms);
+
+    // Render one frame of the boot screen now. See the implementation for
+    // why this is lv_refr_now() and not lv_timer_handler().
+    void pump();
+
     // Pump LVGL manually (call while tasks are not yet running)
     static void tick(uint32_t ms = 16);
 
 private:
+    void setStatus(const char *text);  // only touches the label when it changed
+    // The status label's room: enlarged fonts (web interface) would push its
+    // lines into the boat name, so a text that does not fit in FONT_MED is
+    // shown in FONT_SMALL. _statusMaxH is measured in show().
+    bool statusFits(const char *text, const lv_font_t *font) const;
+    void setStatusFont(const lv_font_t *font);
+    void setStatusFitted(const char *text);
+    lv_coord_t _statusMaxH = 0;
+    uint32_t  _lastPumpMs = 0;         // LVGL clock bookkeeping, see pump()
+
     lv_obj_t *_scr       = nullptr;
     lv_obj_t *_bar       = nullptr;
     lv_obj_t *_statusLbl = nullptr;

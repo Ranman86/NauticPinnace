@@ -10,8 +10,10 @@
 // Top: an equirectangular world map (primitive continents) with the live
 // day/night terminator + the boat's position + the subsolar point + a moon-
 // phase disc. Below: local time/date, sunrise/sunset, moon phase. The map is
-// redrawn every few seconds (the terminator moves slowly); labels tick every
-// update. Sun/moon astronomy from SunCalc.h.
+// redrawn every few seconds (the terminator moves slowly), the tide curve
+// once a minute, never both in one update(); labels are refreshed every
+// update but only rewritten when their text changes. Sun/moon astronomy from
+// SunCalc.h.
 // ============================================================
 class ClockScreen : public BaseScreen {
 public:
@@ -45,8 +47,13 @@ private:
 
     uint32_t _lastMapMs  = 0;
     uint32_t _lastTideMs = 0;
+    bool     _tideDrawn  = false;   // the tide canvas holds a curve (not just BG)
 
     void drawMap(float lat, float lon, float decDeg, float sunLonDeg,
                  float moonIllum, bool moonWax, bool gpsOk);
-    void drawTide(long utcDays, double utcSec, float lon);
+    bool drawTide(long utcDays, double utcSec, float lon);
+    // Per column of the tide canvas: yCol = first water row, yLine = centre
+    // of the anti-aliased curve (float, integer = pixel centre).
+    void tideColumns(int16_t *yCol, float *yLine, long utcDays, double utcSec,
+                     float lon) const;
 };

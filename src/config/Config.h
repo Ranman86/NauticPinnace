@@ -2,9 +2,18 @@
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
+#include "WindDampCfg.h"
 
 // OpenBridge icon trial: values of AppConfig::iconSet.
 enum : uint8_t { ICON_SET_CLASSIC = 0, ICON_SET_OPENBRIDGE = 1 };
+
+// Downwind sail on the Wind & Trim screen (AppConfig::spiType). Stored as a
+// string in "sail.spi_type", so the numbers below are never persisted:
+//   None     "none"      no kite - not every boat carries one
+//   Gores    "gores"     symmetric spinnaker, six panels in two tones
+//   Balloon  "balloon"   symmetric spinnaker, shaded dome (the default)
+//   Gennaker "gennaker"  asymmetric, tack at the stem, no pole
+enum class SpiType : uint8_t { None = 0, Gores = 1, Balloon = 2, Gennaker = 3 };
 
 // ============================================================
 // Config – persistent JSON configuration stored in LittleFS.
@@ -32,7 +41,7 @@ struct TankCfg {
     // Litres for a given sender level [%]; piecewise-linear if calibrated.
     float liters(float level, float busCap) const {
         float cap = isnan(capacity) ? busCap : capacity;
-        if (calN < 2 || isnan(level)) return isnan(cap) ? NAN : level / 100.f * cap;
+        if (calN < 2 || calN > 6 || isnan(level)) return isnan(cap) ? NAN : level / 100.f * cap;
         if (level <= calPct[0])        return calLit[0];
         if (level >= calPct[calN - 1]) return calLit[calN - 1];
         for (int i = 1; i < calN; i++) {
@@ -141,16 +150,31 @@ struct AppConfig {
     bool     apMode           = true;   // start as access-point if true
     bool     licenseAccepted  = false;  // licence notice confirmed on first start?
     bool     wifiEnabled      = false;  // WiFi radio OFF by default (boat has no AP); toggle on-screen when needed
+    // WiFi country (wifi.country): "" or a code from WifiCountry.h. "" is the
+    // default and means no country call at all - each board keeps the
+    // country its framework starts with (4": channels 1-13; 7B/5B: world safe
+    // mode "01", channels 1-11), exactly as before the setting existed. A code
+    // is applied as MANUAL at the next start, see applyWifiCountry() in
+    // WebConfig.cpp. "" is also what an OLDER firmware leaves behind when it
+    // saves a config without the key after a rollback: the country is then
+    // back on the default, silently, also after the update that follows. The
+    // NVS mirror of the WiFi section (Config.cpp, 1024x600) does not bring it
+    // back - it is restored only into a config without an SSID.
+    char     wifiCountry[3]   = "";
 
     // UI language: "de" or "en". Drives both the panel and the WebUI.
     // Default "en": a fresh device boots in English and asks for the language
     // on first run (LanguageOverlay), before the licences are shown.
     char     lang[4]          = "en";
 
-    // Icon set - OpenBridge icon trial (see Icons.h, ICONS-TRIAL.md). ui.icons in
-    // config.json: "classic" (default, the Font Awesome glyphs as before) or
-    // "openbridge". Classic draws exactly what the firmware drew before.
-    uint8_t  iconSet          = 0;      // ICON_SET_CLASSIC / ICON_SET_OPENBRIDGE
+    // Icon set (see Icons.h, ICONS-TRIAL.md). ui.icons in config.json:
+    // "openbridge" (default since 1.3.0) or "classic", the Font Awesome glyphs
+    // as before - classic draws exactly what the firmware drew before.
+    uint8_t  iconSet          = ICON_SET_OPENBRIDGE;   // or ICON_SET_CLASSIC
+    // ui.icons_migrated: the one-time switch of a stored "classic" - until
+    // 1.3.0 the default, nobody's choice - to the new default has been made.
+    // From then on a stored "classic" is a choice and stays. Config::load().
+    bool     iconsMigrated    = false;
 
     // Boot screen: title line and the optional boat name underneath it.
     // Both are shown by BootScreen; empty title falls back to the project name.
@@ -180,6 +204,13 @@ struct AppConfig {
     // control) — for other people's boats, charter, or workshop appointments.
     // Takes effect on the next start because the mode is set in NMEA2000.Open().
     bool     n2kListenOnly    = false;
+    // Accept updates over NMEA 2000 (docs/N2K-UPDATE.md 7.9, 11.3). Off: every
+    // OFFER is rejected with DISABLED, and a running session ends with
+    // ABORT(DISABLED). Takes effect at once, no restart. ON by default, and
+    // that default is what an OLDER firmware leaves behind when it saves a
+    // config without the key after a rollback (10.4) - acceptable, because
+    // nothing is ever installed without the confirmation on the touchscreen.
+    bool     n2kAcceptUpdates = true;
     // Fetch the BSH tide forecast over the internet (gdi.bsh.de). Off means no
     // HTTPS request is made at all, and the tide display falls back to PGN
     // 130320 from the bus, or to the built-in astronomical estimate when no
@@ -241,13 +272,18 @@ struct AppConfig {
     // written: 0 = decimal degrees (48.12345), 1 = degrees + decimal minutes
     // (48°07.407'N - what chart plotters show), 2 = degrees, minutes, seconds
     // (48°07'24.4"N). A cell's "decimals" then counts the digits of the LAST
-    // component. Default 0 keeps every existing installation as it was.
-    // GitHub issue #3.
-    uint8_t  coordFormat     = 0;
+    // component. Default 1 since 1.3.0 (was 0); GitHub issue #3.
+    uint8_t  coordFormat     = 1;
+    // display.coord_migrated: the one-time switch of a stored 0 - until 1.3.0
+    // the default, written into every config.json whether anyone had picked it
+    // or not - to the new default has been made. From then on a stored 0 is a
+    // choice and stays. Config::load(), like iconsMigrated.
+    bool     coordMigrated   = false;
 
     // AIS
     int  aisRange   = 5;    // nm, display range
     bool aisAlarm   = true; // CPA/TCPA alarm
+    bool  aisNorthUp   = true;  // radar: true = north up, false = course up
     float aisCpaAlarm  = 0.5f;  // nm
     float aisTcpaAlarm = 10.0f; // min
 
@@ -269,6 +305,39 @@ struct AppConfig {
     float calWaterTempOffC   = 0.0f;   // additive
     float calPressureOffHpa  = 0.0f;   // additive, barometer altitude correction
 
+    // ---- Wind damping (JSON "cal", WebUI next to the wind calibration) -----
+    // NOT neutral by default, unlike the calibration above: an updated device
+    // shows wind with a 2 s lag until these are set to 0. Time constants [s]
+    // of the low-pass, one per group: apparent wind strength (AWS) and
+    // direction (AWA), true wind strength (TWS) and direction (TWA and TWD).
+    // After this long a step in strength is 63 % through, and so is a small
+    // step in direction - a large swing comes through faster (see
+    // WindCalc.h). 0 = off. Apparent wind serves trimming and wants little;
+    // the true wind direction serves tactics and takes much more; TWS lies in
+    // between. Limits, default, clamping and the migration from the two
+    // settings these replaced (cal.wind_damp_spd / wind_damp_dir): see
+    // WindDampCfg.h. Applied in the wind pipeline, not at ingestion, and read
+    // on every wind sample (WindPipeline.cpp), so a save applies without a
+    // restart.
+    float calWindDampAppSpdS  = WindDampCfg::DEFAULT_S;   // AWS
+    float calWindDampAppDirS  = WindDampCfg::DEFAULT_S;   // AWA
+    float calWindDampTrueSpdS = WindDampCfg::DEFAULT_S;   // TWS
+    float calWindDampTrueDirS = WindDampCfg::DEFAULT_S;   // TWA, TWD
+
+    // ---- TWD without a compass (JSON "cal" twd_cog, WebUI below the damping)
+    // Off = the shipped rule: no fresh heading and no other device's north-
+    // referenced true wind -> TWD "--" and no wind history. On = the COG of a
+    // fresh 129026 stands in for the heading from 1 kn SOG (WindCalc::
+    // COG_MIN_SOG_KN, 0.99 because of the bus's 0.01 m/s steps) and is
+    // dropped only below 0.8 kn (WindCalc::COG_OFF_SOG_KN, 0.79 for the same
+    // reason) - a hysteresis, so a boat doing about 1 kn does not make TWD
+    // flicker. A compass heading and another device's north-referenced TWD
+    // still come first; TWS and TWA are not affected. Off by default because
+    // COG is the track, not the bow: current, leeway and drift put TWD a few
+    // degrees off. Read on every wind sample like the damping, so a save
+    // applies live.
+    bool  calTwdFromCog      = false;
+
     // ---- N2K source selection (-1 = auto/any sender) -----------------------
     // When several bus devices send the same data (two GPS, two compasses...),
     // pin the authoritative sender's source address per category. The list of
@@ -280,6 +349,7 @@ struct AppConfig {
     int16_t srcStw   = -1;   // 128259
     int16_t srcEnv   = -1;   // 130310/130311/130314
     int16_t srcAtt   = -1;   // 127257
+    int16_t srcAp    = -1;   // 65305/65340/65341 - pilot computer (mode, setpoint)
 
     // Anchor watch (drift alarm). Position persisted so the watch resumes after a
     // reboot while still at anchor. Evaluated globally in DisplayManager::update().
@@ -313,7 +383,10 @@ struct AppConfig {
 
     // Sail / WindScreen
     float waterlineLengthM  = 9.0f;   // LWL in metres  (hull-speed = 2.43*sqrt(LWL))
-    bool  allowSpinnaker    = true;    // show spinnaker when running / broad reach
+    // Downwind sail shown on a broad reach / run (see SpiType). Replaces the
+    // bool allowSpinnaker ("sail.spinnaker"); Config.cpp still reads that key
+    // and writes it beside the new one - see there.
+    SpiType spiType         = SpiType::Balloon;
     bool  allowCodeZero     = false;   // show Code Zero on close reach in light air
     int16_t foresailPercent = 100;    // headsail size %: 30=storm jib … 140=genoa (scales jib graphic)
     bool  allowButterfly    = false;   // wing-on-wing: jib poled out opposite the main on a run

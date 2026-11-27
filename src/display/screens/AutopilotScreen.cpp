@@ -30,6 +30,11 @@ static void cline(lv_obj_t *cv,
     lv_canvas_draw_line(cv, p, 2, &d);
 }
 
+// Text width inside the mode badge (its border and a little air off).
+static inline lv_coord_t modeTextW() {
+    return UI_AP_MODE_W - 2 * UI_AP_MODE_BORDER_W - UI_S(8);
+}
+
 // ── create ───────────────────────────────────────────────────────────────────
 void AutopilotScreen::create(lv_obj_t *parent) {
     container = lv_obj_create(parent);
@@ -56,28 +61,45 @@ void AutopilotScreen::create(lv_obj_t *parent) {
     styleLabel(_lblTargetLbl, FONT_MED, CLR_TEXT_DIM);
     lv_obj_align(_lblTargetLbl, LV_ALIGN_TOP_MID, 0, UI_AP_CAPTION_Y);
 
-    // ── HUGE target heading number ─────────────────────────────────────────
+    // ── HUGE setpoint number (+ the side of a wind angle next to it) ───────
     _lblTarget = lv_label_create(container);
     lv_label_set_text(_lblTarget, "---°T");
     lv_obj_set_style_text_font(_lblTarget, montserratBySize(UI_S(48)), 0);
     lv_obj_set_style_text_color(_lblTarget, C_TARGET, 0);
     lv_obj_align(_lblTarget, LV_ALIGN_TOP_MID, 0, UI_AP_TARGET_Y);
 
+    _lblSide = lv_label_create(container);
+    lv_label_set_text(_lblSide, "");
+    styleLabel(_lblSide, FONT_LARGE, CLR_TEXT);
+    lv_obj_add_flag(_lblSide, LV_OBJ_FLAG_HIDDEN);
+
     // ── Mode badge (left side, below compass) ─────────────────────────────
+    // Starts as "--" in the standby colours: nothing has reported a mode yet.
     _modeBox = lv_obj_create(container);
     lv_obj_set_size(_modeBox, UI_AP_MODE_W, UI_AP_MODE_H);
     lv_obj_set_pos(_modeBox, UI_AP_MODE_X, UI_AP_MODE_Y);
-    lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeActive), 0);
+    lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeStandby), 0);
     lv_obj_set_style_bg_opa(_modeBox, OPA_FULL, 0);
-    lv_obj_set_style_border_color(_modeBox, CLR_GREEN, 0);
+    lv_obj_set_style_border_color(_modeBox, CLR_TEXT_DIM, 0);
     lv_obj_set_style_border_width(_modeBox, UI_AP_MODE_BORDER_W, 0);
     lv_obj_set_style_radius(_modeBox, UI_AP_MODE_RADIUS, 0);
     lv_obj_clear_flag(_modeBox, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Fixed width with word wrap: a name too long even for FONT_SMALL goes
+    // onto two lines instead of being cut off at the border. setMode() picks
+    // the font.
     _lblMode = lv_label_create(_modeBox);
-    lv_label_set_text(_lblMode, "STANDBY");
-    styleLabel(_lblMode, FONT_MED, CLR_GREEN);
+    lv_obj_set_width(_lblMode, modeTextW());
+    lv_label_set_long_mode(_lblMode, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_align(_lblMode, LV_TEXT_ALIGN_CENTER, 0);
+    lv_label_set_text(_lblMode, "--");
+    styleLabel(_lblMode, FONT_MED, CLR_TEXT_DIM);
     lv_obj_align(_lblMode, LV_ALIGN_CENTER, 0, 0);
+
+    // A rebuild (theme reload) starts from fresh widgets.
+    _shownMode[0] = _shownTarget[0] = _shownSide[0] = 0;
+    _shownBox = -1;
+    _shownWindCaption = false;
 
     // ── Bottom info cards ──────────────────────────────────────────────────
     // Current HDG | Deviation | Rudder
@@ -257,49 +279,148 @@ void AutopilotScreen::drawCompassArc(float heading, float target) {
     lv_obj_invalidate(_canvas);
 }
 
-// ── update ───────────────────────────────────────────────────────────────────
-void AutopilotScreen::update() {
-    float hdg, target, rudder;
-    bool  engaged;
-    uint8_t mode;
-    {
-        auto lk = data.lock();
-        hdg     = isnan(data.hdg) ? data.cog : data.hdg;
-        target  = data.apTargetHeading;
-        rudder  = data.apRudder;
-        engaged = data.apEngaged;
-        mode    = data.apMode;
+// ── mode badge / setpoint helpers ────────────────────────────────────────────
+// Mode text in the active language. ACTIVE: engaged, but the pilot's report
+// names no mode the decoder knows - shown as that, never as a guessed mode.
+static void apModeText(uint8_t mode, char *out, size_t outSz) {
+    StrId id;
+    switch (mode) {
+        case ApDecode::MODE_STANDBY:  id = STR_AP_MODE_STANDBY;  break;
+        case ApDecode::MODE_AUTO:     id = STR_AP_MODE_AUTO;     break;
+        case ApDecode::MODE_WIND:     id = STR_AP_MODE_WIND;     break;
+        case ApDecode::MODE_NAV:      id = STR_AP_MODE_NAV;      break;
+        case ApDecode::MODE_NO_DRIFT: id = STR_AP_MODE_NO_DRIFT; break;
+        case ApDecode::MODE_ACTIVE:   id = STR_AP_MODE_ACTIVE;   break;
+        default: snprintf(out, outSz, "--"); return;   // unknown: no status
     }
+    snprintf(out, outSz, "%s", T(id));
+}
 
-    // ── Mode badge ──────────────────────────────────────────────────────────
-    const char *modeStrs[] = {"STANDBY","HEADING","WIND","TRACK"};
-    const char *modeStr = (mode < 4) ? modeStrs[mode] : "?";
-    lv_label_set_text(_lblMode, modeStr);
-
-    if (!engaged) {
-        lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeStandby), 0);
-        lv_obj_set_style_border_color(_modeBox, CLR_TEXT_DIM, 0);
-        lv_obj_set_style_text_color(_lblMode, CLR_TEXT_DIM, 0);
-    } else if (mode == 1) {  // HEADING
+// box: 0 = standby colours (standby, or no mode known), 1 = active,
+// 2 = manual (engaged, but the pilot's status report says manual steering).
+void AutopilotScreen::setMode(const char *text, int box) {
+    if (strcmp(text, _shownMode) != 0) {
+        snprintf(_shownMode, sizeof(_shownMode), "%s", text);
+        lv_label_set_text(_lblMode, text);
+        // A longer name may not fit the 140 px badge in FONT_MED; measured on
+        // change, not per frame. What does not fit in FONT_SMALL either wraps
+        // (see create()).
+        lv_obj_set_style_text_font(_lblMode, uiFitValueFont(FONT_MED, text, modeTextW()), 0);
+    }
+    if (box == _shownBox) return;
+    _shownBox = box;
+    if (box == 1) {
         lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeActive), 0);
         lv_obj_set_style_border_color(_modeBox, CLR_GREEN, 0);
         lv_obj_set_style_text_color(_lblMode, CLR_GREEN, 0);
-    } else {
+    } else if (box == 2) {
         lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeManual), 0);
         lv_obj_set_style_border_color(_modeBox, CLR_ACCENT, 0);
         lv_obj_set_style_text_color(_lblMode, CLR_ACCENT, 0);
+    } else {
+        lv_obj_set_style_bg_color(_modeBox, (uiTheme.apModeStandby), 0);
+        lv_obj_set_style_border_color(_modeBox, CLR_TEXT_DIM, 0);
+        lv_obj_set_style_text_color(_lblMode, CLR_TEXT_DIM, 0);
+    }
+}
+
+// The big number, and for a wind angle its side in a smaller font to the
+// right of it. The pair is centred as a whole: both labels keep a TOP_MID
+// alignment (re-evaluated by LVGL whenever a size changes) with the offsets
+// worked out from the measured text widths.
+void AutopilotScreen::setTarget(const char *num, const char *side, lv_color_t sideCol,
+                                bool wind) {
+    if (wind != _shownWindCaption || !_shownTarget[0]) {
+        _shownWindCaption = wind;
+        lv_label_set_text(_lblTargetLbl, T(wind ? STR_AP_SET_WIND : STR_AP_SET_HEADING));
+    }
+    // The side text names the side, so an unchanged text is an unchanged colour.
+    if (!strcmp(num, _shownTarget) && !strcmp(side, _shownSide)) return;
+    if (side[0]) lv_obj_set_style_text_color(_lblSide, sideCol, 0);
+    snprintf(_shownTarget, sizeof(_shownTarget), "%s", num);
+    snprintf(_shownSide, sizeof(_shownSide), "%s", side);
+    lv_label_set_text(_lblTarget, num);
+    if (!side[0]) {
+        lv_obj_add_flag(_lblSide, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_align(_lblTarget, LV_ALIGN_TOP_MID, 0, UI_AP_TARGET_Y);
+        return;
+    }
+    lv_label_set_text(_lblSide, side);
+    lv_obj_clear_flag(_lblSide, LV_OBJ_FLAG_HIDDEN);
+    const lv_font_t *big   = montserratBySize(UI_S(48));
+    const lv_font_t *small = FONT_LARGE;
+    const lv_coord_t gap   = UI_S(8);
+    const lv_coord_t wNum  = lv_txt_get_width(num, (uint32_t)strlen(num), big, 0, LV_TEXT_FLAG_NONE);
+    const lv_coord_t wSide = lv_txt_get_width(side, (uint32_t)strlen(side), small, 0, LV_TEXT_FLAG_NONE);
+    // Baselines level: line height minus the part below the baseline.
+    const lv_coord_t ySide = UI_AP_TARGET_Y + (big->line_height - big->base_line)
+                                            - (small->line_height - small->base_line);
+    lv_obj_align(_lblTarget, LV_ALIGN_TOP_MID, -(gap + wSide) / 2, UI_AP_TARGET_Y);
+    lv_obj_align(_lblSide,   LV_ALIGN_TOP_MID, (wNum + gap) / 2, ySide);
+}
+
+// ── update ───────────────────────────────────────────────────────────────────
+void AutopilotScreen::update() {
+    float hdg, target, rudder, setpoint;
+    bool  engaged;
+    uint8_t mode, status, spKind;
+    {
+        auto lk = data.lock();
+        hdg      = isnan(data.hdg) ? data.cog : data.hdg;
+        target   = data.apTargetHeading;   // heading-to-steer, PGN 127237
+        rudder   = data.apRudder;
+        engaged  = data.apEngaged;
+        mode     = data.apMode;
+        status   = data.apStatus;
+        setpoint = data.apSetpoint;
+        spKind   = data.apSetpointKind;
     }
 
-    // ── Large target heading ────────────────────────────────────────────────
-    if (!isnan(target)) {
-        char buf[16];
-        snprintf(buf, sizeof(buf), "%.0f\xC2\xB0T", target);   // °T
-        lv_label_set_text(_lblTarget, buf);
+    // ── Mode badge ──────────────────────────────────────────────────────────
+    char modeBuf[48];
+    apModeText(mode, modeBuf, sizeof(modeBuf));
+    setMode(modeBuf, !engaged ? 0 : (status == ApDecode::STATUS_MANUAL ? 2 : 1));
+
+    // ── Large setpoint ──────────────────────────────────────────────────────
+    // The pilot's own setpoint (65341), the one that belongs to the mode -
+    // ApDecode picked it: the held heading in AUTO/NAV/NO DRIFT, the held
+    // wind angle with its side in WIND, the newer of the two in ACTIVE.
+    // Otherwise heading-to-steer from PGN 127237 exactly as before (STANDBY,
+    // ACTIVE without a fresh 65341 setpoint, a pilot without the proprietary
+    // PGNs) - except in WIND, where a heading under the wind caption would
+    // read as a wind angle; there 127237 still drives the compass arc and
+    // the error card.
+    const bool windMode = ApDecode::setpointKindFor((ApDecode::Mode)mode) == ApDecode::SP_WIND;
+    float arcTarget = NAN;          // what the compass arc and the error card use
+    char num[16], side[16] = "";
+    lv_color_t sideCol = CLR_TEXT;
+    bool wind = windMode || spKind == ApDecode::SP_WIND;   // the caption
+    if (spKind == ApDecode::SP_HEADING && !isnan(setpoint)) {
+        int d = (int)floorf(setpoint + 0.5f);
+        if (d >= 360) d -= 360;
+        snprintf(num, sizeof(num), "%d\xC2\xB0", d);          // reference not known: no T/M
+        arcTarget = setpoint;
+    } else if (spKind == ApDecode::SP_WIND && !isnan(setpoint)) {
+        const int a = (int)floorf(fabsf(setpoint) + 0.5f);
+        snprintf(num, sizeof(num), "%d\xC2\xB0", a);
+        if (a > 0 && a < 180) {
+            snprintf(side, sizeof(side), "%s", T(setpoint < 0 ? STR_AP_PORT : STR_AP_STBD));
+            sideCol = setpoint < 0 ? CLR_PORT : CLR_STARBOARD;
+        }
+        arcTarget = target;
+    } else if (windMode) {
+        snprintf(num, sizeof(num), "---\xC2\xB0");
+        arcTarget = target;
+    } else if (!isnan(target)) {
+        snprintf(num, sizeof(num), "%.0f\xC2\xB0T", target);   // °T
+        arcTarget = target;
     } else {
-        lv_label_set_text(_lblTarget, "---°T");
+        snprintf(num, sizeof(num), "---\xC2\xB0");
     }
+    setTarget(num, side, sideCol, wind);
 
     // ── Bottom cards ────────────────────────────────────────────────────────
+    target = arcTarget;
     char buf[16];
     if (!isnan(hdg)) {
         snprintf(buf, sizeof(buf), "%.0f\xC2\xB0", hdg);
@@ -318,7 +439,9 @@ void AutopilotScreen::update() {
                          (fabsf(dev) > UI_AP_DEV_THRESH_LO)  ? CLR_YELLOW : CLR_GREEN;
         lv_obj_set_style_text_color(_lblDevCard, dc, 0);
     } else {
+        // Dim, not the colour of the last value: a green "--" reads as "on course".
         lv_label_set_text(_lblDevCard, "--°");
+        lv_obj_set_style_text_color(_lblDevCard, CLR_TEXT_DIM, 0);
     }
 
     if (!isnan(rudder)) {
@@ -329,6 +452,7 @@ void AutopilotScreen::update() {
         lv_obj_set_style_text_color(_lblRudCard, rc, 0);
     } else {
         lv_label_set_text(_lblRudCard, "--°");
+        lv_obj_set_style_text_color(_lblRudCard, CLR_TEXT_DIM, 0);
     }
 
     // ── Compass arc canvas ───────────────────────────────────────────────────

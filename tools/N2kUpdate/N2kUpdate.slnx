@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NauticPinnace.N2kUpdate/NauticPinnace.N2kUpdate.csproj" />
+    <Project Path="src/NauticPinnace.N2kUpdate.Testing/NauticPinnace.N2kUpdate.Testing.csproj" />
+    <Project Path="src/n2kupd/n2kupd.csproj" />
+    <Project Path="src/NauticPinnace.Updater/NauticPinnace.Updater.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NauticPinnace.N2kUpdate.Tests/NauticPinnace.N2kUpdate.Tests.csproj" />
+  </Folder>
+</Solution>

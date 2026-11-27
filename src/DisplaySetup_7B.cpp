@@ -24,6 +24,8 @@
 #include "display/UiConfig.h"
 #include "display/Theme.h"       // uiPortrait() - swipe guard axis
 #include "config/Config.h"        // display.rotation
+#include "n2kupdate/OtaGuard.h"   // flush counter, health criterion H3
+#include "PsramArena.h"           // the frame buffer's room, see the panel setup
 #include <Wire.h>
 #include <esp_heap_caps.h>
 #include <esp_task_wdt.h>
@@ -41,24 +43,53 @@
 // leaves the panel unpowered - the firmware runs, the expander answers, the
 // frame buffer allocates, and the screen stays black.
 // It also puts EXIO5 high, which selects CAN rather than USB on the shared
-// transceiver - which is what NMEA 2000 needs, so do not clear it.
+// transceiver - which is what NMEA 2000 needs, so do not clear it. Setting the
+// bit is not enough to make it stick, though: see exioSelectCan().
+// (The chip is in fact a CH32V003 running vendor firmware, not a CH422G; the
+// names stay because the register map and the board files use them.)
+//
+// NOT on the 5B (EXIO_REAL_CH422G): its expander is a real CH422G, which has
+// one I2C address per command and takes ONE byte per transfer - see
+// BoardConfig_5B.h. It refuses the [register, value] writes, and the first
+// byte of each (0x02, 0x03) lands as its system byte, which switches on the
+// display scan; that scan drives the IO pins, touch reset included, and the
+// touch controller stopped answering until a read (0x04) happened to switch
+// it off again. On the 5B the pins stay inputs, and s_exio is just the level
+// they are expected to read: all high.
 static uint8_t s_exio = 0xFF;
 
-// PROTOKOLL: [Register, Wert] an 0x24 - und das ist AM GERAET GEMESSEN.
+// PROTOCOL: [register, value] to 0x24 - and that is MEASURED ON THE DEVICE.
 //
-// Ich hatte das hier am 2026-08-30 auf das Mehr-Adressen-Schema des echten
-// CH422G umgebaut (0x24 Systemregister, 0x38 Ausgabedaten, 0x26 Eingaenge),
-// weil die Annahme "gleiche Registerbelegung wie der CH32V003 des 4-Zoellers"
-// im Quelltext unbelegt dastand und LovyanGFX es im selben Baum anders macht.
+// On 2026-08-30 this had been switched to the multi-address scheme of a real
+// CH422G (0x24 system register, 0x38 output data, 0x26 inputs), because the
+// assumption "same register layout as the CH32V003 of the 4-inch board" stood
+// unsupported in the source and LovyanGFX does it differently in the same tree.
 //
-// Ein I2C-Scan am Geraet hat das WIDERLEGT: auf diesem Bus antworten nur
-// 0x24 (Expander) und 0x5D (GT911-Touch) - weder vor noch nach dem Freigeben
-// der Ausgangstreiber meldet sich 0x38. Das Register-Protokoll ist fuer dieses
-// Board also richtig, und der USB/CAN-Umschalter EXIO5 wurde die ganze Zeit
-// korrekt getrieben (Schattenwert startet 0xFF).
+// An I2C scan on the device DISPROVED that: on this bus only 0x24 (expander)
+// and 0x5D (GT911 touch) answer - 0x38 shows up neither before nor after the
+// output drivers are enabled. So the register protocol is right for this
+// board, and the USB/CAN switch EXIO5 was driven correctly all along (the
+// shadow value starts at 0xFF).
 //
-// Der Scan bleibt drin. Er hat eine drei Jahre alte Annahme in zwei Minuten
-// entschieden, und er kostet einmalig ein paar Millisekunden beim Start.
+// The scan stays in. It settled a three-year-old assumption in two minutes,
+// and it costs a few milliseconds once, at start-up.
+#ifdef EXIO_REAL_CH422G
+// 5B: one byte to the system address - display scan off, IO0..IO7 inputs,
+// OC0..OC3 open drain (CH422G_SYS_INPUTS). That is all the board is ever
+// told; nothing else is written to the expander.
+static bool ch422g_inputs() {
+    Wire.beginTransmission(CH422_I2C_ADDR);
+    Wire.write(CH422G_SYS_INPUTS);
+    return Wire.endTransmission() == 0;
+}
+
+// The levels of IO0..IO7: one byte read from the input address, no write.
+static bool exio_read(uint8_t &in) {
+    if (Wire.requestFrom((uint8_t)CH422G_ADDR_IN, (uint8_t)1) != 1) return false;
+    in = Wire.read();
+    return true;
+}
+#else
 static bool ch422_write(uint8_t reg, uint8_t val) {
     Wire.beginTransmission(CH422_I2C_ADDR);
     Wire.write(reg);
@@ -74,14 +105,182 @@ static bool exio_set(uint8_t pin, bool high) {
     return exio_flush();
 }
 
+// The levels of the expander pins as the expander reads them back - the
+// actual pin, not the output shadow.
+static bool exio_read(uint8_t &in) {
+    Wire.beginTransmission(CH422_I2C_ADDR);
+    Wire.write(CH422_REG_IN);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom((uint8_t)CH422_I2C_ADDR, (uint8_t)1) != 1) return false;
+    in = Wire.read();
+    return true;
+}
+#endif
+
+#ifdef EXIO_USB_CAN
+// Select CAN on the USB/CAN switch and make sure it took.
+//
+// What happened (2026-10-28): a 7B that had run NMEA 2000 at ~125 messages/s
+// in August heard nothing at all, while a 4" on the very same bench did. The
+// expander read EXIO5 back LOW although it had been set HIGH (in=0xDF instead
+// of 0xFF), and with power on the native USB socket the board enumerated as a
+// USB device: the switch (U9) sat on USB, so GPIO19/20 never reached the
+// transceiver. From the outside that looks exactly like a dead transceiver
+// or an open bus - only the readback tells them apart.
+//
+// It was not the hardware. The expander is a CH32V003 running vendor
+// firmware (not a CH422G), and another project on this very board
+// (github.com/gauthig/firefly-touch, issue #73, PR #78) had the same readback
+// and traced it to that firmware: the MODE register does not always hold,
+// and the first OUTPUT write after a MODE write can be lost. With USB_SEL no
+// longer driven, the board's 10 k pull-down R117 takes it low - USB. On our
+// unit, single OUTPUT writes moved EXIO4 but never EXIO5; the sequence below
+// (theirs) put EXIO5 high in the first round and the bus came straight in.
+//
+// The sequence: write MODE again, wait 10 ms, write the output twice 5 ms
+// apart, read the INPUT register back. Up to five rounds, logged either way.
+// displayDiag() runs it again whenever EXIO5 is found low later on.
+// Returns true when EXIO5 reads high.
+static bool exioSelectCan(const char *why) {
+    s_exio |= (uint8_t)(1u << EXIO_USB_CAN);
+    uint8_t in = 0;
+    for (int round = 1; round <= 5; round++) {
+        ch422_write(CH422_REG_MODE, 0xFF);
+        delay(10);
+        exio_flush();
+        delay(5);
+        exio_flush();
+        delay(5);
+        if (exio_read(in) && ((in >> EXIO_USB_CAN) & 1u)) {
+            Serial.printf("[exio] CAN selected (%s): EXIO5 reads high, in=0x%02X, "
+                          "round %d\n", why, in, round);
+            return true;
+        }
+    }
+    Serial.printf("[exio] !!! CAN NOT selected (%s): EXIO5 still low after 5 rounds, "
+                  "in=0x%02X\n", why, in);
+    return false;
+}
+#endif
+
+// Wait until the expander answers AND holds what it is told.
+//
+// It switches the LCD supply (EXIO6) and the panel and touch resets, so
+// nothing can be shown before it listens. setup() used to wait a blind 8 s
+// for it, on every start. Now it is asked: its address must ACK, and a write
+// must stick - EXIO4 (the SD card's chip select, idle without SPI clock, so
+// toggling it is harmless) is driven low and back high, and the INPUT register
+// has to read back both levels. That is the readback that proved itself on
+// this board: single OUTPUT writes moved EXIO4 every time (see exioSelectCan).
+// Each round uses exioSelectCan's tolerant sequence - MODE, 10 ms, the output
+// twice - because this firmware may drop the first OUTPUT write after a MODE
+// write; a round lost that way is simply repeated.
+//
+// The pins end where they started (all high, s_exio untouched), and the
+// regular init below writes MODE and OUT again anyway. Capped at the old 8 s,
+// so a unit that never confirms boots exactly as late as before - and says
+// so. A warm reset cannot test any of this: the expander keeps running
+// through an ESP reset. Only a cold power-on shows the real timing.
+//
+// On the 5B there is no output to hold: ready means the expander takes its
+// system byte (ch422g_inputs) and its pins can be read back.
+//
+// The result is kept (displayExpanderWait()) for the boot summary main.cpp
+// prints later: on the 5B the console is the S3's own USB port, and what is
+// printed before a terminal has picked the port up again is lost.
+static ExpanderWait s_wait;
+
+const ExpanderWait &displayExpanderWait() { return s_wait; }
+
+static void exioWaitReady() {
+    const uint32_t CAP_MS = 8000;
+    const uint8_t  bit = (uint8_t)(1u << EXIO_SD_CS);
+    const uint32_t t0 = millis();
+    uint32_t firstAck = 0, rounds = 0;
+    bool acked = false;
+    uint8_t inLo = 0, inHi = 0;
+    for (;;) {
+        Wire.beginTransmission(CH422_I2C_ADDR);
+        if (Wire.endTransmission() == 0) {
+            if (!acked) { acked = true; firstAck = millis() - t0; }
+            rounds++;
+#ifdef EXIO_REAL_CH422G
+            if (ch422g_inputs() && exio_read(inHi)) {
+                s_wait.confirmed = true;
+                break;
+            }
+#else
+            const uint8_t lo = (uint8_t)(s_exio & ~bit), hi = (uint8_t)(s_exio | bit);
+            ch422_write(CH422_REG_MODE, 0xFF);
+            delay(10);
+            ch422_write(CH422_REG_OUT, lo);
+            delay(5);
+            ch422_write(CH422_REG_OUT, lo);
+            delay(5);
+            const bool okLo = exio_read(inLo);
+            ch422_write(CH422_REG_OUT, hi);
+            delay(5);
+            ch422_write(CH422_REG_OUT, hi);
+            delay(5);
+            const bool okHi = exio_read(inHi);
+            if (okLo && okHi && !(inLo & bit) && (inHi & bit)) {
+                s_wait.confirmed = true;
+                break;
+            }
+#endif
+        }
+        if (millis() - t0 >= CAP_MS) {
+#ifndef EXIO_REAL_CH422G
+            // Leave the shadow's level on the pin, whatever happened above.
+            exio_flush();
+#endif
+            break;
+        }
+        delay(acked ? 20 : 10);
+    }
+    s_wait.atMs       = millis();
+    s_wait.tookMs     = s_wait.atMs - t0;
+    s_wait.firstAckMs = firstAck;
+    s_wait.rounds     = (uint16_t)rounds;
+    s_wait.acked      = acked;
+    if (s_wait.confirmed)
+#ifdef EXIO_REAL_CH422G
+        Serial.printf("[boot] expander ready after %u ms (t=%u ms; CH422G: scan off, "
+                      "IO0..7 inputs, in=0x%02X)\n",
+                      (unsigned)s_wait.tookMs, (unsigned)s_wait.atMs, (unsigned)inHi);
+#else
+        Serial.printf("[boot] expander ready after %u ms (t=%u ms; first ACK "
+                      "after %u ms, %u round%s, EXIO%d followed low/high, "
+                      "in=0x%02X/0x%02X)\n",
+                      (unsigned)s_wait.tookMs, (unsigned)s_wait.atMs,
+                      (unsigned)firstAck, (unsigned)rounds, rounds == 1 ? "" : "s",
+                      EXIO_SD_CS, (unsigned)inLo, (unsigned)inHi);
+#endif
+    else
+        Serial.printf("[boot] !!! expander NOT confirmed after %u ms (%s, %u rounds, "
+                      "in low/high 0x%02X/0x%02X) - continuing as before the change\n",
+                      (unsigned)s_wait.tookMs, acked ? "it ACKs" : "no ACK at all",
+                      (unsigned)rounds, (unsigned)inLo, (unsigned)inHi);
+}
+
 // This board has no buzzer on the expander - the anchor alarm is silent here.
 void boardBuzzer(bool on) { (void)on; }
 
 // Backlight. EXIO2 is a plain on/off line on this board (the vendor drives it
 // digitally); the CH422G does have a PWM register but its polarity is not
 // documented for this variant, so anything non-zero simply means "on".
+//
+// 5B: not switchable. The CH422G turns all of IO0..IO7 into outputs or all
+// into inputs, and IO0 and IO5 are the isolated inputs DI0/DI1 on this board,
+// which must not be driven. So the pins stay inputs and the backlight stays
+// at the level it idles at - on. (Each call used to switch on the display
+// scan, see s_exio, and took the touch controller with it.)
 void setBrightness(uint8_t brightness) {
+#ifdef EXIO_REAL_CH422G
+    (void)brightness;
+#else
     exio_set(EXIO_BACKLIGHT, brightness ? LCD_BL_ON_LEVEL : !LCD_BL_ON_LEVEL);
+#endif
 }
 
 // ---- GT911 touch -------------------------------------------------------------
@@ -117,7 +316,12 @@ static bool gt911_probe(uint8_t addr) {
 // INT low -> 0x5D, INT high -> 0x14. We drive INT low for the default, then
 // hand the pin back as an input. Without this the chip stays in reset and does
 // not appear on the bus at all.
+//
+// 5B: no reset - its line is an expander pin, and those stay inputs (see
+// setBrightness). The controller comes out of its own power-on reset and
+// answers on 0x5D there; it is only probed.
 static void gt911_reset_and_detect() {
+#ifndef EXIO_REAL_CH422G
     pinMode(TOUCH_INT, OUTPUT);
     digitalWrite(TOUCH_INT, LOW);
     exio_set(EXIO_TOUCH_RST, false);
@@ -126,6 +330,7 @@ static void gt911_reset_and_detect() {
     delay(10);
     delay(50);
     pinMode(TOUCH_INT, INPUT);
+#endif
 
     if (gt911_probe(TOUCH_ADDR))          s_touchAddr = TOUCH_ADDR;
     else if (gt911_probe(TOUCH_ADDR_ALT)) s_touchAddr = TOUCH_ADDR_ALT;
@@ -170,23 +375,84 @@ void gt911Diag() {
 
 void displayDiag() {
     uint8_t in = 0;
-    Wire.beginTransmission(CH422_I2C_ADDR);
-    Wire.write(CH422_REG_IN);
-    const bool ok = (Wire.endTransmission(false) == 0) &&
-                    (Wire.requestFrom((uint8_t)CH422_I2C_ADDR, (uint8_t)1) == 1);
-    if (ok) in = Wire.read();
+    const bool ok = exio_read(in);
 #ifdef EXIO_USB_CAN
-    Serial.printf("[disp] CH422G out=0x%02X in=0x%02X (%s)  EXIO%d(USB/CAN)=%d  "
+    // Set high but read back low: the USB/CAN switch is on USB and CAN is
+    // cut off (see exioSelectCan).
+    const bool canCut = ok && ((s_exio >> EXIO_USB_CAN) & 1u) &&
+                        !((in >> EXIO_USB_CAN) & 1u);
+    Serial.printf("[disp] CH422G out=0x%02X in=0x%02X (%s)  EXIO%d(USB/CAN)=%d%s  "
                   "panel %dx%d @%u Hz\n",
                   s_exio, in, ok ? "ok" : "read failed",
                   EXIO_USB_CAN, (s_exio >> EXIO_USB_CAN) & 1,
+                  canCut ? " !!! reads LOW - CAN cut off" : "",
                   LCD_WIDTH, LCD_HEIGHT, (unsigned)LCD_PCLK_HZ);
+    // The MODE register of this expander does not always hold (see
+    // exioSelectCan): put the switch back on CAN when it fell off.
+    if (canCut) exioSelectCan("lost, re-selecting");
 #else
-    Serial.printf("[disp] CH422G out=0x%02X in=0x%02X (%s)  panel %dx%d @%u Hz\n",
-                  s_exio, in, ok ? "ok" : "read failed",
+    Serial.printf("[disp] CH422G in=0x%02X (%s, IO0..7 inputs)  panel %dx%d @%u Hz\n",
+                  in, ok ? "ok" : "read failed",
                   LCD_WIDTH, LCD_HEIGHT, (unsigned)LCD_PCLK_HZ);
 #endif
     Serial.flush();
+}
+
+// ---- The late check -------------------------------------------------------------
+// Once, about 10 s after start (main.cpp). exioWaitReady() proves that the
+// expander listens at one moment; the blind 8 s it replaces also covered a
+// firmware that answers early and only LATER applies its own power-on
+// defaults - the same family as the MODE register this firmware does not
+// always hold. So: do the pins that matter for the picture still read what
+// the shadow says? Touch reset, backlight and panel reset on both boards,
+// and on the 7B EXIO6, the panel supply (on the 5B that pin was never
+// mapped, so it is left out). The USB/CAN line EXIO5 is displayDiag()'s
+// business and stays out of this - see exioSelectCan().
+//
+// On a mismatch the outputs are written again with exioSelectCan's tolerant
+// sequence (MODE, 10 ms, the output twice) and read back; the panel is an
+// RGB panel without a register setup of its own, so power and reset back
+// are all it needs. A touch controller that went through a reset meanwhile
+// may have latched the other address, so it is reset and probed again.
+//
+// 5B: the pins are inputs, so "held" means they read high - reset lines
+// released, backlight on. A mismatch gets the system byte again (a display
+// scan switched on would explain one) and the touch controller probed.
+void displayLateCheck() {
+    uint8_t mask = (uint8_t)((1u << EXIO_TOUCH_RST) | (1u << EXIO_BACKLIGHT) |
+                             (1u << EXIO_LCD_RST));
+#ifdef EXIO_USB_CAN
+    mask |= (uint8_t)(1u << 6);               // 7B: EXIO6 = LCD supply (see s_exio)
+#endif
+    uint8_t in = 0;
+    bool ok = exio_read(in);
+    if (!ok) { delay(5); ok = exio_read(in); }   // one lost transfer is no verdict
+    if (ok && (in & mask) == (s_exio & mask)) {
+        s_wait.late = 1;
+        Serial.printf("[boot] late expander check at %u ms: settings held (in=0x%02X "
+                      "out=0x%02X)\n", (unsigned)millis(), (unsigned)in, (unsigned)s_exio);
+        return;
+    }
+    s_wait.late = 0;
+    const bool touchHit = !ok || !((in >> EXIO_TOUCH_RST) & 1u);
+#ifdef EXIO_REAL_CH422G
+    ch422g_inputs();
+#else
+    ch422_write(CH422_REG_MODE, 0xFF);
+    delay(10);
+    exio_flush();
+    delay(5);
+    exio_flush();
+#endif
+    delay(5);
+    uint8_t in2 = 0;
+    const bool ok2 = exio_read(in2);
+    if (touchHit) gt911_reset_and_detect();
+    Serial.printf("[boot] !!! late expander check at %u ms: it had LOST its settings "
+                  "(in=%s0x%02X, out=0x%02X, compared 0x%02X) - written again, in now "
+                  "%s0x%02X%s\n", (unsigned)millis(), ok ? "" : "read failed ",
+                  (unsigned)in, (unsigned)s_exio, (unsigned)mask, ok2 ? "" : "read failed ",
+                  (unsigned)in2, touchHit ? ", touch controller reset and probed again" : "");
 }
 
 // ---- esp_lcd RGB panel -------------------------------------------------------
@@ -271,6 +537,7 @@ static void lvgl_flush_cb(lv_disp_drv_t *disp, const lv_area_t *area,
     // No esp_task_wdt_reset() here: the task is not subscribed to the TWDT,
     // and on IDF 5.x the call logs "task not found" on every single flush.
     s_flushCount++;
+    OtaGuard::countFlush();   // H3: LVGL still flushes (N2K-UPDATE.md 10.2)
     // Strips of the refresh currently being drawn. Deliberately BEFORE the
     // timing start below, so the existing per-strip `flush` figure keeps
     // measuring exactly what it measured before this counter existed.
@@ -509,59 +776,88 @@ static void lvgl_touch_cb(lv_indev_drv_t *indev, lv_indev_data_t *data) {
 void displayInit() {
     Wire.begin(CH422_I2C_SDA, CH422_I2C_SCL, 400000);
 
-    // Wer am Bus haengt, wird gemessen und nicht angenommen. Genau diese
-    // Annahme ("CH422G, gleiche Registerbelegung wie der 4-Zoeller") stand
-    // jahrelang unbelegt im Quelltext und hat die Fehlersuche verzoegert.
-    auto i2c_scan = [](const char *wann) {
-        char liste[96] = "";
+    // Replaces the blind 8 s that setup() used to wait (see exioWaitReady).
+    exioWaitReady();
+
+    // Whatever is on the bus gets measured, not assumed. Exactly this
+    // assumption ("CH422G, same register layout as the 4-inch board") stood
+    // unsupported in the source for years and delayed the debugging.
+    // The 5B's CH422G alone answers on more than 18 addresses, and the list
+    // used to stop there, so the touch controller and the RTC behind it
+    // never showed; what does not fit is now at least counted.
+    auto i2c_scan = [](const char *when) {
+        char list[192] = "";
         size_t n = 0;
+        unsigned more = 0;
         for (uint8_t a = 0x08; a <= 0x77; a++) {
             Wire.beginTransmission(a);
-            if (Wire.endTransmission() == 0 && n + 6 < sizeof liste)
-                n += snprintf(liste + n, sizeof liste - n, " 0x%02X", a);
+            if (Wire.endTransmission() != 0) continue;
+            if (n + 6 < sizeof list)
+                n += snprintf(list + n, sizeof list - n, " 0x%02X", a);
+            else
+                more++;
         }
-        Serial.printf("[i2c] %s antwortende Adressen:%s\n", wann, n ? liste : " keine");
+        Serial.printf("[i2c] %s responding addresses:%s", when, n ? list : " none");
+        if (more) Serial.printf(" (+%u)", more);
+        Serial.println();
         Serial.flush();
     };
-    // ZWEIMAL scannen: manche Expander geben ihre Ausgabeadresse erst frei,
-    // nachdem die Ausgangstreiber eingeschaltet sind. Wer nur vorher misst,
-    // zieht daraus den falschen Schluss.
+    // One scan, before the drivers are on: some expanders only release their
+    // output address once the output drivers are switched on, so an address
+    // missing here is no proof that the chip is absent.
     i2c_scan("");
 
-    // Erst die Ausgangstreiber freigeben, dann das Schattenbyte schicken.
-    // Beide Schritte werden einzeln quittiert, damit ein stummer Baustein
-    // nicht als "Panel laeuft doch" durchgeht - genau so ist der falsche
-    // Zugriff jahrelang unbemerkt geblieben.
+#ifdef EXIO_REAL_CH422G
+    // 5B: the system byte once more and nothing else (see s_exio). Panel and
+    // touch run on their own power-on reset, their reset lines stay high.
+    {
+        const bool okSys = ch422g_inputs();
+        uint8_t in = 0;
+        const bool okIn = exio_read(in);
+        Serial.printf("[disp] CH422G ready: scan off, IO0..7 inputs (sys=%s, in=%s0x%02X)\n",
+                      okSys ? "ok" : "!!! no ACK", okIn ? "" : "read failed ",
+                      (unsigned)in);
+    }
+#else
+    // First enable the output drivers, then send the shadow byte. Each step
+    // is acknowledged on its own, so that a silent chip does not pass as
+    // "the panel runs after all" - which is exactly how the wrong access
+    // went unnoticed for years.
     const bool okCfg = ch422_write(CH422_REG_MODE, 0xFF);
     const bool okOut = exio_flush();
     if (!okCfg || !okOut)
-        Serial.printf("[disp] !!! CH422G ohne Quittung (cfg=%d out=%d) - I2C pruefen\n",
+        Serial.printf("[disp] !!! CH422G not acknowledged (cfg=%d out=%d) - check I2C\n",
                       (int)okCfg, (int)okOut);
 
-    // EXIO5 ausdruecklich setzen statt sich auf den Startwert des
-    // Schattenbytes zu verlassen: dieser Pin entscheidet, ob der gemeinsame
-    // Anschluss am USB-Bruecken- oder am CAN-Transceiver haengt. Ohne ihn
-    // kommt auf diesem Board nie eine NMEA-2000-Nachricht an.
+    // Set EXIO5 explicitly instead of relying on the start value of the
+    // shadow byte: this pin decides whether the shared connector is wired to
+    // the USB bridge or to the CAN transceiver. Without it no NMEA 2000
+    // message ever arrives on this board.
     //
-    // NUR auf dem 7B. Diese Datei wird auch fuer das 5-Zoll-Board uebersetzt
-    // (dessen env erbt vom 7B), und dort ist derselbe Expander-Pin ein
-    // ISOLIERTER EINGANG (DI1) - ihn zu treiben waere schlicht falsch.
+    // ONLY on the 7B. This file is also compiled for the 5-inch board (its
+    // env inherits from the 7B), and there the same expander pin is an
+    // ISOLATED INPUT (DI1) - driving it would simply be wrong.
 #ifdef EXIO_USB_CAN
     exio_set(EXIO_USB_CAN, true);
-    Serial.printf("[disp] CH422G bereit, EXIO=0x%02X (EXIO%d=CAN)\n",
+    Serial.printf("[disp] CH422G ready, EXIO=0x%02X (EXIO%d=CAN)\n",
                   s_exio, EXIO_USB_CAN);
+    // A plain write is not enough on this expander (see exioSelectCan).
+    exioSelectCan("start");
 #else
-    Serial.printf("[disp] CH422G bereit, EXIO=0x%02X (kein USB/CAN-Umschalter)\n",
+    Serial.printf("[disp] CH422G ready, EXIO=0x%02X (no USB/CAN switch)\n",
                   s_exio);
 #endif
+#endif  // EXIO_REAL_CH422G
     delay(50);
 
     gt911_reset_and_detect();
 
+#ifndef EXIO_REAL_CH422G
     exio_set(EXIO_LCD_RST, false);
     delay(20);
     exio_set(EXIO_LCD_RST, true);
     delay(120);
+#endif
 
     esp_lcd_rgb_panel_config_t cfg = {};
     cfg.clk_src    = LCD_CLK_SRC_PLL160M;
@@ -611,12 +907,20 @@ void displayInit() {
     cfg.timings.flags.vsync_idle_low  = LCD_SYNC_IDLE_LOW;
     cfg.flags.fb_in_psram = 1;          // 1024*600*2 = 1.2 MB, PSRAM only
 
+    // The frame buffer's room has been held since before the canvas arena
+    // (main.cpp, PsramArena::initLeavingRoom); handed back only now, with
+    // nothing in between that could take it.
+    PsramArena::releaseRoom();
     esp_err_t err = esp_lcd_new_rgb_panel(&cfg, &s_panel);
     Serial.printf("[disp] esp_lcd_new_rgb_panel -> %s\n", esp_err_to_name(err));
     if (err != ESP_OK) {
-        Serial.println("[disp] !!! FATAL: panel creation failed");
+        Serial.printf("[disp] !!! FATAL: panel creation failed (PSRAM free %u, largest block %u)\n",
+                      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
         while (1) delay(1000);
     }
+    Serial.printf("[disp] frame buffer in place, PSRAM free %u\n",
+                  (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
     esp_lcd_panel_reset(s_panel);
     esp_lcd_panel_init(s_panel);
 

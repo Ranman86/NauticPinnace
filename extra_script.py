@@ -3,7 +3,13 @@
 # 1. Wraps the compiler with ccache if available (faster incremental builds).
 #    Install:  scoop/choco/winget install ccache
 #
-# 2. Adds a custom "deploy" target that uploads LittleFS first, then firmware.
+# 2. Routes esp_restart_noos() through lib/NMEA2000_esp32, which takes the CAN
+#    controller off the bus before any reset.
+#
+# 3. Prints the PSRAM budget of the 7B and 5B images after every link, and
+#    writes FW_VERSION into IDF's app description (tools/app_desc.py).
+#
+# 4. Adds a custom "deploy" target that uploads LittleFS first, then firmware.
 #    Usage:
 #      pio run -t deploy
 #      – or – PlatformIO IDE → Environment toolbar → "Custom" → deploy
@@ -98,6 +104,70 @@ if _maps:
     print("  [build] path privacy: %d -ffile-prefix-map rule(s)" % len(_maps))
 elif _is_hybrid:
     print("  [build] path privacy: skipped (hybrid compile env, space-in-path)")
+
+
+# ---- CAN controller off the bus on every restart ------------------------------
+# lib/NMEA2000_esp32 parks the CAN TX pin before a reset, because the CPU reset
+# leaves the TWAI controller running at half the bit rate, and on every board
+# replaces IDF's CPU reset, which hung there (see there). esp_restart(), a
+# panic and a watchdog all end in esp_restart_noos(), so every call to it is
+# routed through the library's __wrap_esp_restart_noos. The bring-up envs do
+# not link the library - the flag would leave the wrapper undefined there.
+if not env["PIOENV"].startswith("bringup"):
+    env.Append(LINKFLAGS=["-Wl,--wrap=esp_restart_noos"])
+
+
+# ---- PSRAM budget of the 7B and 5B images -------------------------------------
+# On those boards code runs from PSRAM in 64 KB pages, and one page too many
+# used to leave the panel dark. After every link, tools/psram_budget.py says
+# how many pages are left before the canvas arena has to shrink; the release
+# gate refuses an image where it would. Images without the budget symbol
+# (the 4-inch board) print nothing.
+#
+# The same images - and only they, the budget symbol is the board test - must
+# carry the panic wrap (src/LoopWatchdog.cpp, -Wl,--wrap in platformio.ini):
+# --wrap is silent when it matches nothing, and the unused wrapper is then
+# garbage-collected, so a missing symbol fails the build here.
+def _psram_budget(target, source, env):
+    sys.path.insert(0, os.path.join(env.subst("$PROJECT_DIR"), "tools"))
+    import psram_budget
+    psram_budget.report(str(target[0]))
+    # Its own read of the ELF: a budget that cannot be read only prints
+    # "budget check failed" above, and must not let a missing wrap through.
+    why = psram_budget.panic_wrap_problem(str(target[0]))
+    if why:
+        print("[psram] FAILED: %s" % why)
+        return 1
+
+if env.get("PIOPLATFORM") != "native" and not env["PIOENV"].startswith("bringup"):
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf",
+                      env.VerboseAction(_psram_budget, "Checking the PSRAM budget"))
+
+
+# ---- version in IDF's app description ------------------------------------------
+# esp_app_desc_t (image offset 0x20) is compiled into the framework's IDF libs,
+# so it carried their strings, not ours: "esp-idf: v4.4.7 38eeba213a" on the
+# 4-inch, `git describe` of the tree at libs-build time ("v1.2.0-dirty" on
+# 1.3.0) on the 7B and 5B - which is what esptool image_info shows.
+# tools/app_desc.py writes FW_VERSION and "NauticPinnace" into
+# the ELF right after the link, before firmware.bin is made and hashed.
+def _app_desc(target, source, env):
+    project = env.subst("$PROJECT_DIR")
+    sys.path.insert(0, os.path.join(project, "tools"))
+    import app_desc
+    import release_checks   # the one reader of FW_VERSION in src/Version.h
+    try:
+        version = release_checks.fw_version(project)
+        old = app_desc.patch(str(target[0]), version)
+    except (OSError, ValueError) as e:
+        print("[app_desc] FAILED: %s" % e)
+        return 1
+    print('[app_desc] version "%s" (was "%s"), project "%s" (was "%s")'
+          % (version, old[0], app_desc.PROJECT_NAME, old[1]))
+
+if env.get("PIOPLATFORM") != "native":
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.elf",
+                      env.VerboseAction(_app_desc, "Writing the version into the app description"))
 
 
 # ---- pre-compress the web UI -------------------------------------------------

@@ -273,6 +273,7 @@ void handlePGN130820(const tN2kMsg &msg) {
     auto lk = data.lock();
     data.mediaConnected  = true;
     data.lastMediaUpdate = millis();
+    data.lastMediaRx     = data.lastMediaUpdate;   // the stereo itself (BusWatch)
     switch (messageId) {
         case MSG_SOURCE: {
             uint8_t sid = msg.GetByte(idx);   // Source ID (this source)
